@@ -2,6 +2,7 @@
 *.pyc
 results/
 .idea/
+/.idea
 .venv/
 venv/
 .DS_Store
