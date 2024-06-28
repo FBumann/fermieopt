@@ -9,7 +9,7 @@ This package is an Extension of flixOpt. It's to be used by running the prepared
 
 ## Useage
 1. Create a new Python project in your IDE (PyCharm, Spyder, ...) (If possible with a new .venv)
-2. Install this package via pip in to your environment: `pip install git+https://github.com/FBumann/flixOptExcel.git`
+2. Install this package via pip in to your environment: `pip install https://github.com/FBumann/fermieopt.git`
 3. Copy the skripts __run_model.py__ and __run_postprocessing.py__ file from this package into your project.
 4. Make a local copy of the __Template_Input_Free.xlsx__ and save it somewhere on your Computer (for. ex. Desktop)
 5. Copy the path of the new file into the __run_model.py__ file
