@@ -3,4 +3,4 @@ networkx==3.2.1
 openpyxl==3.1.2
 plotly==5.18.0
 pprintpp==0.4.0
-flixOpt @git+https://github.com/FBumann/flixOpt.git@main
+flixOpt @git+https://github.com/flixOpt/flixOpt.git@main
