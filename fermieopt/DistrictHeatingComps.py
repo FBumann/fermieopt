@@ -157,200 +157,59 @@ def add_grid_fee(grid_fee: Union[int,float],
                                                       + grid_fee * np.max(grid_flow.relative_maximum / efficiency))
     return np.max(grid_flow.relative_maximum / efficiency)
 
-
-class Sink(EnergySystemObject):
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Nennleistung": (None, Optional[Union[int, float, str]]),
-        "Flowname": (NO_DEFAULT, str),
-        "Festes Profil": (None, Optional[str]),
-        # Connections
-        "Bus": (NO_DEFAULT, str),
-    }
-
-    _invest_prop = "Nennleistung"
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Festes Profil"] = None
-        if self.props["Festes Profil"]:
-            self.computed_props["Festes Profil"] = as_time_series(self.props["Festes Profil"], time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        # Inserting effects as keys
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.Sink(
-            label=self.props["Name"],
-            sink=fx.Flow(
-                meta_data=self.meta_data,
-                label=self.props["Flowname"],
-                bus=busses[self.props["Bus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Nennleistung"] ,
-                fixed_relative_profile=self.computed_props["Festes Profil"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            )
+class Source(PowerInvestElement):
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        return fx.Source(
+            label=self.name,
+            source=fx.Flow(label=self.flow_label,
+                         bus=busses[self.bus],
+                         size=self._power_invest(effects),
+                         fixed_relative_profile=self.fixed_profile),
         )
 
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+class LinearTransformer(PowerInvestElement):
+    efficiency: Union[int, float, str] = Field(alias="Wirkungsgrad")
+    bus_in: str = Field(alias="Von Bus")
+    bus_out: str = Field(alias="Zu Bus")
+    flow_label_in: str = Field(alias="Flowname in")
+    cost_per_mwh_in: Union[int, float, str] = Field(alias="Kosten pro MWh von Bus", default=0)
 
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(data)
+        self.efficiency = extract_data(self.efficiency, data)
+        self.cost_per_mwh_in = extract_data(self.cost_per_mwh_in, data)
 
-class Source(EnergySystemObject):
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Nennleistung": (None, Optional[Union[int, float, str]]),
-        "Flowname": (NO_DEFAULT, str),
-        "Festes Profil": (None, Optional[str]),
-        # Connections
-        "Bus": (NO_DEFAULT, str),
-    }
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
 
-    _invest_prop = "Nennleistung"
+        flow_out = fx.Flow(label=self.flow_label,
+                           bus=busses[self.bus_out],
+                           size=self._power_invest(effects),
+                           fixed_relative_profile=self.fixed_profile
+                           )
 
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
+        flow_in = fx.Flow(label=self.flow_label_in,
+                           bus=busses[self.bus_in],
+                           effects_per_flow_hour={effects['costs']: self.cost_per_mwh_in}
+                           )
 
-        # Direct links to time_series_data
-        self.computed_props["Festes Profil"] = None
-        if self.props["Festes Profil"]:
-            self.computed_props["Festes Profil"] = as_time_series(self.props["Festes Profil"], time_series_data)
+        return fx.LinearConverter(label=self.name,
+                                  inputs=[flow_in],
+                                  outputs=[flow_out],
+                                  conversion_factors=[{flow_in: self.efficiency, flow_out: 1}])
 
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.Source(
-            label=self.props["Name"],
-            source=fx.Flow(
-                label=self.props["Flowname"],
-                meta_data=self.meta_data,
-                bus=busses[self.props["Bus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Nennleistung"],
-                fixed_relative_profile=self.computed_props["Festes Profil"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            )
-        )
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
-
-
-class LinearTransformer_1_1(GridFee):
-    _property_definitions = {
-        **GridFee._property_definitions,
-        "Nennleistung": (None, Optional[Union[int, float, str]]),
-        "Nennleistung In": (1e9, Union[int, float]),
-        "Wirkungsgrad": (NO_DEFAULT, Union[int, float, str]),
-        "Kosten pro MWh von Bus": (0, Union[int, float, str]),
-        # Connections
-        "Zu Bus": (NO_DEFAULT, str),
-        "Von Bus": (NO_DEFAULT, str),
-        # Labels
-        "Flowname in": ("in", str),
-        "Flowname out": ("out", str),
-    }
-
-    _invest_prop = "Nennleistung"
-
-    @property
-    def factor_grid_to_invest(self) -> float:
-        value = np.max(self.kwargs.get("relative_maximum", 1) * self.computed_props["exists"] / self.computed_props["Wirkungsgrad"])
-        self.computed_props["Faktor für Netzentgeltumrechnung"] = value
-        return value
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Wirkungsgrad"] = as_time_series(self.props["Wirkungsgrad"], time_series_data)
-        self.computed_props["Kosten pro MWh von Bus"] = as_time_series(
-            self.props["Kosten pro MWh von Bus"], time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        flow_out = fx.Flow(label=self.props["Flowname out"],
-                           meta_data=self.meta_data,
-                           bus=busses[self.props["Zu Bus"]],
-                           size=self.computed_props["Investment Nennleistung"] or self.computed_props["Nennleistung"],
-                           can_be_off=self.on_parameters,
-                           **self.flow_kwargs
-                         )
-
-        flow_in = fx.Flow(label=self.props["Flowname in"],
-                        bus=busses[self.props["Von Bus"]],
-                        effects_per_flow_hour={effects["costs"]: self.computed_props["Kosten pro MWh von Bus"]}
-                        )
-
-        comp = fx.LinearConverter(
-            label=self.props["Name"],
-            inputs=[flow_in],
-            outputs=[flow_out],
-            conversion_factors=[{flow_in: self.computed_props["Wirkungsgrad"], flow_out: 1}]
-        )
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
 
 
 class Kessel(GridFee):
