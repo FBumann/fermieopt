@@ -801,328 +801,196 @@ class Rueckkuehler(ThermalInvestElement):
 
 
 class AbwaermeWaermepumpe(Waermepumpe):
-    _property_definitions = {
-        **Waermepumpe._property_definitions,
-        "Abwärmekosten": (NO_DEFAULT, Union[int, float, str]),
-        # Connections
-        "Abwärmebus": ("Abwaerme", str)
-    }
+    heat_source_costs: Union[int, float, str] = Field('Abwärmekosten')
+    bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
+    
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        self.heat_source_costs = extract_data(self.heat_source_costs, data)
 
-    _invest_prop = "Thermische Leistung"
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        self._insert_data(time_series_data)
 
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        super().computation(years_of_model, co2_factors, time_series_data)
-        self.computed_props["Abwärmekosten"] = as_time_series(self.props["Abwärmekosten"], time_series_data)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.HeatPumpWithSource(
-            label=self.props["Name"],
-            COP=self.computed_props["COP"],
-            Q_th=fx.Flow(
-                label='Qth',
-                meta_data=self.meta_data,
-                bus=busses[self.props["Wärmebus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                relative_maximum=self.computed_props["Einsatzbeschränkung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            ),
-            P_el=fx.Flow(
-                label='Pel',
-                bus=busses[self.props["Strombus"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Stromkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Strom"],
-                    effects["funding"]: self.computed_props["BEW Förderung Strom"]
-                },
-            ),
-            Q_ab=fx.Flow(
-                label='Qab',
-                bus=busses[self.props["Abwärmebus"]],
-                effects_per_flow_hour={effects["costs"]: self.computed_props["Abwärmekosten"]}
-            )
+        heat_pump = fx.linear_converters.HeatPumpWithSource(
+            label=self.name,
+            COP = self._get_cop(time_series_data),
+            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat], relative_maximum=self.relative_maximum),
+            P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
+                         effects_per_flow_hour={
+                             effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
+                             effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model)
+                         }),
+            Q_ab=fx.Flow(label='Qab', bus=busses[self.bus_waste_heat],
+                         effects_per_flow_hour={effects['costs']: self.heat_source_costs})
         )
-
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(comp.Q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+        self.insert_size(heat_pump.Q_th, effects, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.P_el, heat_pump.Q_th, heat_pump.COP, effects['costs'])
+        return heat_pump
 
 
 class Geothermie(Waermepumpe):
-    _property_definitions = {
-        **Waermepumpe._property_definitions,
-        "Anteil Pumpstrom pro MW_geo": (NO_DEFAULT, Union[int, float]),
-        # Connections
-        "Abwärmebus": ("Abwaerme", str)
-    }
+    amount_of_pump_electricity: Union[int, float, str] = Field(alias='Anteil Pumpstrom pro MW_geo')
+    bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
+    
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(data)
+        self.amount_of_pump_electricity = extract_data(self.amount_of_pump_electricity, data)
+    
+    def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
+        if self.cop:
+            return extract_data(self.cop, time_series_data)
+        else:
+            cop_wo_pump = self.calculate_cop(
+                source_temperature=extract_data(self.source_temperature, time_series_data),
+                target_temperature=extract_data(self.sink_temperature, time_series_data),
+                eta=0.5)
 
-    _invest_prop = "Thermische Leistung"
+            return cop_wo_pump / (1 + self.amount_of_pump_electricity)
+    
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        self._insert_data(time_series_data)
 
-    def compute_cop(self, time_series_data) -> Union[float, np.ndarray]:
-        super().compute_cop(time_series_data)
-        self.computed_props["COP ohne Pumpstrom"] = self.computed_props["COP"]
-        self.computed_props["COP"] = self.computed_props["COP ohne Pumpstrom"] / (
-                1 + self.props["Anteil Pumpstrom pro MW_geo"])
-        return self.computed_props["COP"]
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.HeatPumpWithSource(
-            label=self.props["Name"],
-            COP=self.computed_props["COP"],
-            Q_th=fx.Flow(
-                label='Qth',
-                meta_data=self.meta_data,
-                bus=busses[self.props["Wärmebus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                relative_maximum=self.computed_props["Einsatzbeschränkung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            ),
-            P_el=fx.Flow(
-                label='Pel',
-                bus=busses[self.props["Strombus"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Stromkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Strom"],
-                    effects["funding"]: self.computed_props["BEW Förderung Strom"]
-                },
-            ),
-            Q_ab=fx.Flow(
-                label='Qab',
-                bus=busses[self.props["Abwärmebus"]],
-            )
+        heat_pump = fx.linear_converters.HeatPumpWithSource(
+            label=self.name,
+            COP = self._get_cop(time_series_data),
+            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat], relative_maximum=self.relative_maximum),
+            P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
+                         effects_per_flow_hour={
+                             effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
+                             effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model)
+                         }),
+            Q_ab=fx.Flow(label='Qab', bus=busses[self.bus_waste_heat])
         )
-
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(comp.Q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+        self.insert_size(heat_pump.Q_th, effects, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.P_el, heat_pump.Q_th, heat_pump.COP, effects['costs'])
+        return heat_pump
 
 
-class Abwaerme(EnergySystemObject):
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "Abwärmekosten": (NO_DEFAULT, Union[int, float, str]),
-
-        "Grüne Wärme": (0, Union[int, float, str]),
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-        "Abwärmebus": ("Abwaerme", str)
-    }
-
-    _invest_prop = "Thermische Leistung"
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Abwärmekosten"] = as_time_series(self.props["Abwärmekosten"], time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        q_th = fx.Flow(label='Qth',
-                       meta_data=self.meta_data,
-                     bus=busses[self.props["Wärmebus"]],
-                     size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                     can_be_off=self.on_parameters,
-                **self.flow_kwargs
-                     )
-
+class Abwaerme(ThermalInvestElement):
+    waste_heat_costs: Union[int, float, str] = Field(alias='Abwärmekosten')
+    bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
+    
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(data)
+        self.waste_heat_costs = extract_data(self.waste_heat_costs, data)
+    
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        self._insert_data(time_series_data)
+        
+        q_th = fx.Flow(label='Qth', bus=busses[self.bus_heat])
         q_abw = fx.Flow(label='Qabw',
-                      bus=busses[self.props["Abwärmebus"]],
-                      effects_per_flow_hour={effects["costs"]: self.computed_props["Abwärmekosten"]}
-                      )
+                        bus=busses[self.bus_waste_heat],
+                        effects_per_flow_hour={effects['costs']: self.waste_heat_costs})
 
         comp = fx.LinearConverter(
-            label=self.props["Name"],
+            label=self.name,
             inputs=[q_abw],
             outputs=[q_th],
             conversion_factors=[{q_abw: 1, q_th: 1}]
         )
 
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+        self.insert_size(q_th, effects, years_of_model)
+        # No Grid Connection!
+        return comp
 
 
-class KWKekt(EnergySystemObject):
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Brennstoff Leistung": (NO_DEFAULT, Union[int, float]),
-        "Elektrische Leistung (Stützpunkte)": (NO_DEFAULT, str),
-        "Thermische Leistung (Stützpunkte)": (NO_DEFAULT, str),
-        "Brennstoff": (NO_DEFAULT, str),
-        "Zusatzkosten pro MWh Brennstoff": (0, Union[int, float, str]),
-        "Ausschaltbar": (True, bool),
-        "Grüne Wärme": (0, Union[int, float, str]),
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-        "Strombus": ("StromEinspeisung", str)
-    }
+class KWKekt(InvestElement):
+    fuel_power: Union[int, float] = Field(alias='Brennstoff Leistung')
+    electrical_power: Tuple[float, float] = Field(alias='Elektrische Leistung (Stützpunkte)')
+    thermal_power: Tuple[float, float] = Field(alias='Thermische Leistung (Stützpunkte)')
+    fuel_type: str = Field(alias='Brennstoff')
+    extra_costs_per_mwh_fuel: Union[int, float, str] = Field(alias='Zusatzkosten pro MWh Brennstoff', default=0)
+    can_be_off: bool = Field(alias='Ausschaltbar', default=True)
 
-    _invest_prop = "Brennstoff Leistung"
+    bus_elec: str = Field(alias="Strombus", default='StromEinspeisung')
+    bus_heat: str = Field(alias="Wärmebus", default='Fernwärme')
 
-    def validate_properties(self):
-        super().validate_properties()
-        # Validate Power Points
-        electric_power_points = tuple_of_numbers_from_str(
-            self.props["Elektrische Leistung (Stützpunkte)"], delimiter='-')
-        thermal_power_points = tuple_of_numbers_from_str(
-            self.props["Thermische Leistung (Stützpunkte)"], delimiter='-')
-        if len(electric_power_points) != len(thermal_power_points):
-            raise ValueError("The number of electricity and thermal power points must be equal")
-        for epp, tpp in zip(electric_power_points, thermal_power_points):
-            if epp / self.props["Brennstoff Leistung"] > 1:
-                raise ValueError(f"The electric efficiency of {self.props['Name']} exceeds 100%.")
-            if tpp / self.props["Brennstoff Leistung"] > 1:
-                raise ValueError(f"The thermal efficiency of {self.props['Name']} exceeds 100%.")
-            if (epp + tpp) / self.props["Brennstoff Leistung"] > 1:
-                raise ValueError(f"The total efficiency of {self.props['Name']} exceeds 100%.")
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(data)
+        self.extra_costs_per_mwh_fuel = extract_data(self.extra_costs_per_mwh_fuel, data)
 
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Brennstoffkosten"] = as_time_series(self.props["Brennstoff"], time_series_data)
-        self.computed_props["Zusatzkosten pro MWh Brennstoff"] = as_time_series(
-            self.props["Zusatzkosten pro MWh Brennstoff"], time_series_data)
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        self._insert_data(time_series_data)
 
-        self.computed_props["CO2 Faktor"] = as_time_series(co2_factors.get(self.props["Brennstoff"], 0),
-                                                               time_series_data)
+        flow_heat = fx.Flow('Qth', busses[self.bus_heat])
+        flow_fuel = fx.Flow('Qfu', busses[self.fuel_type],
+                            effects_per_flow_hour={effects["costs"]: extract_data(self.fuel_type, time_series_data) +
+                                                                     self.extra_costs_per_mwh_fuel})
+        flow_el = fx.Flow('Pel', busses[self.bus_elec],
+                          effects_per_flow_hour={effects["costs"]: -1 * extract_data('Strom', time_series_data)})
 
-        self.computed_props["Elektrische Leistung (Stützpunkte)"] = tuple_of_numbers_from_str(
-            self.props["Elektrische Leistung (Stützpunkte)"], delimiter='-')
-        self.computed_props["Thermische Leistung (Stützpunkte)"] = tuple_of_numbers_from_str(
-            self.props["Thermische Leistung (Stützpunkte)"], delimiter='-')
-
-        self.computed_props["Stromerlöse"] = as_time_series("Strom", time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        flow_heat = fx.Flow('Qth', busses[self.props["Wärmebus"]])
-        flow_fuel = fx.Flow('Qfu', busses[self.props["Brennstoff"]],
-                            meta_data=self.meta_data,
-                            size=self.computed_props[f"Investment {self._invest_prop}"],
-                            effects_per_flow_hour={effects["costs"]:
-                                                       self.computed_props["Brennstoffkosten"] +
-                                                       self.computed_props["Zusatzkosten pro MWh Brennstoff"]},
-                            **self.flow_kwargs)
-        flow_el = fx.Flow('Pel', busses[self.props["Strombus"]],
-                          effects_per_flow_hour={effects["costs"]: -self.computed_props["Stromerlöse"]})
-
-        if self.props["Ausschaltbar"]:
+        if self.can_be_off:
             segmented_conversion_factors = {
-                flow_fuel: [(0, 1e-5), (self.computed_props["Brennstoff Leistung"], self.computed_props["Brennstoff Leistung"])],
-                flow_el: [(0, 1e-5), self.computed_props["Elektrische Leistung (Stützpunkte)"]],
-                flow_heat: [(0, 1e-5), self.computed_props["Thermische Leistung (Stützpunkte)"]]
+                flow_fuel: [(0, 1e-5), (self.fuel_power, self.fuel_power)],
+                flow_el: [(0, 1e-5), self.electrical_power],
+                flow_heat: [(0, 1e-5), self.thermal_power]
             }
         else:
             segmented_conversion_factors = {
-                flow_fuel: [(self.computed_props["Brennstoff Leistung"], self.computed_props["Brennstoff Leistung"])],
-                flow_el: [self.computed_props["Elektrische Leistung (Stützpunkte)"]],
-                flow_heat: [self.computed_props["Thermische Leistung (Stützpunkte)"]]
+                flow_fuel: [(self.fuel_power, self.fuel_power)],
+                flow_el: [self.electrical_power],
+                flow_heat: [self.thermal_power]
             }
 
-
         comp = fx.LinearConverter(
-            label=self.props["Name"],
+            label=self.name,
             inputs=[flow_fuel],
             outputs=[flow_heat, flow_el], segmented_conversion_factors=segmented_conversion_factors)
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(flow_heat, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
+        self.insert_size(flow_fuel, effects, years_of_model)
+        return comp
 
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+    @field_validator("electrical_power", mode="before")
+    def validate_electrical_power(cls, value):
+        start_end = numbers_from_str(value)
+        if len(start_end) != 2:
+            raise ValueError(f"The electrical power points must be exactly 2 numbers (start and end).")
+        else:
+            return start_end
+
+    @field_validator("thermal_power", mode="before")
+    def validate_thermal_power(cls, value):
+        return numbers_from_str(value)
+
+    @model_validator(mode='after')
+    def validate_power_points(self):
+        if len(self.electrical_power) != len(self.thermal_power):
+            raise ValueError(f"The number of electrical power points ({len(self.electrical_power)}) must match the "
+                             f"number of thermal power points ({len(self.thermal_power)}).")
+
+        for epp, tpp in zip(self.electrical_power, self.thermal_power):
+            if epp / self.fuel_power > 1:
+                raise ValueError(f"The electric efficiency of {self.props['Name']} exceeds 100%.")
+            if tpp / self.fuel_power > 1:
+                raise ValueError(f"The thermal efficiency of {self.props['Name']} exceeds 100%.")
+            if (epp + tpp) / self.fuel_power > 1:
+                raise ValueError(f"The total efficiency of {self.props['Name']} exceeds 100%.")
 
 
 class ElementFactory:
@@ -1164,24 +1032,19 @@ class ElementFactory:
             'LinearTransformer_1_1': LinearTransformer,
             'Sink': Sink,
             'Source': Source,
-
-            #'AbwaermeWP': AbwaermeWaermepumpe,
-            #'Geothermie': Geothermie,
-            #'KWKekt': KWKekt,
-
-            #'EHK': EHK,
-
-            #'AbwaermeHT': Abwaerme,
-            #'Rueckkuehler': Rueckkuehler,
-
-
+            'AbwaermeWP': AbwaermeWaermepumpe,
+            'Geothermie': Geothermie,
+            'KWKekt': KWKekt,
+            'EHK': EHK,
+            'AbwaermeHT': Abwaerme,
+            'Rueckkuehler': Rueckkuehler,
             # More mappings as needed
         }
         return class_map.get(obj_type)
 
     def print_comps(self):
         rep = ""
-        for comp in sorted(self.created_comps, key=lambda comp: comp.props["Name"]):
+        for comp in sorted(self.created_comps, key=lambda comp: comp.name):
             rep += f"{comp}\n"
         return rep
 
@@ -1244,16 +1107,45 @@ def restrict_availlability(component: flixOpt.elements.Component, exists: Union[
     return component
 
 
-def tuple_of_numbers_from_str(input_string: str, delimiter='-') -> Tuple[float, ...]:
-    '''
-    This function was written to extract numbers from a string
+def numbers_from_str(input_string: str, delimiter: str = '-', check_ascending: bool = False) -> Tuple[float, ...]:
+    """
+    Extract numbers from a delimited string and return them as a tuple of floats.
+
+    Parameters
     ----------
-    Returns
+    input_string : str
+        The input string to extract numbers from.
+    delimiter : str, optional
+        The delimiter to use for splitting the input string. Default is '-'.
+    check_ascending : bool, optional
+        Whether to check if the numbers are in ascending order. Default is False.
+
+    Returns:
     -------
     Tuple[float, ...]
-    '''
-    input_string = input_string.replace(',', '.')
-    return tuple([float(i) for i in input_string.split(delimiter)])
+        A tuple of floats extracted from the input string.
+
+    Raises:
+    ------
+    ValueError
+        If the input string contains invalid or non-numeric values.
+    """
+    input_string = input_string.replace(',', '.')  # Replace commas with dots (for robust decimal support)
+
+    parts = [part.strip() for part in input_string.split(delimiter)]  # Split the string by the delimiter and strip whitespace
+
+    # Convert to floats and validate
+    try:
+        numbers = tuple(float(part) for part in parts if part)
+    except ValueError as e:
+        raise ValueError(f"Invalid input: '{input_string}'. All parts must be numeric.") from e
+
+    if not numbers:  # Check for empty results
+        raise ValueError(f"Invalid input: '{input_string}'. No valid numbers found.")
+    if check_ascending and not all(x <= y for x, y in zip(numbers, numbers[1:])):
+        raise ValueError(f"Invalid input: '{input_string}'. Numbers must be in ascending order. "
+                         f"Found a violation in the sequence: {numbers}.")
+    return numbers
 
 
 def is_valid_format_segmentsOfFlows(input_string: str, mode: Literal['validate', 'decode']) -> Union[bool, list]:
