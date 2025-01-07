@@ -347,6 +347,7 @@ class LinearTransformer(PowerInvestElement):
 
 class Kessel(ThermalInvestElement):
     eta_thermal: Union[float, str] = Field(alias="Thermischer Wirkungsgrad")
+    fuel_type: str = Field(alias='Brennstoff')
 
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
@@ -362,7 +363,8 @@ class Kessel(ThermalInvestElement):
         boiler = fx.linear_converters.Boiler(
             label=self.name,
             eta=self.eta_thermal,
-            Q_fu=fx.Flow(label="Q_fu", bus=busses["bus_fuel"]),
+            Q_fu=fx.Flow(label="Q_fu", bus=busses["bus_fuel"],
+                         effects_per_flow_hour={effects['costs']: extract_data(self.fuel_type, time_series_data)}),
             Q_th=fx.Flow(label="Q_th", bus=busses["bus_heat"])
         )
         self.insert_size(boiler.Q_th, effects, years_of_model)
@@ -755,7 +757,8 @@ class EHK(ThermalInvestElement):
         ehk = fx.linear_converters.Power2Heat(
             label=self.name,
             eta=self.eta_thermal,
-            P_el=fx.Flow(label="P_el", bus=busses["bus_elec"]),
+            P_el=fx.Flow(label="P_el", bus=busses["bus_elec"],
+                         effects_per_flow_hour={effects['costs']: extract_data('Strom', time_series_data)}),
             Q_th=fx.Flow(label="Q_th", bus=busses["bus_heat"])
         )
         self.insert_size(ehk.Q_th, effects, years_of_model)
