@@ -1076,31 +1076,32 @@ class KWKekt(EnergySystemObject):
         return self.flix_comps
 
 
-class ComponentFactory:
+class ElementFactory:
     def __init__(self,
+                 flow_system: fx.FlowSystem,
                  time_series_data: pd.DataFrame,
                  co2_factors: Dict[str, float],
-                 years_of_model: List[int],
-                 effects: Dict[str, fx.Effect],
-                 busses: Dict[str, fx.Bus]):
+                 years_of_model: List[int]):
         self.time_series_data = time_series_data
         self.co2_factors = co2_factors
         self.years_of_model = years_of_model
-        self.effects = effects
-        self.busses = busses
+        self.flow_system = flow_system
+        self.effects = {effect.label: effect for effect in flow_system.effect_collection.effects}
+        self.busses = {bus.label: bus for bus in flow_system.all_buses}
 
-        self.created_comps: List[EnergySystemObject] = []
+        self.created_comps: List[Element] = []
 
-    def create_energy_object(self, obj_type: str, object_properties: Dict):
+    def create_energy_object(self, obj_type: str, **properties):
         obj_class = self.get_class_by_type(obj_type)
         if obj_class:
-            energy_obj = obj_class(**object_properties)
+            energy_obj: Element = obj_class(**properties)
             self.created_comps.append(energy_obj)
-            return energy_obj.connect_to_system(time_series_data=self.time_series_data,
-                                                co2_factors=self.co2_factors,
-                                                years_of_model=self.years_of_model,
-                                                effects=self.effects,
-                                                busses=self.busses)
+            return energy_obj.add_to_flow_system(flow_system=self.flow_system,
+                                                 effects=self.effects,
+                                                 busses=self.busses,
+                                                 time_series_data=self.time_series_data,
+                                                 co2_factors=self.co2_factors,
+                                                 years_of_model=self.years_of_model)
         else:
             raise ValueError(f"Unknown energy object type: {obj_type}")
 
@@ -1108,18 +1109,22 @@ class ComponentFactory:
         # Map obj_type to the appropriate class
         class_map = {
             'Waermepumpe': Waermepumpe,
-            'AbwaermeWP': AbwaermeWaermepumpe,
-            'Geothermie': Geothermie,
             'KWK': KWK,
-            'KWKekt': KWKekt,
             'Kessel': Kessel,
-            'EHK': EHK,
             'Speicher': Speicher,
-            'AbwaermeHT': Abwaerme,
-            'Rueckkuehler': Rueckkuehler,
-            'LinearTransformer_1_1': LinearTransformer_1_1,
+            'LinearTransformer_1_1': LinearTransformer,
             'Sink': Sink,
             'Source': Source,
+
+            #'AbwaermeWP': AbwaermeWaermepumpe,
+            #'Geothermie': Geothermie,
+            #'KWKekt': KWKekt,
+
+            #'EHK': EHK,
+
+            #'AbwaermeHT': Abwaerme,
+            #'Rueckkuehler': Rueckkuehler,
+
 
             # More mappings as needed
         }
