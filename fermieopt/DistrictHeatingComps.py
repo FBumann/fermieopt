@@ -766,77 +766,32 @@ class EHK(ThermalInvestElement):
         return ehk
 
 
-class Rueckkuehler(GridFee):
-    _property_definitions = {
-        **GridFee._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "Strombedarf": (0, Union[int, float]),
-        "Zusatzkosten pro MWh Strom": (0, Union[int, float, str]),
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-        "Strombus": ("StromBezug", str)
-    }
+class Rueckkuehler(ThermalInvestElement):
+    specific_electricity_demand: Union[int, float, str] = Field(alias="Strombedarf", default=0)
+    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias="Zusatzkosten pro MWh Strom", default=0)
 
-    _invest_prop = "Thermische Leistung"
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        self.specific_electricity_demand = extract_data(self.specific_electricity_demand, data)
 
-    @property
-    def factor_grid_to_invest(self) -> float:
-        value = np.max(self.kwargs.get("relative_maximum", 1) * self.computed_props["exists"] * self.props["Strombedarf"])
-        self.computed_props["Faktor für Netzentgeltumrechnung"] = value
-        return value
 
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Zusatzkosten pro MWh Strom"] = as_time_series(
-            self.props["Zusatzkosten pro MWh Strom"], time_series_data)
-        self.computed_props["Stromkosten"] = as_time_series("Strom", time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.CoolingTower(
-            label=self.props["Name"],
-            specific_electricity_demand=self.props["Strombedarf"],
-            Q_th=fx.Flow(
-                label='Qth',
-                meta_data=self.meta_data,
-                bus=busses[self.props["Wärmebus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            ),
-            P_el=fx.Flow(
-                label='Pel',
-                bus=busses[self.props["Strombus"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Stromkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Strom"]}
-            )
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        cool = fx.linear_converters.CoolingTower(
+            label=self.name,
+            specific_electricity_demand=self.specific_electricity_demand,
+            P_el=fx.Flow(label="P_el", bus=busses["bus_elec"],
+                         effects_per_flow_hour={effects["costs"]: time_series_data['Strom'] + self.extra_costs_per_mwh_elec}),
+            Q_th=fx.Flow(label="Q_th", bus=busses["bus_heat"])
         )
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+        self.insert_size(cool.Q_th, effects, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, cool.P_el, cool.Q_th, 1/cool.specificElectricityDemand, effects['costs'])
+        return cool
 
 
 class AbwaermeWaermepumpe(Waermepumpe):
