@@ -67,6 +67,81 @@ class InvestElement(Element):
             raise ValueError(f"Either set BOTH or NONE of 'Startjahr' and 'Lebensdauer'!")
         return self
 
+    @classmethod
+    def get_annuity_factor(cls, interest_rate: float, lifetime: int) -> float:
+        """ Get the annuity factor for a given interest rate and lifetime """
+        if interest_rate == 0:  # Preventing ZeroDivision
+            annuity_factor = 1 / lifetime
+        else:
+            annuity_factor = (((1 + interest_rate) ** lifetime * interest_rate) /
+                              ((1 + interest_rate) ** lifetime - 1))
+        return annuity_factor
+
+    @classmethod
+    def costs_and_funding(cls,
+            interest_rate: float,
+            starting_year: int,
+            lifetime: int,
+            years_of_model: List[int],
+            invest_costs: float,
+            specific_invest_costs: float,
+            annual_costs: float,
+            specific_annual_costs: float,
+            funding_rate: float) -> Tuple[Dict[str, List[float]], Dict[str, List[float]]]:
+        """
+        Calculates the annual costs and funding for an investment based on various financial parameters.
+
+        This function computes the fixed and specific costs and funding for an investment, considering the
+        interest rate, lifetime of the investment, investment costs (both per MW and per year), other costs (both per MW
+        and per year), funding rate, and grid fee per MW per year. The costs and funding are calculated using the annuity
+        method, which spreads out the initial investment costs over the lifetime of the investment, adjusted for the
+        interest rate.
+
+        Parameters:
+        - interest_rate (float): The annual interest rate used for calculating the annuity factor.
+        - starting_year: first year of operation
+        - lifetime (int): lifetime for calculating the investment
+        - years_of_model (List[int]): The years used in the model
+        - invest_costs (float): The total investment costs.
+        - invest_costs_per_mw (float): The investment costs per megawatt (MW).
+        - other_annual_costs (float): Other annual costs not included in the investment costs.
+        - other_annual_costs_per_mw (float): Other costs per megawatt (MW) not included in the investment costs.
+        - funding_rate (float): The rate at which the investment is funded.
+
+        Returns:
+        - Tuple[Dict[str, float], Dict[str, float]]: A tuple containing two dictionaries:
+            1. Fixed costs and funding, with keys being strings and values being the corresponding amounts in currency units.
+            2. Specific costs and funding, similar to the fixed costs but calculated per MW.
+        """
+        annuity_factor = cls.get_annuity_factor(interest_rate=interest_rate, lifetime=lifetime)
+        accounting_years = np.array(
+            [1 if starting_year <= year < (starting_year + lifetime) else 0 for year in years_of_model])
+
+        # Calculate costs and funding
+        fix_costs = {
+            "costs": ((invest_costs * annuity_factor + annual_costs) * accounting_years).tolist(),
+            "funding": (invest_costs * annuity_factor * funding_rate * accounting_years).tolist()
+        }
+        specific_costs = {
+            "costs": ((specific_invest_costs * annuity_factor + specific_annual_costs) * accounting_years).tolist(),
+            "funding": ((specific_invest_costs * annuity_factor * funding_rate) * accounting_years).tolist()
+        }
+
+        def clean_dict(d):
+            # Remove keys with lists that are empty or contain only zeros
+            keys_to_remove = [key for key, values in d.items() if not values or all(value == 0 for value in values)]
+            for key in keys_to_remove:
+                del d[key]
+            """
+            # TODO: Maybe do this later on
+            # Check if the dictionary is now empty or all remaining lists are empty or contain only zeros
+            if not d or all(not values or all(value == 0 for value in values) for values in d.values()):
+                return None
+            """
+            return d
+
+        return clean_dict(fix_costs), clean_dict(specific_costs)
+
 
 class PowerInvestElement(InvestElement):
     power: Union[int, float] = Field(alias='Nennleistung [MW]')
@@ -986,7 +1061,6 @@ class Abwaerme(EnergySystemObject):
         return self.flix_comps
 
 
-
 class KWKekt(EnergySystemObject):
     _property_definitions = {
         **EnergySystemObject._property_definitions,
@@ -1158,6 +1232,7 @@ class ElementFactory:
             rep += f"{comp}\n"
         return rep
 
+
 def extract_data(value: Union[str, Any], data: pd.DataFrame) -> Union[np.ndarray, Any]:
     """
     Extracts data from a DataFrame based on the provided value. If the value is a string, it is assumed to be a column name
@@ -1216,79 +1291,6 @@ def restrict_availlability(component: flixOpt.elements.Component, exists: Union[
     return component
 
 
-# Investment stuff
-def get_annuity_factor(interest_rate: float, lifetime: int) -> float:
-    if interest_rate == 0:  # Preventing ZeroDicvision
-        annuity_factor = 1 / lifetime
-    else:
-        annuity_factor = (((1 + interest_rate) ** lifetime * interest_rate) /
-                          ((1 + interest_rate) ** lifetime - 1))
-    return annuity_factor
-
-def costs_and_funding(
-        interest_rate: float,
-        starting_year: int,
-        lifetime: int,
-        years_of_model: List[int],
-        invest_costs: float,
-        specific_invest_costs: float,
-        annual_costs: float,
-        specific_annual_costs: float,
-        funding_rate: float) -> Tuple[Dict[str, List[float]], Dict[str, List[float]]]:
-    '''
-    Calculates the annual costs and funding for an investment based on various financial parameters.
-
-    This function computes the fixed and specific costs and funding for an investment, considering the
-    interest rate, lifetime of the investment, investment costs (both per MW and per year), other costs (both per MW
-    and per year), funding rate, and grid fee per MW per year. The costs and funding are calculated using the annuity
-    method, which spreads out the initial investment costs over the lifetime of the investment, adjusted for the
-    interest rate.
-
-    Parameters:
-    - interest_rate (float): The annual interest rate used for calculating the annuity factor.
-    - starting_year: first year of operation
-    - lifetime (int): lifetime for calculating the investment
-    - years_of_model (List[int]): The years used in the model
-    - invest_costs (float): The total investment costs.
-    - invest_costs_per_mw (float): The investment costs per megawatt (MW).
-    - other_annual_costs (float): Other annual costs not included in the investment costs.
-    - other_annual_costs_per_mw (float): Other costs per megawatt (MW) not included in the investment costs.
-    - funding_rate (float): The rate at which the investment is funded.
-
-    Returns:
-    - Tuple[Dict[str, float], Dict[str, float]]: A tuple containing two dictionaries:
-        1. Fixed costs and funding, with keys being strings and values being the corresponding amounts in currency units.
-        2. Specific costs and funding, similar to the fixed costs but calculated per MW.
-    '''
-    annuity_factor = get_annuity_factor(interest_rate=interest_rate, lifetime=lifetime)
-    accounting_years = np.array([1 if starting_year <= year < (starting_year + lifetime) else 0 for year in years_of_model])
-
-    # Calculate costs and funding
-    fix_costs = {
-        "costs": ((invest_costs * annuity_factor + annual_costs) * accounting_years).tolist(),
-        "funding": (invest_costs * annuity_factor * funding_rate * accounting_years).tolist()
-    }
-    specific_costs = {
-        "costs": ((specific_invest_costs * annuity_factor + specific_annual_costs) * accounting_years).tolist(),
-        "funding": ((specific_invest_costs * annuity_factor * funding_rate) * accounting_years).tolist()
-    }
-
-    def clean_dict(d):
-        # Remove keys with lists that are empty or contain only zeros
-        keys_to_remove = [key for key, values in d.items() if not values or all(value == 0 for value in values)]
-        for key in keys_to_remove:
-            del d[key]
-        """
-        # TODO: Maybe do this later on
-        # Check if the dictionary is now empty or all remaining lists are empty or contain only zeros
-        if not d or all(not values or all(value == 0 for value in values) for values in d.values()):
-            return None
-        """
-        return d
-
-    return clean_dict(fix_costs), clean_dict(specific_costs)
-
-
 def tuple_of_numbers_from_str(input_string: str, delimiter='-') -> Tuple[float, ...]:
     '''
     This function was written to extract numbers from a string
@@ -1345,6 +1347,7 @@ def add_effect_per_flow_hour(flow: fx.Flow, effect: fx.Effect, standard_effect: 
         flow.effects_per_flow_hour = {effect: factor}
     else:
         flow.effects_per_flow_hour = {effect: factor, standard_effect: flow.effects_per_flow_hour}
+
 
 def update_meta_data(component: flixOpt.elements.Component, meta_data: Dict):
     if component.meta_data is None:
