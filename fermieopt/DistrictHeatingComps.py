@@ -203,6 +203,7 @@ class PowerInvestElement(InvestElement):
 class ThermalInvestElement(InvestElement):
     thermal_power: Union[int, float, str] = Field(alias='Thermische Leistung [MW]')
     grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0)
+    bus_heat: str = Field(alias="Wärmebus", default='Fernwärme')
 
     def insert_size(self,
                     flow: fx.Flow,
@@ -363,9 +364,9 @@ class Kessel(ThermalInvestElement):
         boiler = fx.linear_converters.Boiler(
             label=self.name,
             eta=self.eta_thermal,
-            Q_fu=fx.Flow(label="Q_fu", bus=busses["bus_fuel"],
+            Q_fu=fx.Flow(label="Q_fu", bus=busses[self.fuel_type],
                          effects_per_flow_hour={effects['costs']: extract_data(self.fuel_type, time_series_data)}),
-            Q_th=fx.Flow(label="Q_th", bus=busses["bus_heat"])
+            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat])
         )
         self.insert_size(boiler.Q_th, effects, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, boiler.Q_fu, boiler.Q_th, boiler.eta, effects['costs'])
@@ -381,7 +382,6 @@ class KWK(ThermalInvestElement):
     reverse_flow_temperature: Union[int, float, str] = Field(alias='Rücklauftemperatur')
     ambient_temperature: Union[int, float, str] = Field(alias='Umgebungstemperatur')
 
-    bus_heat: str = Field(alias="Wärmebus", default='Fernwärme')
     bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
     def _convert_to_flixopt(self,
@@ -403,7 +403,7 @@ class KWK(ThermalInvestElement):
                              effects['costs']: -1 * extract_data('Strom', time_series_data),
                              effects['CO2FW']: -1 * self.co2_emissions_electricity(time_series_data, co2_factors)
                          }),
-            Q_fu=fx.Flow(label='Qfu', bus=busses[self.bus_fuel],
+            Q_fu=fx.Flow(label='Qfu', bus=busses[self.fuel_type],
                          effects_per_flow_hour={
                              effects['costs']: (extract_data(self.fuel_type, time_series_data) +
                                                 self.extra_costs_per_mwh_fuel +
@@ -482,7 +482,6 @@ class Waermepumpe(ThermalInvestElement):
     scop_bew: Optional[Union[int, float]] = Field(alias="SCOP für BEW", default=None)
     max_bew_elec_funding: Optional[Union[int, float]] = Field(alias="Maximale Stromkostenförderung BEW", default=None)
 
-    bus_heat: str = Field(alias="Wärmebus", default='Fernwärme')
     bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
     def _convert_to_flixopt(self,
@@ -665,10 +664,10 @@ class Speicher(ThermalInvestElement):
             relative_loss_per_hour=self.loss_per_hour,
             relative_maximum_charge_state=self.normalized_temperature_spread(time_series_data),
             charging=fx.Flow(label='QthLoad',
-                             bus=busses["Fernwärme"],
+                             bus=busses[self.bus_heat],
                              relative_maximum=self.normalized_temperature_spread(time_series_data)),
             discharging=fx.Flow(label='QthUnload',
-                                bus=busses["Fernwärme"],
+                                bus=busses[self.bus_heat],
                                 relative_maximum=self.normalized_temperature_spread(time_series_data)),
             prevent_simultaneous_charge_and_discharge=True
         )
@@ -742,6 +741,7 @@ class Speicher(ThermalInvestElement):
 
 class EHK(ThermalInvestElement):
     eta_thermal: Union[float, str] = Field(alias="Thermischer Wirkungsgrad")
+    bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
@@ -754,12 +754,14 @@ class EHK(ThermalInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
+        self._insert_data(time_series_data)
+        
         ehk = fx.linear_converters.Power2Heat(
             label=self.name,
             eta=self.eta_thermal,
-            P_el=fx.Flow(label="P_el", bus=busses["bus_elec"],
+            P_el=fx.Flow(label="P_el", bus=busses[self.bus_elec],
                          effects_per_flow_hour={effects['costs']: extract_data('Strom', time_series_data)}),
-            Q_th=fx.Flow(label="Q_th", bus=busses["bus_heat"])
+            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat])
         )
         self.insert_size(ehk.Q_th, effects, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, ehk.P_el, ehk.Q_th, ehk.eta, effects['costs'])
@@ -769,6 +771,8 @@ class EHK(ThermalInvestElement):
 class Rueckkuehler(ThermalInvestElement):
     specific_electricity_demand: Union[int, float, str] = Field(alias="Strombedarf", default=0)
     extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias="Zusatzkosten pro MWh Strom", default=0)
+    
+    bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
@@ -782,12 +786,14 @@ class Rueckkuehler(ThermalInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
+        self._insert_data(time_series_data)
+        
         cool = fx.linear_converters.CoolingTower(
             label=self.name,
             specific_electricity_demand=self.specific_electricity_demand,
-            P_el=fx.Flow(label="P_el", bus=busses["bus_elec"],
+            P_el=fx.Flow(label="P_el", bus=busses[self.bus_elec],
                          effects_per_flow_hour={effects["costs"]: time_series_data['Strom'] + self.extra_costs_per_mwh_elec}),
-            Q_th=fx.Flow(label="Q_th", bus=busses["bus_heat"])
+            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat])
         )
         self.insert_size(cool.Q_th, effects, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, cool.P_el, cool.Q_th, 1/cool.specificElectricityDemand, effects['costs'])
