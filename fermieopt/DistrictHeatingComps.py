@@ -1194,35 +1194,6 @@ def restrict_availlability(component: flixOpt.elements.Component, exists: Union[
     return component
 
 
-
-def bew_operation_funding_from_scop(scop: Union[int, float],
-                                    unit: Literal["MWh_amb", "MWh_th", "MWh_el"] = "MWh_amb") -> Union[int, float]:
-    '''
-    Calclulated the maximum funding according to the BEW.
-    Parameters
-    ----------
-    scop: assumed scop (seasonal coefficent of Performance) or cop
-
-    Returns
-    -------
-    Funding in euro per MWh_amb
-
-    '''
-    if unit not in ["MWh_amb", "MWh_th", "MWh_el"]:
-        raise Exception(f"Not a valid unit. Choose from: {['MWh_amb', 'MWh_th', 'MWh_el']}")
-
-    value = (5.5 - (6.8 - 17 / scop) * 0.75) * (scop / (scop - 1))  # ct/kWh
-    fund_amb = value * 10  # €/MWh_amb
-    if fund_amb >= 92:  # Funding is limited to 92 €/MWh_amb
-        fund_amb = 92
-
-    if unit == "MWh_amb":
-        return fund_amb
-    elif unit == "MWh_th":
-        return fund_amb * ((scop - 1) / scop)
-    else:
-        return fund_amb * (scop - 1)
-
 # Investment stuff
 def get_annuity_factor(interest_rate: float, lifetime: int) -> float:
     if interest_rate == 0:  # Preventing ZeroDicvision
