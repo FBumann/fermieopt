@@ -153,11 +153,14 @@ class PowerInvestElement(InvestElement):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         self.fixed_profile = extract_data(self.fixed_profile, data)
 
-    def _power_invest(self, effects: Dict[str, fx.Effect], years_of_model: List[int]) -> Union[float, fx.InvestParameters]:
+    def insert_size(self, 
+                                  flow: fx.Flow, 
+                                  effects: Dict[str, fx.Effect], 
+                                  years_of_model: List[int]) -> None:
         if not self.needs_investment:
-            return self.power
+            flow.size = self.power
         else:
-            fixed_effects, specific_effects = self.costs_and_funding(
+            fixed_effects_per_period, specific_effects_per_period = self.costs_and_funding(
                 interest_rate=self.interest_rate,
                 starting_year=self.start_year,
                 lifetime=self.lifetime,
@@ -168,15 +171,21 @@ class PowerInvestElement(InvestElement):
                 specific_annual_costs=self.annual_costs_specific,
                 funding_rate=self.funding_rate)
 
-            return fx.InvestParameters(
+            fixed_effects_total = {effect: np.sum(values) for effect, values in fixed_effects_per_period.items()}
+            specific_effects_total = {effect: np.sum(values) for effect, values in specific_effects_per_period.items()}
+
+            flow.size = fx.InvestParameters(
                 optional=self.optional,
                 fixed_size=self.power if isinstance(self.power, (int, float)) else None,
                 minimum_size=self.minimum_power,
                 maximum_size=self.maximum_power,
-
-                specific_effects=insert_effects(specific_effects, effects),
-                fix_effects=insert_effects(fixed_effects, effects)
+                fix_effects=insert_effects(fixed_effects_total, effects),
+                specific_effects=insert_effects(specific_effects_total, effects),
             )
+            update_meta_data(flow,
+                             {'invest_effects': fixed_effects_per_period,
+                              'specific_effects': specific_effects_per_period
+                              })
 
     @property
     def minimum_power(self) -> Optional[float]:
@@ -195,13 +204,14 @@ class ThermalInvestElement(InvestElement):
     thermal_power: Union[int, float, str] = Field(alias='Thermische Leistung [MW]')
     grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0)
 
-    def _thermal_power_invest(self,
-                              effects: Dict[str, fx.Effect],
-                              years_of_model: List[int]) -> Union[float, fx.InvestParameters]:
+    def insert_size(self,
+                    flow: fx.Flow,
+                    effects: Dict[str, fx.Effect],
+                    years_of_model: List[int]):
         if not self.needs_investment:
-            return self.thermal_power
+            flow.size = self.thermal_power
         else:
-            fixed_effects, specific_effects = self.costs_and_funding(
+            fixed_effects_per_period, specific_effects_per_period = self.costs_and_funding(
                 interest_rate=self.interest_rate,
                 starting_year=self.start_year,
                 lifetime=self.lifetime,
@@ -212,28 +222,40 @@ class ThermalInvestElement(InvestElement):
                 specific_annual_costs=self.annual_costs_specific,
                 funding_rate=self.funding_rate)
 
-            return fx.InvestParameters(
+            fixed_effects_total = {effect: np.sum(values) for effect, values in fixed_effects_per_period.items()}
+            specific_effects_total = {effect: np.sum(values) for effect, values in specific_effects_per_period.items()}
+
+            flow.size = fx.InvestParameters(
                 optional=self.optional,
-                fixed_size=self.thermal_power if isinstance(self.thermal_power, (int, float)) else None,
-                minimum_size=self.minimum_thermal_power,
-                maximum_size=self.maximum_thermal_power,
-                specific_effects=insert_effects(specific_effects, effects),
-                fix_effects=insert_effects(fixed_effects, effects)
+                fixed_size=self.power if isinstance(self.power, (int, float)) else None,
+                minimum_size=self.minimum_power,
+                maximum_size=self.maximum_power,
+                fix_effects=insert_effects(fixed_effects_total, effects),
+                specific_effects=insert_effects(specific_effects_total, effects),
             )
 
+            update_meta_data(flow, {
+                'invest_effects': fixed_effects_per_period,
+                'specific_effects': specific_effects_per_period
+            })
+
     @staticmethod
-    def add_grid_fee(grid_fee: Union[int, float],
-                     grid_flow: fx.Flow,
-                     invest_flow: fx.Flow,
-                     efficiency: Union[int, float, np.ndarray],
-                     effect: fx.Effect) -> None:
-        """ Adds the grid fee as an Investment to the investment parameters of the invest_flow"""
+    def insert_grid_fee(grid_fee: Union[int, float],
+                        grid_flow: fx.Flow,
+                        invest_flow: fx.Flow,
+                        efficiency: Union[int, float, np.ndarray],
+                        effect: fx.Effect) -> None:
+        """ Adds the grid fee to the investment parameters of the invest_flow and it's meta_data. """
         if not isinstance(invest_flow.size, fx.InvestParameters) and not grid_fee == 0:
             raise Exception("There are no InvestParameters to add the grid_fee to")
         else:
-            invest_flow.size.specific_effects[effect] = (
-                    invest_flow.size.specific_effects.get(effect, 0)
-                    + grid_fee * np.max(grid_flow.relative_maximum / efficiency))
+            highest_possible_grid_draw = np.max(grid_flow.relative_maximum / efficiency)
+            yearly_grid_fee = grid_fee * highest_possible_grid_draw
+            invest_flow.size.specific_effects[effect] = (yearly_grid_fee
+                                                         + invest_flow.size.specific_effects.get(effect, 0))
+            update_meta_data(invest_flow, {'yearly_grid_fee_per_thermal_power': yearly_grid_fee,
+                                           'highest_possible_grid_draw': highest_possible_grid_draw})
+            update_meta_data(invest_flow, {'specific_effects': {effect: yearly_grid_fee}}, mode='add')
 
     @property
     def minimum_thermal_power(self) -> Optional[float]:
@@ -256,13 +278,13 @@ class Sink(PowerInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        return fx.Sink(
+        comp = fx.Sink(
             label=self.name,
             sink=fx.Flow(label=self.flow_label,
                          bus=busses[self.bus],
-                         size=self._power_invest(effects, years_of_model),
-                         fixed_relative_profile=self.fixed_profile),
-        )
+                         fixed_relative_profile=self.fixed_profile))
+        self.insert_size(comp.sink, effects, years_of_model)
+        return comp
 
 
 class Source(PowerInvestElement):
@@ -273,13 +295,15 @@ class Source(PowerInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        return fx.Source(
+        comp = fx.Source(
             label=self.name,
             source=fx.Flow(label=self.flow_label,
                          bus=busses[self.bus],
-                         size=self._power_invest(effects),
-                         fixed_relative_profile=self.fixed_profile),
+                         fixed_relative_profile=self.fixed_profile)
         )
+
+        self.insert_size(comp.source, effects, years_of_model)
+        return comp
 
 
 class LinearTransformer(PowerInvestElement):
@@ -305,7 +329,6 @@ class LinearTransformer(PowerInvestElement):
 
         flow_out = fx.Flow(label=self.flow_label,
                            bus=busses[self.bus_out],
-                           size=self._power_invest(effects),
                            fixed_relative_profile=self.fixed_profile
                            )
 
@@ -314,10 +337,12 @@ class LinearTransformer(PowerInvestElement):
                            effects_per_flow_hour={effects['costs']: self.cost_per_mwh_in}
                            )
 
-        return fx.LinearConverter(label=self.name,
+        comp = fx.LinearConverter(label=self.name,
                                   inputs=[flow_in],
                                   outputs=[flow_out],
                                   conversion_factors=[{flow_in: self.efficiency, flow_out: 1}])
+        self.insert_size(flow_out, effects, years_of_model)
+        return comp
 
 
 class Kessel(ThermalInvestElement):
@@ -338,10 +363,10 @@ class Kessel(ThermalInvestElement):
             label=self.name,
             eta=self.eta_thermal,
             Q_fu=fx.Flow(label="Q_fu", bus=busses["bus_fuel"]),
-            Q_th=fx.Flow(label="Q_th", bus=busses["bus_heat"],
-                         size=self._thermal_power_invest(effects, years_of_model))
+            Q_th=fx.Flow(label="Q_th", bus=busses["bus_heat"])
         )
-        self.add_grid_fee(self.grid_fee_per_year, boiler.Q_fu, boiler.Q_th, boiler.eta, effects['costs'])
+        self.insert_size(boiler.Q_th, effects, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, boiler.Q_fu, boiler.Q_th, boiler.eta, effects['costs'])
         return boiler
 
 
@@ -370,8 +395,7 @@ class KWK(ThermalInvestElement):
             label=self.name,
             eta_th=self.eta_th,
             eta_el=self.eta_el,
-            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat],
-                         size=self._thermal_power_invest(effects, years_of_model)),
+            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat]),
             P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
                          effects_per_flow_hour={
                              effects['costs']: -1 * extract_data('Strom', time_series_data),
@@ -386,7 +410,8 @@ class KWK(ThermalInvestElement):
                                               extract_data('CO2', time_series_data))
                          }),
         )
-        self.add_grid_fee(self.grid_fee_per_year, chp.P_el, chp.Q_th, chp.eta_el, effects['costs'])
+        self.insert_size(chp.Q_th, effects, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, chp.P_el, chp.Q_th, chp.eta_el, effects['costs'])
         return chp
 
     def _insert_data(self, time_series_data: pd.DataFrame):
@@ -470,17 +495,15 @@ class Waermepumpe(ThermalInvestElement):
         heat_pump = fx.linear_converters.HeatPump(
             label=self.name,
             COP = self._get_cop(time_series_data),
-            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat],
-                         size=self._thermal_power_invest(effects, years_of_model),
-                         relative_maximum=self.relative_maximum),
+            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat], relative_maximum=self.relative_maximum),
             P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
                          effects_per_flow_hour={
                              effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
                              effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model)
                          })
         )
-
-        self.add_grid_fee(self.grid_fee_per_year, heat_pump.P_el, heat_pump.Q_th, heat_pump.cop, effects['costs'])
+        self.insert_size(heat_pump.Q_th, effects, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.P_el, heat_pump.Q_th, heat_pump.COP, effects['costs'])
         return heat_pump
 
     def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
@@ -631,9 +654,8 @@ class Speicher(ThermalInvestElement):
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
         self._insert_data(time_series_data)
-        invest_charge, invest_discharge = self._get_thermal_powers(effects, years_of_model, flow_system)
 
-        return fx.Storage(
+        storage = fx.Storage(
             label=self.name,
             capacity_in_flow_hours=self._get_capacity(effects),
             eta_charge=self.eta_load,
@@ -642,20 +664,45 @@ class Speicher(ThermalInvestElement):
             relative_maximum_charge_state=self.normalized_temperature_spread(time_series_data),
             charging=fx.Flow(label='QthLoad',
                              bus=busses["Fernwärme"],
-                             size=self.invest_charge,
                              relative_maximum=self.normalized_temperature_spread(time_series_data)),
             discharging=fx.Flow(label='QthUnload',
                                 bus=busses["Fernwärme"],
-                                size=invest_discharge,
                                 relative_maximum=self.normalized_temperature_spread(time_series_data)),
             prevent_simultaneous_charge_and_discharge=True
         )
+        self.insert_size(storage.charging, effects, years_of_model)
+        self.link_second_flow_size(storage.charging, storage.discharging, flow_system)
+        self.insert_capacity(storage, effects, years_of_model)
+        return storage
+    
+    def link_second_flow_size(self, flow_with_size: fx.Flow, flow_to_link: fx.Flow, flow_system: fx.FlowSystem) -> None:
+        """
+        Links the size of the second flow to the size of the first flow. If needed, a new Effect is added to the FlowSystem
+        """
+        if isinstance(flow_with_size.size, (int, float)):
+            flow_to_link.size = flow_with_size.size
+            return None
+        elif isinstance(flow_with_size.size, fx.InvestParameters):
+            flow_to_link.size = fx.InvestParameters(
+                optional=flow_with_size.size.optional,
+                fixed_size=flow_with_size.size.fixed_size,
+                minimum_size=flow_with_size.size.minimum_size,
+                maximum_size=flow_with_size.size.maximum_size)
+    
+            if flow_with_size.size.fixed_size is None:
+                effect = fx.Effect(label=f"{self.name}_link_thermal_power", unit="",
+                                 description=f"Links the charge and discharge investment value of storage {self.name}",
+                                 minimum_invest=0, maximum_invest=0)
+                flow_system.add_effects(effect)
+    
+                flow_with_size.size.specific_effects[effect] = 1
+                flow_to_link.size.specific_effects = {effect: -1}
 
-    def _get_capacity(self, effects: [str, fx.Effect], years_of_model: List[int]) -> Union[int, float, fx.InvestParameters]:
-        if isinstance(self.capacity, (int, float)):
-            return self.capacity
+    def insert_capacity(self, storage: fx.Storage, effects: [str, fx.Effect], years_of_model: List[int]) -> None:
+        if not self.needs_investment:
+            storage.capacity_in_flow_hours = self.capacity
         else:
-            _, specific_effects = self.costs_and_funding(
+            _, specific_effects_per_period = self.costs_and_funding(
                 interest_rate=self.interest_rate,
                 starting_year=self.start_year,
                 lifetime=self.lifetime,
@@ -666,41 +713,17 @@ class Speicher(ThermalInvestElement):
                 specific_annual_costs=self.annual_costs_capacity_specific,
                 funding_rate=self.funding_rate)
 
-            return fx.InvestParameters(
+            specific_effects_total = {effect: np.sum(values) for effect, values in specific_effects_per_period.items()}
+
+            storage.size = fx.InvestParameters(
                 optional=self.optional,
                 fixed_size=self.capacity if isinstance(self.capacity, (int, float)) else None,
                 minimum_size=self.minimum_capacity,
                 maximum_size=self.maximum_capacity,
-                specific_effects=insert_effects(specific_effects, effects)
+                specific_effects=insert_effects(specific_effects_total, effects)
             )
 
-    def _get_thermal_powers(self,
-                            effects: [str, fx.Effect],
-                            years_of_model: List[int],
-                            flow_system: fx.FlowSystem
-                            ) -> Tuple[Union[int, float, fx.InvestParameters], Union[int, float, fx.InvestParameters]]:
-
-        thermal_power = self._thermal_power_invest(effects, years_of_model)
-        if isinstance(thermal_power, (int, float)):
-            return thermal_power, thermal_power
-
-        discharge = thermal_power
-        charge = fx.InvestParameters(
-            optional=discharge.optional,
-            fixed_size=discharge.fixed_size,
-            minimum_size=discharge.minimum_size,
-            maximum_size=discharge.maximum_size)
-
-        if charge.fixed_size is None:
-            effect = fx.Effect(label=f"{self.name}_link_theral_power", unit="",
-                             description=f"Links the charge and discharge investment value of storage {self.name}",
-                             minimum_invest=0, maximum_invest=0)
-            flow_system.add_effects(effect)
-
-            discharge.specific_effects[effect] = 1
-            charge.specific_effects = {effect: -1}
-
-        return charge, discharge
+            update_meta_data(storage, {'specific_effects': specific_effects_per_period})
 
     def normalized_temperature_spread(self, time_series_data: pd.DataFrame) -> np.ndarray:
         return ((extract_data(self.temperature_upper, time_series_data)
@@ -1371,15 +1394,32 @@ def add_effect_per_flow_hour(flow: fx.Flow, effect: fx.Effect, standard_effect: 
         flow.effects_per_flow_hour = {effect: factor, standard_effect: flow.effects_per_flow_hour}
 
 
-def update_meta_data(component: flixOpt.elements.Component, meta_data: Dict):
-    if component.meta_data is None:
-        component.meta_data = {}
-    component.meta_data.update(meta_data)
-    for flow in component.inputs + component.outputs:
-        if flow.meta_data is None:
-            flow.meta_data = {}
-        flow.meta_data.update(meta_data)
-    return component
+def update_meta_data(element: flixOpt.elements.Element,
+                     meta_data: Dict[str, Any],
+                     mode: Literal['replace', 'add'] = 'replace'
+                     ):
+    if element.meta_data is None:
+        element.meta_data = {}
+
+    if mode == 'replace':
+        element.meta_data.update(meta_data)
+    elif mode == 'add':
+        for key, value in meta_data.items():
+            if isinstance(value, list):
+                if (isinstance(item, (int, float)) for item in value):
+                    value = np.array(value)
+                else:
+                    raise ValueError(f"Value for key '{key}' must be a list of numeric values (int or float) with {mode=}.")
+            if isinstance(value, (int, float, np.ndarray)):
+                # Add to existing value if the key exists and is numeric
+                if key in element.meta_data and isinstance(element.meta_data[key], (int, float, np.ndarray)):
+                    element.meta_data[key] += value
+                else:
+                    # Add new key-value pair if the key doesn't exist
+                    element.meta_data[key] = value
+            else:
+                raise ValueError(f"Value for key '{key}' must be numeric (int or float).")
+
 
 # validation functions
 
