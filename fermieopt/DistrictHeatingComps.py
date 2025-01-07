@@ -950,161 +950,111 @@ class Abwaerme(EnergySystemObject):
         return self.flix_comps
 
 
-class Speicher(EnergySystemObject):
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "Kapazität [MWh]": (None, Optional[Union[int, float, str]]),
-        # Investment Kapazität
-        "Investkosten [€/MWh]": (0, Union[int, float]),
-        "Sonstige Fixkosten [€/(MWh*a)]": (0, Union[int, float]),
-        "Investgruppe Kapazität": (None, Optional[str]),
+class Speicher(ThermalInvestElement):
+    capacity: Union[int, float, str] = Field(alias='Kapazität [MWh]')
+    invest_costs_capacity_specific: Union[int, float] = Field(alias='Investkosten [€/MWh]', default=0)
+    yearly_costs_capacity_specific: Union[int, float] = Field(alias='Sonstige Fixkosten [€/(MWh*a)]', default=0)
 
-        "VerlustProStunde": (0, Union[int, float]),
-        "eta_load": (NO_DEFAULT, Union[int, float]),
-        "eta_unload": (NO_DEFAULT, Union[int, float]),
-        # Beschränkung
-        "AbhängigkeitVonDT": (False, bool),
-        "Untere Temperatur": ("TRL_FWN", Union[int, float, str]),
-        "Obere Temperatur": ("TVL_FWN", Union[int, float, str]),
-    }
+    eta_load: Union[int, float, str] = Field(alias='eta_load')
+    eta_unload: Union[int, float, str] = Field(alias='eta_unload')
+    loss_per_hour: Union[int, float, str] = Field(alias='VerlustProStunde', default=0)
 
-    _invest_prop = "Thermische Leistung"
+    depends_on_temperature: bool = Field(alias='AbhängigkeitVonDT', default=False)
+    temperature_lower: Union[int, float, str] = Field(alias='Untere Temperatur')
+    temperature_upper: Union[int, float, str] = Field(alias='Obere Temperatur')
 
-    def __init__(self, **props):
-        super().__init__(**props)
-        self.meta_data_storage = {}
+    default_temperature_spread: Union[int, float] = Field(alias='TemperaturSpread', default=65)
 
-    def compute_investment(self, years_of_model: List[int]):
-        super().compute_investment(years_of_model)
-        self.computed_props[f"Investment {self._invest_prop} 2"] = None
-        if self.invest_args_viable:
-            size = self.computed_props[self._invest_prop]
-            self.computed_props[f"Investment {self._invest_prop} 2"] = fx.InvestParameters(
-                fixed_size=size,
-                maximum_size=self.computed_props[f"Investment {self._invest_prop}"].maximum_size,
-                optional=self.props["Optional"])
+    def _insert_data(self, time_series_data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(time_series_data)
+        self.eta_load = extract_data(self.eta_load, time_series_data)
+        self.eta_unload = extract_data(self.eta_unload, time_series_data)
+        self.loss_per_hour = extract_data(self.loss_per_hour, time_series_data)
+        self.temperature_lower = extract_data(self.temperature_lower, time_series_data)
+        self.temperature_upper = extract_data(self.temperature_upper, time_series_data)
 
-            # Add Effect to link installed thermal power of in and out flows
-            if not isinstance(size, (int, float)):
-                effect = fx.Effect(label=f"{self.props['Name']}_link_power", unit="",
-                                 description=f"Links the in and outflow investment value of storage {self.props['Name']}",
-                                 minimum_invest=0, maximum_invest=0)
-                self.flix_comps.append(effect)
-                self.computed_props[f"Investment {self._invest_prop}"].specific_effects[effect] = 1
-                self.computed_props[f"Investment {self._invest_prop} 2"].specific_effects = {effect: -1}
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        self._insert_data(time_series_data)
+        invest_charge, invest_discharge = self._get_thermal_powers(effects, time_series_data, flow_system)
 
-    def compute_investment_capacity(self, years_of_model: List[int]):
-        self.computed_props["Kapazität [MWh]"], min_invest, max_invest = (
-            handle_invest_parameter(self.props["Kapazität [MWh]"]))
-
-        self.computed_props[f"Investment Kapazität [MWh]"] = None
-        if self.invest_args_viable:
-            self.meta_data_storage["fixed_effects"], self.meta_data_storage["specific_effects"] = costs_and_funding(
-                interest_rate=self.props["Zinssatz"],
-                starting_year=self.props["Startjahr"],
-                lifetime=self.props["Lebensdauer"],
-                invest_costs=0, annual_costs=0,
-                specific_invest_costs=self.props["Investkosten [€/MWh]"],
-                specific_annual_costs=self.props["Sonstige Fixkosten [€/(MWh*a)]"],
-                funding_rate=self.props["Fördersatz"],
-                years_of_model=years_of_model
-            )
-            self.computed_props["fixed_effects_capacity"] = {key: sum(value) for key, value in
-                                                             self.meta_data_storage["fixed_effects"].items()}
-            self.computed_props["specific_effects_capacity"] = {key: sum(value) for key, value in
-                                                                self.meta_data_storage["specific_effects"].items()}
-            if self.props["Investgruppe Kapazität"]:
-                self.computed_props["specific_effects_capacity"][self.props["Investgruppe Kapazität"]] = 1
-
-            size = self.computed_props["Kapazität [MWh]"]
-            self.computed_props["Investment Kapazität [MWh]"] = fx.InvestParameters(
-                fix_effects={key: value for key, value in self.computed_props["fixed_effects_capacity"].items() if value},
-                specific_effects={key: value for key, value in self.computed_props["specific_effects_capacity"].items() if
-                               value},
-                fixed_size=size if isinstance(size, (int, float)) else None,
-                optional=self.props["Optional"],
-                minimum_size=min_invest,
-                maximum_size=max_invest)
-
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Limiting capcity and Thermische Leistung
-        self.computed_props["Einsatzbeschränkung"] = 1
-        if self.props["AbhängigkeitVonDT"]:
-            self.computed_props["Einsatzbeschränkung"] = (
-                as_time_series(self.props["Obere Temperatur"], time_series_data) -
-                as_time_series(self.props["Untere Temperatur"], time_series_data)) / 65
-        if "relative_maximum" in self.kwargs:
-            relative_maximum = self.kwargs.pop("relative_maximum")
-            self.computed_props["Einsatzbeschränkung"] = np.where(
-                self.computed_props["Einsatzbeschränkung"] < relative_maximum,
-                self.computed_props["Einsatzbeschränkung"], relative_maximum)
-
-        self.compute_investment(years_of_model)
-        self.compute_investment_capacity(years_of_model)
-
-    def insert_effects_into_investargs(self, effects: Dict[str, fx.Effect]) -> None:
-        # Inserting effects as keys
-        invest_keys = [f"Investment {self._invest_prop}",
-                       f"Investment {self._invest_prop} 2",
-                       f"Investment Kapazität [MWh]"]
-        for invest_key in invest_keys:
-            if self.computed_props[invest_key]:
-                insert_effects(self.computed_props[invest_key].fix_effects, effects)
-                insert_effects(self.computed_props[invest_key].specific_effects, effects)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.Storage(
-            label=self.props["Name"],
-            meta_data=self.meta_data_storage,
-            capacity_in_flow_hours=self.computed_props["Investment Kapazität [MWh]"] or self.computed_props["Kapazität [MWh]"],
-            eta_charge=self.props["eta_load"],
-            eta_discharge=self.props["eta_unload"],
-            relative_loss_per_hour=self.props["VerlustProStunde"],
-            relative_maximum_charge_state=self.computed_props["Einsatzbeschränkung"]
-            if isinstance(self.computed_props["Einsatzbeschränkung"], (int, float))
-            else np.append(self.computed_props["Einsatzbeschränkung"], self.computed_props["Einsatzbeschränkung"][-1]),
-
+        return fx.Storage(
+            label=self.name,
+            capacity_in_flow_hours=self._get_capacity(effects),
+            eta_charge=self.eta_load,
+            eta_discharge=self.eta_unload,
+            relative_loss_per_hour=self.loss_per_hour,
+            relative_maximum_charge_state=self.normalized_temperature_spread(time_series_data),
             charging=fx.Flow(label='QthLoad',
-                             bus=busses["Fernwaerme"],
-                             meta_data=self.meta_data,
-                             size=self.computed_props["Investment Thermische Leistung"] or self.computed_props["Thermische Leistung"],
-                             relative_maximum=self.computed_props["Einsatzbeschränkung"]
-                             ),
+                             bus=busses["Fernwärme"],
+                             size=self.invest_charge,
+                             relative_maximum=self.normalized_temperature_spread(time_series_data)),
             discharging=fx.Flow(label='QthUnload',
-                                meta_data={'fixed_effects': {}, 'specific_effects': {}},
-                                bus=busses["Fernwaerme"],
-                                size=self.computed_props["Investment Thermische Leistung 2"] or self.computed_props["Thermische Leistung"],
-                                relative_maximum=self.computed_props["Einsatzbeschränkung"],
-                                can_be_off=self.on_parameters,
-                                **self.flow_kwargs
-                          ),
-            prevent_simultaneous_charge_and_discharge=True,
+                                bus=busses["Fernwärme"],
+                                size=invest_discharge,
+                                relative_maximum=self.normalized_temperature_spread(time_series_data)),
+            prevent_simultaneous_charge_and_discharge=True
         )
 
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+    def _get_capacity(self, effects: [str, fx.Effect]) -> Union[int, float, fx.InvestParameters]:
+        if isinstance(self.capacity, (int, float)):
+            return self.capacity
+        else:
+            return fx.InvestParameters(
+                optional=self.optional,
+                fixed_size=self.capacity if isinstance(self.capacity, (int, float)) else None,
+                minimum_size=self.minimum_capacity,
+                maximum_size=self.maximum_capacity,
+                specific_effects={
+                    effects['costs']: self.invest_costs_capacity_specific,
+                    effects['funding']: self.invest_costs_capacity_specific * 0.4}
+            )
+
+    def _get_thermal_powers(self,
+                            effects: [str, fx.Effect],
+                            time_series_data: pd.DataFrame,
+                            flow_system: fx.FlowSystem
+                            ) -> Tuple[Union[int, float, fx.InvestParameters], Union[int, float, fx.InvestParameters]]:
+
+        thermal_power = self._thermal_power_invest(effects, time_series_data)
+        if isinstance(thermal_power, (int, float)):
+            return thermal_power, thermal_power
+
+        discharge = thermal_power
+        charge = fx.InvestParameters(
+            optional=discharge.optional,
+            fixed_size=discharge.fixed_size,
+            minimum_size=discharge.minimum_size,
+            maximum_size=discharge.maximum_size)
+
+        if charge.fixed_size is None:
+            effect = fx.Effect(label=f"{self.name}_link_theral_power", unit="",
+                             description=f"Links the charge and discharge investment value of storage {self.name}",
+                             minimum_invest=0, maximum_invest=0)
+            flow_system.add_effects(effect)
+
+            discharge.specific_effects[effect] = 1
+            charge.specific_effects = {effect: -1}
+
+        return charge, discharge
+
+    def normalized_temperature_spread(self, time_series_data: pd.DataFrame) -> np.ndarray:
+        return ((extract_data(self.temperature_upper, time_series_data)
+                - extract_data(self.temperature_lower, time_series_data)
+                 )
+                / self.default_temperature_spread)
+
+    @field_validator('grid_fee_per_year')
+    def validate_grid_fee(cls, value):
+        if value is not None:
+            raise ValueError(f"Netzentgelt is not supported for '{cls.__name__}")
+        return value
 
 
 class ComponentFactory:
