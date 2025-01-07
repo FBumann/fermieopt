@@ -579,164 +579,161 @@ class KWKekt(EnergySystemObject):
         return self.flix_comps
 
 
-class Waermepumpe(GridFee):
-    _property_definitions = {
-        **GridFee._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "Zusatzkosten pro MWh Strom": (0, Union[int, float, str]),
-        "COP": (None, Optional[Union[int, float, str]]),
-        # COP computation
-        "Carnot Effizienz": (0.5, Union[float, str]),
-        "Quelltemperatur": (None, Optional[Union[int, float, str]]),
-        "Zieltemperatur": ("TVL_FWN", Optional[Union[int, float, str]]),
-        # BEW Operation Funding
-        "SCOP für BEW": (None, Optional[Union[int, float]]),
-        "Maximale Stromkostenförderung BEW": (None, Optional[float]),
-        # Einsatzbeschränkung
-        "Untergrenze für Einsatz": (None, Optional[Union[int, float]]),
-        "Zeitreihe für Einsatzbeschränkung": (None, Optional[str]),
+class Waermepumpe(ThermalInvestElement):
+    cop: Optional[Union[int, float, str]] = Field(alias="COP")
+    source_temperature: Union[int, float, str] = Field(alias="Quelltemperatur")
+    sink_temperature: Union[int, float, str] = Field(alias="Zieltemperatur")
 
-        "Grüne Wärme": (0, Union[int, float, str]),
+    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias="Zusatzkosten pro MWh Strom", default=0)
+    minimum_source_temperature: Optional[Union[int, float]] = Field(alias="Untergrenze für Einsatz", default=None)
+    operation_restriction: Optional[str] = Field(alias="Zeitreihe für Einsatzbeschränkung", default=None)
 
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-        "Strombus": ("StromBezug", str)
-    }
+    scop_bew: Optional[Union[int, float]] = Field(alias="SCOP für BEW", default=None)
+    max_bew_elec_funding: Optional[Union[int, float]] = Field(alias="Maximale Stromkostenförderung BEW", default=None)
 
-    _invest_prop = "Thermische Leistung"
+    bus_heat: str = Field(alias="Wärmebus", default='Fernwärme')
+    bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
-    def validate_properties(self):
-        super().validate_properties()
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        self._insert_data(time_series_data)
 
-        # Check for valid COP computation
-        if not self.props["COP"]:
-            if not self.props["Quelltemperatur"] or not self.props["Zieltemperatur"]:
-                raise Exception(f"Need to specify a 'COP' for {self.props['Name']} or "
-                                f"use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally.")
-        if self.props["COP"]:
-            if self.props["Quelltemperatur"]:  #or self.props["Zieltemperatur"]: # TODO: Make Zieltemperatur defualt= None
-                raise Exception(f"Either specify a 'COP' for {self.props['Name']} "
-                                f"OR use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally.")
-
-        # BEW Operation Funding
-        if self.props["SCOP für BEW"]:
-            if not self.props["Startjahr"]:
-                raise Exception(f"Need to specify a Year of Operation start for {self.props['Name']} to use HP "
-                                f"operation funding, because its limited to 10 years.")
-            if not self.props["Maximale Stromkostenförderung BEW"]:
-                raise Exception(f"Need to specify 'Maximale Stromkostenförderung BEW' for {self.props['Name']} to use HP "
-                                f"operation funding.")
-
-        # Einsatzbeschränkung
-        if not ((self.props["Untergrenze für Einsatz"] is None) ==
-                (self.props["Zeitreihe für Einsatzbeschränkung"] is None)):
-            raise Exception(f"Need to specify either both or none of 'Zeitreihe für Einsatzbeschränkung' and "
-                            f"'Untergrenze für Einsatz' for {self.props['Name']}.")
-
-    @property
-    def factor_grid_to_invest(self) -> float:
-        value = np.max(self.computed_props["Einsatzbeschränkung"] * self.computed_props["exists"] /
-                       self.computed_props["COP"])
-        self.computed_props["Faktor für Netzentgeltumrechnung"] = value
-        return value
-
-    def compute_cop(self, time_series_data) -> Union[float, np.ndarray]:
-        if self.props["COP"]:
-            self.computed_props["COP"] = as_time_series(self.props["COP"], time_series_data)
-        else:
-            self.computed_props["COP"] = calculate_cop(
-                source_temperature=as_time_series(self.props["Quelltemperatur"], time_series_data),
-                target_temperature=as_time_series(self.props["Zieltemperatur"], time_series_data),
-                eta=as_time_series(self.props["Carnot Effizienz"], time_series_data))
-        return self.computed_props["COP"]
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Zusatzkosten pro MWh Strom"] = as_time_series(
-            self.props["Zusatzkosten pro MWh Strom"], time_series_data)
-        self.computed_props["Stromkosten"] = as_time_series("Strom", time_series_data)
-
-        # COP berechnen
-        self.compute_cop(time_series_data)
-
-        # BEW Operation Funding
-        self.computed_props["BEW Förderung Strom"] = 0
-        if self.props["SCOP für BEW"]:
-            fund_per_mw_el = bew_operation_funding_from_scop(self.props["SCOP für BEW"], "MWh_el")
-
-            electricity_costs_per_flow_hour = (self.computed_props["Stromkosten"] +
-                                               self.computed_props["Zusatzkosten pro MWh Strom"])
-            # Begrenzung der Förderung auf x% der Stromkosten
-            max_fund = self.props["Maximale Stromkostenförderung BEW"]
-            fund_per_mw_el = np.where(
-                fund_per_mw_el < electricity_costs_per_flow_hour * max_fund,
-                fund_per_mw_el, electricity_costs_per_flow_hour * max_fund)
-            # Begrenzung auf 10 Jahre
-            self.computed_props["BEW Förderung Strom"] = fund_per_mw_el * exists(self.props["Startjahr"], 10,
-                                                                                 years_of_model)
-
-        # Einsatzbeschränkung
-        self.computed_props["Einsatzbeschränkung"] = self.kwargs.pop("relative_maximum", 1)
-        if self.props["Zeitreihe für Einsatzbeschränkung"]:
-            self.computed_props["Einsatzbeschränkung"] = np.where(
-                as_time_series(self.props["Zeitreihe für Einsatzbeschränkung"], time_series_data)
-                <= self.props["Untergrenze für Einsatz"],
-                0, self.computed_props["Einsatzbeschränkung"])
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.HeatPump(
-            label=self.props["Name"],
-            COP=self.computed_props["COP"],
-            Q_th=fx.Flow(
-                label='Qth',
-                bus=busses[self.props["Wärmebus"]],
-                meta_data=self.meta_data,
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                relative_maximum=self.computed_props["Einsatzbeschränkung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            ),
-            P_el=fx.Flow(
-                label='Pel',
-                bus=busses[self.props["Strombus"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Stromkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Strom"],
-                    effects["funding"]: self.computed_props["BEW Förderung Strom"]
-                }
-            )
+        heat_pump = fx.linear_converters.HeatPump(
+            label=self.name,
+            COP = self._get_cop(time_series_data),
+            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat],
+                         size=self._thermal_power_invest(effects, time_series_data),
+                         relative_maximum=self.relative_maximum),
+            P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
+                         effects_per_flow_hour={
+                             effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
+                             effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model)
+                         })
         )
 
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(comp.Q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
+        add_grid_fee(self.grid_fee_per_year, heat_pump.P_el, heat_pump.Q_th, heat_pump.cop, effects['costs'])
+        return heat_pump
 
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+    def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
+        if self.cop:
+            return extract_data(self.cop, time_series_data)
+        else:
+            return self.calculate_cop(
+                source_temperature=extract_data(self.source_temperature, time_series_data),
+                target_temperature=extract_data(self.sink_temperature, time_series_data),
+                eta=0.5)
+
+    def _get_electricity_costs_per_mwh(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
+        return extract_data('Strom', time_series_data) + extract_data(self.extra_costs_per_mwh_elec, time_series_data)
+
+    def _get_operation_funding_bew(self, time_series_data: pd.DataFrame, years_of_model: List[int]) -> Union[float, np.ndarray]:
+        fund_per_mw_el = self.bew_operation_funding_from_scop(self.scop_bew, "MWh_el")
+
+        electricity_costs_per_flow_hour = self._get_electricity_costs_per_mwh(time_series_data)
+        # Begrenzung der Förderung auf x% der Stromkosten
+        fund_per_mw_el = np.where(
+            fund_per_mw_el < electricity_costs_per_flow_hour * self.max_bew_elec_funding,
+            fund_per_mw_el, electricity_costs_per_flow_hour * self.max_bew_elec_funding)
+        # Begrenzung auf 10 Jahre
+        return fund_per_mw_el * exists(self.start_year, 10, years_of_model)
+
+    @classmethod
+    def bew_operation_funding_from_scop(cls,
+                                        scop: Union[int, float],
+                                        unit: Literal["MWh_amb", "MWh_th", "MWh_el"] = "MWh_amb"
+                                        ) -> Union[int, float]:
+        """
+        Calclulated the maximum funding according to the BEW.
+        Parameters
+        ----------
+        scop: assumed scop (seasonal coefficent of Performance) or cop
+
+        Returns
+        -------
+        Funding in euro per MWh_amb
+
+        """
+        if unit not in ["MWh_amb", "MWh_th", "MWh_el"]:
+            raise Exception(f"Not a valid unit. Choose from: {['MWh_amb', 'MWh_th', 'MWh_el']}")
+
+        value = (5.5 - (6.8 - 17 / scop) * 0.75) * (scop / (scop - 1))  # ct/kWh
+        fund_amb = value * 10  # €/MWh_amb
+        if fund_amb >= 92:  # Funding is limited to 92 €/MWh_amb
+            fund_amb = 92
+
+        if unit == "MWh_amb":
+            return fund_amb
+        elif unit == "MWh_th":
+            return fund_amb * ((scop - 1) / scop)
+        else:
+            return fund_amb * (scop - 1)
+
+    @classmethod
+    def calculate_cop(cls, source_temperature: np.ndarray, target_temperature: np.ndarray, eta: float = 0.5) -> np.ndarray:
+        """
+        Calculates the COP of a heatpump per Timestep from the Temperature of Heat sink and Heat source in Kelvin
+        Parameters
+        ----------
+        source_temperature : np.array, float, pd.Dataframe
+            Temperature of the Heat Source in Degrees Celcius
+        target_temperature : np.array, float, pd.Dataframe
+            Temperature of the Heat Sink in Degrees Celcius
+        eta : float
+            Relation to the thermodynamicaly ideal COP
+
+        Returns
+        -------
+        np.ndarray
+
+        """
+        # Celsius zu Kelvin
+        source_temperature = source_temperature + 273.15
+        target_temperature = target_temperature + 273.15
+        return (target_temperature / (target_temperature - source_temperature)) * eta
+
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(data)
+        self.cop = extract_data(self.cop, data)
+        self.source_temperature = extract_data(self.source_temperature, data)
+        self.sink_temperature = extract_data(self.sink_temperature, data)
+
+        self.extra_costs_per_mwh_elec = extract_data(self.extra_costs_per_mwh_elec, data)
+
+    @model_validator(mode='after')
+    def validate_cop(self):
+        if not self.cop:
+            if not self.source_temperature or not self.sink_temperature:
+                raise Exception(f"Need to specify a 'COP' for {self.name} or "
+                                f"use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally.")
+        if self.cop:
+            if self.source_temperature or self.sink_temperature:
+                raise Exception(f"Either specify a 'COP' for {self.name} "
+                                f"OR use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally.")
+        return self
+
+    @model_validator(mode='after')
+    def validate_bew(self):
+        if self.scop_bew:
+            if not self.start_year:
+                raise Exception(f"Need to specify a Year of Operation start for {self.name} to use HeatPump "
+                                f"operation funding, because its limited to 10 years.")
+            if not self.max_bew_elec_funding:
+                raise Exception(f"Need to specify 'Maximale Stromkostenförderung BEW' for {self.name} to use HeatPump "
+                                f"operation funding.")
+        return self
+
+    @model_validator(mode='after')
+    def validate_operation_restriction(self):
+        if not (self.time_series_for_operation_restriction is None) == (self.minimum_source_temperature is None):
+            raise Exception(f"Need to specify either both or none of 'Zeitreihe für Einsatzbeschränkung' and "
+                            f"'ntergrenze für Einsatz' for {self.name}.")
+        return self
 
 
 class AbwaermeWaermepumpe(Waermepumpe):
