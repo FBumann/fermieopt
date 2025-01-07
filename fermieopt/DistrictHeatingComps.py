@@ -1,382 +1,147 @@
-# -*- coding: utf-8 -*-
-import re
+from typing import Optional, Union, Any, Dict, Literal, List, Tuple
 import logging
-import textwrap
-from typing import Union, List, Dict, Optional, Literal, Any, Tuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from rich import print
 
 import flixOpt as fx
-import flixOpt.elements
-from flixOpt.structure import Element
-
-NO_DEFAULT = object()  # Unique object as signal that no default value exists
 
 logger = logging.getLogger('flixOpt')
 
-class Validator:
-    """
-    This class is Used to provide a general structure and functionality to reliably create Objects from kwargs.
-    It provides type validation and properties to distinguish between optional and mandatory kwargs
 
-    Attributes:
-        props (dict): A dictionary holding the properties of the object, initialized from keyword arguments.
-        kwargs (dict): Additional keyword arguments not directly assigned to properties.
-        computed_props (dict): Computed properties derived from the object's attributes.
-        flix_comps (List[Element]): A list of components associated with the object, where Element is a custom type
-                                 representing a component in the energy system.
+class Element(BaseModel,
+              populate_by_name = True,  # Enables using both field names and aliases
+              extra = 'forbid'):  # Forbids unexpected keys in input data
+    name: str = Field(alias="Name")
+    group: Optional[str] = Field(alias='Gruppe', default=None)
 
-    Methods:
-        __init__(**props): Initializes an instance of Validator with properties passed as keyword arguments.
-        __str__(): Provides a string representation of the Validator instance.
-        _property_defaults(): Returns a dictionary of all properties which have a default value.
-        _property_types(): Returns a dictionary mapping property names to their allowed types.
-        _mandatory_properties(): Identifies and returns a list of required props for the Validator.
-        _kwargs(): Extracts and validates additional keyword arguments not directly assigned to properties.
-        validate_properties(): Validates the properties against the definitions and types specified in _property_definitions and _allowed_kwargs.
-        setup_default_properties(): Sets up default values for properties that have them defined in _property_definitions.
-        finalize_kwargs(time_series_data: pd.DataFrame) -> Dict[str, Any]: Finalizes kwargs and saves them in Dictionaries, Overwriting the placeholder in self.kwargs.
-        computation(years_of_model: List[int], co2_factors: Dict[str, float], time_series_data: pd.DataFrame) -> None: Placeholder for computation logic.
-        connect_to_system(time_series_data: pd.DataFrame, co2_factors: Dict[str, float], years_of_model: List[int], effects: Dict[str, fx.Effect], busses: Dict[str, fx.Bus]) -> List[Element]: Initializes a flixOpt Component from the computed data.
-    """
+    def add_to_flow_system(self,
+                           flow_system: fx.FlowSystem,
+                           effects: Dict[str, fx.Effect],
+                           busses: Dict[str, fx.Bus],
+                           time_series_data: pd.DataFrame,
+                           co2_factors: Dict[str, float] = None,
+                           years_of_model: List[int] = None):
+        flow_system.add_elements(
+            self._convert_to_flixopt(flow_system, effects, busses, time_series_data, co2_factors, years_of_model)
+        )
 
-    # Defining allowed properties, default values and allowed types. Needs to be extended by Child class
-    _property_definitions = {
-    }
-    # Defining allowed kwargs and types. Needs to be extended by Child class
-    _allowed_kwargs = {
-    }
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        raise NotImplementedError
 
-    def __init__(self, **props):
-        """
-          Initializes an instance of EnergySystemObject with properties passed as keyword arguments.
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        raise NotImplementedError
 
-          Args:
-              props (dict): Keyword arguments representing the properties of the object.
-          """
-        self.props: Dict[str, Any] = props
-        self.kwargs = None  #Placeholder and Validation that the function finalize kwargs is called
-        self.computed_props = {}
-        self.meta_data = {}
-        self.flix_comps: List[Element] = []
 
-        self.setup_default_properties()
-        self.validate_properties()
-
-    def __str__(self):
-        props_str = f"props=\n{textwrap.indent(print_dict(self.props), ' ' * 3)}"
-        computed_props_str = f"computed_props=\n{textwrap.indent(print_dict(self.computed_props), ' ' * 3)}"
-        kwargs_str = f"kwargs=\n{textwrap.indent(print_dict(self.kwargs), ' ' * 3)}"
-
-        return (f"<{self.__class__.__name__}> {self.props['Name']}:\n"
-                    f"{textwrap.indent(props_str, ' ' * 3)}\n"
-                    f"{textwrap.indent(computed_props_str, ' ' * 3)}\n"
-                    f"{textwrap.indent(kwargs_str, ' ' * 3)}\n"
-                    )
+class InvestElement(Element):
+    start_year: Optional[int] = Field(alias='Startjahr', default=None, ge=1800)
+    lifetime: Optional[int] = Field(alias='Lebensdauer', default=None, ge=1)
+    optional: bool = Field(alias='Optional', default=False)
+    invest_costs_fixed: Union[int, float] = Field(alias='Investkosten (fix) [€]', default=0)
+    invest_costs_specific: Union[int, float] = Field(alias='Investkosten (spezifisch) [€/MW]', default=0)
+    yearly_costs_fixed: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/a]', default=0)
+    yearly_costs_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (spezifisch) [€/(MW*a)]', default=0)
+    interest_rate: Union[int, float] = Field(alias='Zinssatz', default=0)
+    funding_rate: Union[int, float] = Field(alias='Fördersatz', default=0)
 
     @property
-    def _property_defaults(self) -> Dict[str, Any]:
-        """
-        Returns a dictionary of all properties which have a default value
+    def needs_investment(self) -> bool:
+        return (self.invest_costs_fixed is not None
+                or self.invest_costs_specific is not None
+                or self.optional)
 
-        Returns:
-            dict: A dictionary mapping property names to their default values.
-        """
-        return {k: default for k, (default, types) in self._property_definitions.items() if default is not NO_DEFAULT}
-
-    @property
-    def _property_types(self) -> Dict[str, Tuple[type, type]]:
-        """
-        Returns a dictionary mapping property names to their allowed types.
-
-        Returns:
-            dict: A dictionary mapping property names to their allowed types.
-        """
-        return {k: types for k, (defaults, types) in self._property_definitions.items()}
-
-    @property
-    def _mandatory_properties(self) -> List[str]:
-        """
-        Identifies and returns a list of required props for the EnergySystemObject.
-
-        Returns:
-            list: A list of properties which are mandatory
-        """
-        return [prop for prop, (default, prop_type) in self._property_definitions.items()
-                if default is NO_DEFAULT]
-
-    @property
-    def _kwargs(self) -> dict:
-        """
-        Extracts and validates additional keyword arguments not directly assigned to properties.
-
-        Returns:
-            dict: A dictionary of validated additional keyword arguments.
-        """
-        kwargs = {}
-        for key, allowed_types in self._allowed_kwargs.items():
-            if key in self.props:
-                kwargs[key] = self.props[key]
-
-        return kwargs
-
-    def validate_properties(self):
-        """
-        Validates the properties against the definitions and types specified in _property_definitions and _allowed_kwargs.
-
-        Raises:
-            ValueError: If a mandatory property is missing or an invalid property is provided.
-            TypeError: If a property has an incorrect type.
-        """
-
-        # Check for mandatory properties
-        for prop in self._mandatory_properties:
-            if prop not in self.props.keys():
-                raise ValueError(f"{prop} is required for {self.__class__.__name__}")
-
-        allowed_properties = {**self._property_types, **self._allowed_kwargs}
-        for prop, prop_type in self.props.items():
-            # Check or excess properties
-            if prop not in allowed_properties.keys():
-                raise ValueError(f"{prop} is not a valid parameter for {self.__class__.__name__}")
-
-            # Check for invalid types
-            if not isinstance(prop_type, allowed_properties[prop]):
-                raise TypeError(f"{prop} must be {allowed_properties[prop]}, got {prop_type} instead")
-
-    def setup_default_properties(self):
-        """
-        Sets up default values for properties that have them defined in _property_definitions.
-
-        """
-        # Set up default values or perform transformations
-        for key, value in self._property_defaults.items():
-            self.props.setdefault(key, value)
-
-    def finalize_kwargs(self, time_series_data: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Finalizes kwargs and saves them in self.kwargs, overwriting the placeholder.
-        Converts certain kwargs into time series data based on the provided DataFrame.
-
-        Args:
-            time_series_data (pd.DataFrame): The DataFrame containing the time series data.
-        """
-        self.kwargs = {
-            k: (as_time_series(v, time_series_data) if
-                k in ["relative_minimum", "relative_maximum", "effects_per_running_hour", "effects_per_flow_hour",
-                      "effects_per_switch_on"]
-                else v)
-            for k, v in self._kwargs.items()}
-        return self.kwargs
-
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-
-        raise Exception(f"Not implemented for class 'Validator'. "
-                        f"Needs to be implemented in class {self.__class__.__name__} itself")
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        """
-        Needs to be implemented by Child class
-        Connects the energy system object to the overall system, creating a component representation and integrating it into the system model.
-
-        Args:
-            time_series_data (pd.DataFrame): A DataFrame containing the time series data for the computation.
-            co2_factors (Dict[str, float]): A dictionary mapping CO2 factors to their values.
-            years_of_model (List[int]): A list of years considered existing in the model.
-            effects (Dict[str, fx.Effect]): A dictionary mapping effect type labels to effect type objects.
-            busses (Dict[str, fx.Bus]): A dictionary mapping bus labels to their bus objects.
-
-        Returns:
-            List[Element]: A list of components to be added to the flixOpt Model.
-        """
-        raise Exception(f"Not implemented for class 'Validator'. "
-                        f"Needs to be implemented in class {self.__class__.__name__} itself")
-
-class EnergySystemObject(Validator):
-    """
-    Represents an object within an energy system.
-    Introduced Concepts:
-    Basics (Name, Gruppe):
-        - The name of the Component and a group the Component belongs to (for. ex. a technology, a location,...)
-    Existence (Startjahr, Lebensdauer):
-        - Limiting the existance of the Component in the Model
-    Investment:
-        - Investment into Components specified by several costs.
-        - Funding a part of the Investment
-        - Limiting Investments across multiple Components
-    Kwargs:
-        - Several optional attributes, which are directly passed to fx.Flow of flixOpt.flixStructure
-
-    Attributes:
-        props (dict): A dictionary holding the properties of the object, initialized from keyword arguments.
-        kwargs (dict): Additional keyword arguments not directly assigned to properties.
-        computed_props (dict): Computed properties derived from the object's attributes.
-        flix_comps (List[Element]): A list of components associated with the object, where Element is a custom type representing a component in the energy system.
-
-    """
-
-    # Defining allowed properties, default values and allowed types
-    _property_definitions = {
-        # Basics
-        "Name": (NO_DEFAULT, str),
-        "Gruppe": (None, Optional[str]),
-        # Existance (& Investment)
-        "Startjahr": (None, Optional[int]),
-        "Lebensdauer": (None, Optional[int]),
-        #Investment
-        "Optional": (False, bool),
-        "Investkosten [€]": (0, Union[int, float]),
-        "Investkosten [€/MW]": (0, Union[int, float]),
-        "Zinssatz": (0, Union[int, float]),
-        "Sonstige Fixkosten [€/a]": (0, Union[int, float]),
-        "Sonstige Fixkosten [€/(MW*a)]": (0, Union[int, float]),
-        "Fördersatz": (0, Union[int, float]),
-        "Investgruppe": (None, Optional[str]),
-    }
-    # Defining allowed kwargs, and types
-    _allowed_kwargs = {
-        "relative_minimum": Union[int, float, str],
-        "relative_maximum": Union[int, float, str],
-        "flow_hours_total_min": int,
-        "flow_hours_total_max": int,
-        "load_factor_min": Union[int, float],
-        "load_factor_max": Union[int, float],
-        "effects_per_flow_hour": Union[int, float, str],
-
-        "effects_per_running_hour": Union[int, float, str],
-        "effects_per_switch_on": Union[int, float, str],
-        "on_hours_total_min": int,
-        "on_hours_total_max": int,
-        "consecutive_on_hours_min": int,
-        "consecutive_on_hours_max": int,
-        "switch_on_total_max": int,
-    }
-
-    _flow_kwargs = ["relative_minimum", "relative_maximum", "flow_hours_total_min", "flow_hours_total_max",
-                    "load_factor_min", "load_factor_max", "effects_per_flow_hour"]
-
-    _on_kwargs = ["effects_per_running_hour", "effects_per_switch_on", "on_hours_total_min", "on_hours_total_max",
-                    "consecutive_on_hours_min", "consecutive_on_hours_max", "switch_on_total_max"]
-
-    _invest_prop = None
-
-    def validate_properties(self):
-        """
-        Validates the properties against the definitions and types specified in _property_definitions and _allowed_kwargs.
-
-        Raises:
-            ValueError: If a mandatory property is missing or an invalid property is provided.
-            TypeError: If a property has an incorrect type.
-        """
-        super().validate_properties()
-
-        # Logical Check
-        if not (self.props["Startjahr"] is None) == (self.props["Lebensdauer"] is None):
+    @model_validator(mode='after')
+    def validate_years(self):
+        """Validates the start and lifetime of the element"""
+        if not (self.start_year is None) == (self.lifetime is None):
             raise ValueError(f"Either set BOTH or NONE of 'Startjahr' and 'Lebensdauer'!")
+        return self
 
-        # Check for not computable investement props
-        if not self.invest_args_viable:
-            for prop in ['Investkosten [€]',
-                         'Investkosten [€/MW]',
-                         'Zinssatz', 'Sonstige Fixkosten [€/a]',
-                         'Sonstige Fixkosten [€/(MW*a)]',
-                         'Fördersatz',
-                         'Investgruppe']:
-                if self.props[prop] != self._property_defaults[prop]:
-                    raise ValueError(f"If {prop} is used, 'Startjahr' and 'Lebensdauer' must be set!")
 
-    def years_in_model(self, years: List[int]) -> int:
-        """
-        Computes the total number of years the object will be present in the model.
+class PowerInvestElement(InvestElement):
+    power: Union[int, float] = Field(alias='Nennleistung [MW]')
+    flow_label: str = Field(alias="Flowname")
+    fixed_profile: Optional[str] = Field(alias="Festes Profil", default=None)
+    bus: str = Field(alias="Bus")
 
-        Args:
-            years (list): A list of years representing the years of the model
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        self.fixed_profile = extract_data(self.fixed_profile, data)
 
-        Returns:
-            int: The total number of years the object will be present in the model.
-        """
-        if "Jahre im Modell" not in self.computed_props:
-            self.computed_props["Jahre im Modell"] = sum(
-                index_per_year_in_model(first_year=self.props["Startjahr"],
-                                        lifetime=self.props["Lebensdauer"],
-                                        years_of_model=years)
+    def _power_invest(self, effects: Dict[str, fx.Effect]) -> Union[float, fx.InvestParameters]:
+        if not self.needs_investment:
+            return self.power
+        else:
+            return fx.InvestParameters(
+                optional=self.optional,
+                fixed_size=self.power if isinstance(self.power, (int, float)) else None,
+                minimum_size=self.minimum_power,
+                maximum_size=self.maximum_power,
+
+                specific_effects={
+                    effects['costs']: self.invest_costs_specific,
+                    effects['funding']: self.invest_costs_specific * 0.4},
+                fix_effects={
+                    effects['costs']: self.invest_costs_fixed,
+                    effects['funding']: self.invest_costs_fixed * 0.4}
             )
-        return self.computed_props["Jahre im Modell"]
 
-    def compute_investment(self, years_of_model: List[int]):
-        self.computed_props["exists"] = exists(self.props["Startjahr"], self.props["Lebensdauer"], years_of_model)
-        self.computed_props[self._invest_prop], min_invest, max_invest = (
-            handle_invest_parameter(self.props[self._invest_prop]))
+    @property
+    def minimum_power(self) -> Optional[float]:
+        return float(self.power.split("-")[0]) if isinstance(self.power, str) else None
 
-        self.computed_props[f"Investment {self._invest_prop}"] = None
+    @property
+    def maximum_power(self):
+        return float(self.power.split("-")[1]) if isinstance(self.power, str) else None
 
-        if self.invest_args_viable:
-            self.meta_data["fixed_effects"], self.meta_data["specific_effects"] = costs_and_funding(
-                interest_rate=self.props["Zinssatz"],
-                starting_year=self.props["Startjahr"],
-                lifetime=self.props["Lebensdauer"],
-                specific_invest_costs=self.props["Investkosten [€/MW]"],
-                specific_annual_costs=self.props["Sonstige Fixkosten [€/(MW*a)]"],
-                invest_costs=self.props["Investkosten [€]"],
-                annual_costs=self.props["Sonstige Fixkosten [€/a]"],
-                funding_rate=self.props["Fördersatz"],
-                years_of_model=years_of_model
+    @field_validator("power", mode="after")
+    def validate_power(cls, value):
+        return validate_invest_range(value, label="Nennleistung [MW]")
+
+
+class ThermalInvestElement(InvestElement):
+    thermal_power: Union[int, float, str] = Field(alias='Thermische Leistung [MW]')
+    grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0)
+
+    def _thermal_power_invest(self,
+                              effects: Dict[str, fx.Effect],
+                              time_series_data: pd.DataFrame) -> Union[float, fx.InvestParameters]:
+        if not self.needs_investment:
+            return self.thermal_power
+        else:
+            return fx.InvestParameters(
+                optional=self.optional,
+                fixed_size=self.thermal_power if isinstance(self.thermal_power, (int, float)) else None,
+                minimum_size=self.minimum_thermal_power,
+                maximum_size=self.maximum_thermal_power,
+                specific_effects={
+                    effects['costs']: self.invest_costs_specific + self._grid_fee_thermal(time_series_data),
+                    effects['funding']: self.invest_costs_specific * 0.4},
+                fix_effects={
+                    effects['costs']: self.invest_costs_fixed,
+                    effects['funding']: self.invest_costs_fixed * 0.4}
             )
-            self.computed_props["fixed_effects"] = {key: sum(value) for key, value in
-                                                    self.meta_data["fixed_effects"].items()}
-            self.computed_props["specific_effects"] = {key: sum(value) for key, value in
-                                                       self.meta_data["specific_effects"].items()}
-
-            if self.props["Investgruppe"]:
-                self.computed_props["specific_effects"][self.props["Investgruppe"]] = 1
-
-            size = self.computed_props[self._invest_prop]
-            self.computed_props[f"Investment {self._invest_prop}"] = fx.InvestParameters(
-                fix_effects={key: value for key, value in self.computed_props["fixed_effects"].items() if value},
-                specific_effects={key: value for key, value in self.computed_props["specific_effects"].items() if
-                               value},
-                fixed_size=size if isinstance(size, (int, float)) else None,
-                optional=self.props["Optional"],
-                minimum_size=min_invest,
-                maximum_size=max_invest)
-
-    def insert_effects_into_investargs(self, effects: Dict[str, fx.Effect]) -> None:
-        # Inserting effects as keys
-        invest_key = f"Investment {self._invest_prop}"
-        if self.computed_props[invest_key]:
-            insert_effects(self.computed_props[invest_key].fix_effects, effects)
-            insert_effects(self.computed_props[invest_key].specific_effects, effects)
 
     @property
-    def invest_args_viable(self):
-        "Checks if the computation of Investment paramns is possible"
-        return self.props["Startjahr"] is not None and self.props["Lebensdauer"] is not None
-
-    def accounting_years(self, years_of_model: List[int]) -> np.ndarray:
-        lifetime, start_year = self.props["Lebensdauer"], self.props["Startjahr"]
-        return np.array([1 if start_year <= year < (start_year + lifetime) else 0 for year in years_of_model])
+    def minimum_thermal_power(self) -> Optional[float]:
+        return float(self.thermal_power.split("-")[0]) if isinstance(self.thermal_power, str) else None
 
     @property
-    def flow_kwargs(self) -> Dict[str, Any]:
-        return {key: value for key, value in self.kwargs.items() if key in self._flow_kwargs}
+    def maximum_thermal_power(self):
+        return float(self.thermal_power.split("-")[1]) if isinstance(self.thermal_power, str) else None
 
-    @property
-    def on_kwargs(self) -> Dict[str, Any]:
-        return {key: value for key, value in self.kwargs.items() if key in self._on_kwargs}
-
-    @property
-    def on_parameters(self) -> Optional[fx.OnOffParameters]:
-        return fx.OnOffParameters(self.on_kwargs) if self.on_kwargs else None
+    @field_validator("thermal_power", mode="after")
+    def validate_thermal_power(cls, value):
+        return validate_invest_range(value, label="Thermische Leistung [MW]")
 
 
 class GridFee(EnergySystemObject):
@@ -2070,3 +1835,50 @@ def validate_invest_meta_data(component: flixOpt.elements.Component):
                         f'The total {effect.label=} passed to the InvestParameters is {value}. '
                         f'The meta_data is {flow.meta_data["specific_effects"][effect.label]}, '
                         f'which totals to {sum(flow.meta_data["specific_effects"][effect.label])}')
+
+
+# New function
+def validate_invest_range(value: Union[int, float, str], label: str) -> Union[int, float, str]:
+    """
+    This function was written to validate the investment range of a component.
+    It checks if the value is a number or a string in the format 'X-Y' and if it is positive.
+    If the value is a string, it is split into two parts and validated as a range.
+    If the value is a number, it is validated as positive.
+    """
+    if isinstance(value, (int, float)):
+        if value < 0:
+            raise ValueError(f"'{label}' must be positive.")
+        return value
+    elif isinstance(value, str):
+        try:  # Handle range strings of the format "X-Y"
+            parts = value.split("-")
+            if len(parts) != 2:
+                raise ValueError("Invalid range format. Expected 'X-Y'.")
+            try:
+                start, end = float(parts[0]), float(parts[1])
+            except ValueError:
+                raise ValueError("Invalid range format. Expected 'X-Y'.")
+            if start >= end:
+                raise ValueError("Range start must be less than range end.")
+            if start < 0:
+                raise ValueError("Range start must be positive.")
+            return value
+        except ValueError as e:
+            raise ValueError(f"Invalid thermal power format: {e}")
+    else:
+        raise ValueError(f"'{label}' must be a number or a string in the format 'X-Y'.")
+
+def extract_data(value: Union[str, Any], data: pd.DataFrame) -> Union[np.ndarray, Any]:
+    """
+    Extracts data from a DataFrame based on the provided value. If the value is a string, it is assumed to be a column name
+    and the corresponding data is returned. If the value is not a string, it is assumed to be the actual data and is simply
+    returned.
+    """
+
+    if isinstance(value, str):
+        if value not in data.columns:
+            raise KeyError(f"Column '{value}' not found in the time series data provided. "
+                           f"Only the following columns where found: {list(data.columns)}")
+        return data[value].to_numpy()
+    else:
+        return value
