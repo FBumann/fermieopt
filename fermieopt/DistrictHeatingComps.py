@@ -157,6 +157,24 @@ def add_grid_fee(grid_fee: Union[int,float],
                                                       + grid_fee * np.max(grid_flow.relative_maximum / efficiency))
     return np.max(grid_flow.relative_maximum / efficiency)
 
+
+class Sink(PowerInvestElement):
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        return fx.Sink(
+            label=self.name,
+            sink=fx.Flow(label=self.flow_label,
+                         bus=busses[self.bus],
+                         size=self._power_invest(effects),
+                         fixed_relative_profile=self.fixed_profile),
+        )
+
+
 class Source(PowerInvestElement):
     def _convert_to_flixopt(self,
                             flow_system: fx.FlowSystem,
