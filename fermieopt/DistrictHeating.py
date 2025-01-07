@@ -5,13 +5,14 @@ import datetime
 import numpy as np
 import pandas as pd
 from pprintpp import pprint as pp
-from typing import Dict, List, Union
+from typing import Dict, List, Optional
 
-from flixOpt.flixStructure import cEffectType, cEnergySystem, cCalculation, cME, cFlow, cBus
-from flixOpt.flixComps import cBaseLinearTransformer, cBaseComponent
+import flixOpt as fx
+from flixOpt.structure import Element
+from flixOpt.elements import Component
 
 from fermieopt.excel_input import ExcelData
-from fermieopt.flixPostXL import SystemVisualization, SystemInfos, flixPostXL
+from fermieopt.flixPostprocessingXL import flixPostXL
 from fermieopt.DistrictHeatingComps import ComponentFactory
 from fermieopt.DistrictHeatingComps import check_min_max_format, exists
 
@@ -26,17 +27,13 @@ class ExcelModel:
         self.input_excel_file_path = excel_file_path
         self.years = self.excel_data.years
 
-    @property
-    def visual_representation(self):
-        return SystemVisualization(es=self.district_heating_system.final_model).create_figure()
-
     def print_comps_in_categories(self):
         # String-resources
         print("###############################################")
         print("Initiated Comps:")
         categorized_comps = {}
-        for comp in self.district_heating_system.final_model.listOfComponents:
-            comp: cBaseComponent
+        for comp in self.district_heating_system.final_model.components:
+            comp: Component
             category = type(comp).__name__
             if category not in categorized_comps:
                 categorized_comps[category] = [comp.label]
@@ -51,18 +48,12 @@ class ExcelModel:
         self._adjust_calc_name_and_results_folder()
         self._create_dirs_and_save_input_data()
 
-        calculation = cCalculation(self.calc_name, self.district_heating_system.final_model, 'pyomo',
-                                   pathForSaving=self.final_directory)  # create Calculation
-        calculation.doModelingAsOneSegment()
+        calculation = fx.FullCalculation(self.calc_name, self.district_heating_system.final_model, 'pyomo')
+        calculation.do_modeling()
 
-        solver_props = {'gapFrac': gap_frac,  # solver-gap
-                        'timelimit': timelimit,  # seconds until solver abort
-                        'solver': solver_name,
-                        'displaySolverOutput': True,  # ausführlicher Solver-resources.
-                        }
-
-        calculation.solve(solver_props, aPath=os.path.join(self.final_directory, "SolveResults"))
-        self.calc_name = calculation.nameOfCalc
+        calculation.solve(fx.solvers.GurobiSolver(mip_gap=gap_frac, time_limit_seconds=timelimit),
+                          save_results=os.path.join(self.final_directory, "SolveResults"))
+        self.calc_name = calculation.name
         calc_results = self.load_results()
 
         with open(os.path.join(self.final_directory, f"{self.calc_name}__calc_info.txt"), "w") as log_file:
@@ -71,10 +62,6 @@ class ExcelModel:
             outputYears={self.years})"""
 
             log_file.write(calc_info)
-
-        with open(os.path.join(calc_results.folder, f"{self.calc_name}__Main_Results.txt"), "w") as log_file:
-            main_results = calc_results.infos["modboxes"]["info"][0]["main_results"]
-            pp(main_results, log_file)
 
     def load_results(self) -> flixPostXL:
         return flixPostXL(nameOfCalc=self.calc_name,
@@ -137,12 +124,13 @@ class DistrictHeatingSystem:
         self.years = excel_data.years
         self.timeSeries = excel_data.time_series_data.index.to_numpy()
         self.co2_limits = excel_data.co2_limits
+        self.green_heat_min = excel_data.green_heat_min
         self.co2_factors = excel_data.co2_factors
         self.heating_network_temperature_curves = excel_data.heating_network_temperature_curves
 
         self._handle_heating_network()
 
-        self.final_model = cEnergySystem(timeSeries=self.timeSeries)
+        self.final_model = fx.FlowSystem(time_series=self.timeSeries)
         self.busses = self.create_busses()
         self.effects = self.create_effects()
 
@@ -154,37 +142,49 @@ class DistrictHeatingSystem:
                                    effects=self.effects)
         self.components = self.create_components()
 
-        self.final_model.addEffects(*list(self.effects.values()))
-        self.final_model.addElements(*self.helpers)
-        self.final_model.addElements(*self.components)
+        self.final_model.add_effects(*list(self.effects.values()))
+        self.final_model.add_elements(*self.helpers)
+        self.final_model.add_elements(*self.components)
 
 
-    def create_effects(self) -> Dict[str, cEffectType]:
+    def create_effects(self) -> Dict[str, fx.Effect]:
         effects = {}
-        effects['target'] = cEffectType('target', 'i.E.', 'Target',  # name, unit, description
-                                        isObjective=True)  # defining costs as objective of optimiziation
-        effects['costs'] = cEffectType('costs', '€', 'Kosten', isStandard=True,
-                                       specificShareToOtherEffects_operation={effects['target']: 1},
-                                       specificShareToOtherEffects_invest={effects['target']: 1})
+        effects['target'] = fx.Effect('target', 'i.E.', 'Target',  # name, unit, description
+                                        is_objective=True)  # defining costs as objective of optimiziation
+        effects['costs'] = fx.Effect('costs', '€', 'Kosten', is_standard=True,
+                                       specific_share_to_other_effects_operation={effects['target']: 1},
+                                       specific_share_to_other_effects_invest={effects['target']: 1})
 
-        effects['funding'] = cEffectType('funding', '€', 'Funding Gesamt',
-                                         specificShareToOtherEffects_operation={effects['costs']: -1},
-                                         specificShareToOtherEffects_invest={effects['costs']: -1})
+        effects['funding'] = fx.Effect('funding', '€', 'Funding Gesamt',
+                                         specific_share_to_other_effects_operation={effects['costs']: -1},
+                                         specific_share_to_other_effects_invest={effects['costs']: -1})
 
-        effects['CO2FW'] = cEffectType('CO2FW', 't', 'CO2Emissionen der Fernwaerme')
+        effects['CO2FW'] = fx.Effect('CO2FW', 't', 'CO2Emissionen der Fernwaerme')
 
-        effects['CO2'] = cEffectType('CO2', 't', 'CO2Emissionen',
-                                     specificShareToOtherEffects_operation={effects['CO2FW']: 1})
+        effects['CO2'] = fx.Effect('CO2', 't', 'CO2Emissionen',
+                                     specific_share_to_other_effects_operation={effects['CO2FW']: 1})
+
+        effects['Gruene_Waerme'] = fx.Effect('Gruene_Waerme', 'MWh', 'Menge an produzierter grüner Wärme')
 
         # Limit CO2 Emissions per year
-        co2_limiter_shares = {}
-        for year, co2_limit in zip(self.years, self.co2_limits):
-            if co2_limit is not None:
-                effects[f"CO2Limit{year}"] = cEffectType(f"CO2Limit{year}", 't',
-                                                         description="Effect to limit the Emissions in that year",
-                                                         max_operationSum=co2_limit)
-                co2_limiter_shares[effects[f"CO2Limit{year}"]] = exists(first_year=year, lifetime=1, years_in_model=self.years)
-        effects['CO2FW'].specificShareToOtherEffects_operation.update(co2_limiter_shares)
+        yearly_co2 = add_yearly_effects_with_bounds(effects['CO2FW'],
+                                                    years=self.years,
+                                                    lower_bounds=[None]*len(self.years),
+                                                    upper_bounds=self.co2_limits,
+                                                    label='CO2Limit',
+                                                    unit='t',
+                                                    description="Effect to limit the Emissions per year")
+        effects.update(yearly_co2)
+
+        # Limit CO2 Emissions per year
+        yearly_gw = add_yearly_effects_with_bounds(effects['Gruene_Waerme'],
+                                                    years=self.years,
+                                                    lower_bounds=self.green_heat_min,
+                                                    upper_bounds=[None]*len(self.years),
+                                                    label='Gruene_Waerme_Limits',
+                                                    unit='MWh',
+                                                    description="Effect to limit the Gruene_Waerme per year")
+        effects.update(yearly_gw)
 
         effects.update(self.create_invest_groups())
         return effects
@@ -204,8 +204,8 @@ class DistrictHeatingSystem:
                         min_sum = None
                         max_sum = float(limits)
                     label_new = label.replace(":", "")
-                    effects[label] = cEffectType(label=label_new, description="Limiting Investments per group",
-                                                 unit="Stk", min_Sum=min_sum, max_Sum=max_sum)
+                    effects[label] = fx.Effect(label=label_new, description="Limiting Investments per group",
+                                                 unit="Stk", minimum_total=min_sum, maximum_total=max_sum)
         return effects
 
     def create_busses(self) -> Dict:
@@ -221,30 +221,30 @@ class DistrictHeatingSystem:
             except KeyError as e:
                 raise Exception(f"Every Bus needs a 'medium'!  Error: {e}")
 
-            busses[name] = cBus(label=name, media=media, excessCostsPerFlowHour=None)
+            busses[name] = fx.Bus(label=name, excess_penalty_per_flow_hour=None)
 
         return busses
 
-    def create_helpers(self) -> List[cME]:
-        Pout1 = cFlow(label="Strompreis",
+    def create_helpers(self) -> List[Element]:
+        Pout1 = fx.Flow(label="Strompreis",
                       bus=self.busses['StromEinspeisung'],
-                      nominal_val=0,
-                      costsPerFlowHour=self.time_series_data["Strom"])
-        Pout2 = cFlow(label="Gaspreis",
+                      size=0,
+                      effects_per_flow_hour=self.time_series_data["Strom"])
+        Pout2 = fx.Flow(label="Gaspreis",
                       bus=self.busses['Erdgas'],
-                      nominal_val=0,
-                      costsPerFlowHour=self.time_series_data["Erdgas"])
-        Pout3 = cFlow(label="Wasserstoffpreis",
+                      size=0,
+                      effects_per_flow_hour=self.time_series_data["Erdgas"])
+        Pout3 = fx.Flow(label="Wasserstoffpreis",
                       bus=self.busses['Wasserstoff'],
-                      nominal_val=0,
-                      costsPerFlowHour=self.time_series_data["Wasserstoff"])
-        Pout4 = cFlow(label="EBSPreis",
+                      size=0,
+                      effects_per_flow_hour=self.time_series_data["Wasserstoff"])
+        Pout4 = fx.Flow(label="EBSPreis",
                       bus=self.busses['EBS'],
-                      nominal_val=0,
-                      costsPerFlowHour=self.time_series_data["EBS"])
+                      size=0,
+                      effects_per_flow_hour=self.time_series_data["EBS"])
 
-        return[cBaseLinearTransformer(label="HelperPreise", inputs=[], outputs=[Pout1, Pout2, Pout3, Pout4],
-                                   factor_Sets=[{Pout1: 1, Pout2: 1, Pout3: 1, Pout4: 1}])
+        return[fx.LinearConverter(label="HelperPreise", inputs=[], outputs=[Pout1, Pout2, Pout3, Pout4],
+                                   conversion_factors=[{Pout1: 1, Pout2: 1, Pout3: 1, Pout4: 1}])
                                    ]
 
     def augment_components_with_several_start_years(self):
@@ -268,16 +268,14 @@ class DistrictHeatingSystem:
             for item in items_to_remove:
                 self.components_data[comp_type].remove(item)
 
-    def create_components(self) -> List[cME]:
+    def create_components(self) -> List[Element]:
         # data manipulation if a range is given for the start year for some components
         self.augment_components_with_several_start_years()
-
-        pp(self.components_data)
         comps = []
 
         for comp_type in self.components_data.keys():
             for comp_props in self.components_data[comp_type]:
-                comps.extend(self.factory.create_energy_object(comp_type, **comp_props))
+                comps.extend(self.factory.create_energy_object(comp_type, comp_props))
 
         return comps
 
@@ -431,3 +429,36 @@ def linear_interpolation_with_bounds(input_data: pd.Series, lower_bound: float, 
                                (input_data.iloc[i] - lower_bound))
     return pd.Series(output_array, index=input_data.index)
 
+
+def add_yearly_effects_with_bounds(base_effect: fx.Effect,
+                                   years: List[int], lower_bounds: List[Optional[float]],
+                                   upper_bounds: List[Optional[float]],
+                                   label: str, unit: str, description: str) -> Dict[str, fx.Effect]:
+    """
+    Creates multiple new Effects for yearly allocation of values. Gets values from the base_effect (Factor = 1).
+    If no bounds are given, no effect is created.
+
+    Args:
+        base_effect: The base effect from which a share is taken (only for the refering year)
+        years: All years in the calculation
+        lower_bounds: The lower bounds for each year. Can be None.
+        upper_bounds: The upper bounds for each year. Can be None.
+        label: The label of the new effect
+        unit: The unit of the new effect
+        description: Descriptionof the new effect
+
+    Returns:
+        Dict with the labels of the new effects as keys and the new effects as values
+
+    """
+    yearly_effects = {}
+    for year, lower_bound, upper_bound in zip(years, lower_bounds, upper_bounds):
+        if lower_bound is not None or upper_bound is not None:
+            full_label = f"{label}{year}"
+            yearly_effects[full_label] = fx.Effect(full_label, unit, description,
+                                                     minimum_operation=lower_bound, maximum_operation=upper_bound)
+
+            base_effect.specific_share_to_other_effects_operation.update(
+                {yearly_effects[full_label]: exists(first_year=year, lifetime=1, years_in_model=years)}
+            )
+    return yearly_effects

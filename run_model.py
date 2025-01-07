@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger('flixOpt')
 from fermieopt.DistrictHeating import ExcelModel
 from fermieopt.excel_output import visualize_results, create_report_grouped, cExcelFcts
 from pathlib import Path
@@ -9,24 +11,22 @@ solver_name = "highs"    # Choose open source solver highs
 #solver_name = "gurobi"  # Choose commercial solver (Free academic licences). Much faster for large Models and storages
 
 
-def main():
+def main(solver_name: str, excel_file_path: str):
     excel_model = ExcelModel(excel_file_path=excel_file_path)
-    excel_model.visual_representation.show()
-    excel_model.solve_model(solver_name=solver_name, gap_frac=0.01, timelimit=36000)
+    excel_model.district_heating_system.final_model.visualize_network(False, controls=['physics'])
+    excel_model.solve_model(solver_name="gurobi", gap_frac=0.0005, timelimit=2*3600)
+    excel_model.district_heating_system.final_model.visualize_network(
+        f'{excel_model.final_directory}/{excel_model.calc_name}_network.html', controls=['physics'])
 
     calc_results = excel_model.load_results()
-    print("START: EXPORT OF RESULTS TO EXCEL...")
+    logger.info("START: EXPORT OF RESULTS TO EXCEL...")
     excel = cExcelFcts(calc_results)
     excel.run_excel_graphics_main()
-    excel.run_excel_graphics_years()
-    visualize_results(calc_results=calc_results,
-                      effect_shares= True,
-                      comps_yearly=True, buses_yearly=True, effects_yearly=True,
-                      comps_daily=True, buses_daily=True, effects_daily= True,
-                      comps_hourly=True, buses_hourly=True, effects_hourly=True)
-    for bus in calc_results.buses:
+    excel.run_excel_graphics_years(short_version=False)
+    visualize_results(calc_results=calc_results)
+    for bus in calc_results.bus_results:
         create_report_grouped(calc_results,
-                              path= Path(calc_results.folder).resolve() / f"{calc_results.label}__Report_{bus}.pdf",
+                              path=Path(calc_results.folder).resolve() / f"{calc_results.name}__Report_{bus}.pdf",
                               connected_to=bus)
     # calculation_results_for_further_inspection = excel_model.load_results()
 
@@ -38,8 +38,10 @@ def main():
 
 
 
+
+
 if __name__ == '__main__':
-    main()
+    main(solver_name, excel_file_path)
 
 # optional: change values for gap_frac and timelimit
 '''

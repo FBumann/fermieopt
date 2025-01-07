@@ -39,7 +39,8 @@ class ExcelData:
                           "Sonstige Zeitreihen Sheets",
                           "Fahrkurve Fernwärmenetz VL",
                           "Fahrkurve Fernwärmenetz RL",
-                          "CO2-limit")
+                          "CO2-limit",
+                          'Grüne Wärme Minimum [MWh]')
         meta_data, yearly_data = self._process_general_infos(meta_data_columns, yearly_columns)
 
         # Basic Information
@@ -50,7 +51,8 @@ class ExcelData:
 
         # Information per year of the Model
         self.years: List[int] = yearly_data["Jahre"]
-        self.co2_limits: List[int] = yearly_data["CO2-limit"]
+        self.co2_limits: List[Optional[int]] = yearly_data["CO2-limit"]
+        self.green_heat_min: List[Optional[int]] = yearly_data["Grüne Wärme Minimum [MWh]"]
         self._heating_network_temperature_curves_ff_info: List[str] = yearly_data["Fahrkurve Fernwärmenetz VL"]
         self._heating_network_temperature_curves_rf_info: List[str] = yearly_data["Fahrkurve Fernwärmenetz RL"]
         self._sheetnames_ts_data: List[str] = yearly_data["Zeitreihen Sheets"]

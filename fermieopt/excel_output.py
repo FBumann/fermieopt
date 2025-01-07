@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
-from typing import Union, List, Literal
+import logging
+from typing import Union, List, Literal, Optional
 
 import pandas as pd
 import numpy as np
@@ -11,7 +12,9 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 
-from fermieopt.flixPostXL import flixPostXL
+from fermieopt.flixPostprocessingXL import flixPostXL
+
+logger = logging.getLogger('flixOpt')
 
 ### Utility functions
 def resample_data(data_frame: Union[pd.DataFrame, np.ndarray], target_years: List[int], resampling_by: Literal["YE", "d", "h"],
@@ -48,6 +51,12 @@ def resample_data(data_frame: Union[pd.DataFrame, np.ndarray], target_years: Lis
         length_per_year = 8760
     elif len(df)/365 == len(target_years) and initial_sampling_rate == "d":
         length_per_year = 365
+    elif (len(df) - 1)/8760 == len(target_years) and initial_sampling_rate == "h":
+        length_per_year = 8760
+        df = df.iloc[:-1, :]
+    elif (len(df) - 1)/365 == len(target_years) and initial_sampling_rate == "d":
+        length_per_year = 365
+        df = df.iloc[:-1, :]
     else:
         raise ValueError("length of dataframe and initial_sampling_rate must match: "
                          "8760 rows/year ('H') or 365 rows/year 'D'.")
@@ -339,19 +348,15 @@ class cExcelFcts:
         else:
             output_file_path = custom_output_file_path
 
-        print("Annual Plots to Excel...")
+        logger.info("Annual Plots to Excel...")
 
         # computation for the whole calculation
 
         df_fernwaerme_erz_nach_techn_D = self.get_fernwaerme_erz(resamply_by="d", rs_method="mean")  # Wärmeerzeugung
 
-        df_installierte_leistung_Y = self.get_installierte_leistung(resamply_by="YE", rs_method="mean", flows=True,
-                                                                     storage_capacity=False,
-                                                                     grouped=True, actual_storage_capacity=False)
+        df_installierte_leistung_Y = self.get_installierte_leistung_pro_jahr(grouped=True)
 
-        df_waermekosten_vollkosten_D = self.get_waermekosten(with_fix_costs=True, resamply_by="d")
-
-        df_waermekosten_varCosts_D = self.get_waermekosten(with_fix_costs=False, resamply_by="d")
+        df_waermekosten_varCosts_D = self.get_waermekosten_operation(resamply_by="d")
 
         df_emissions_D = self.get_emissions(resamply_by="d", rs_method="sum")
 
@@ -366,21 +371,25 @@ class cExcelFcts:
 
         df_speicher_flows_D = self.get_speicher_flows("d", "mean", allocated=False)
 
-        print("......computation of data for short version finished")
+        df_fernwaerme_erz_nach_techn_H = self.get_fernwaerme_erz(resamply_by="h", rs_method="mean")
+
+        df_speicher_fuellstand_H = self.get_speicher_fuellstand("h", "mean", allocated=False)
+        df_speicher_fuellstand_H_alloc = self.get_speicher_fuellstand("h", "mean", allocated=True)
+
+        logger.info("......computation of data for short version finished")
         if not short_version:
-            df_fernwaerme_erz_nach_techn_H = self.get_fernwaerme_erz(resamply_by="h", rs_method="mean")
-            df_speicher_fuellstand_H = self.get_speicher_fuellstand("h", "mean", allocated=False)
-            df_speicher_fuellstand_H_alloc = self.get_speicher_fuellstand("h", "mean", allocated=True)
+            # Erzeugung ungrouped
+            df_fernwaerme_erz_H = self.get_fernwaerme_erz_individual()
 
         # TODO: weitere Grafiken
 
-        print("......computation of data finished")
+        logger.info("......computation of data finished")
 
         templ_path_excel_year = Path(__file__).resolve().parent / "resources" / "Template_Evaluation_Year.xlsx"
 
         for index, year in enumerate(self.calc.years):
             wb = load_workbook(templ_path_excel_year)
-            filename = f"{self.calc.infos['calculation']['name']}__Jahr_{year}.xlsx"
+            filename = f"{self.calc.name}__Jahr_{year}.xlsx"
             path_excel_year = os.path.join(output_file_path, filename)
             wb.save(path_excel_year)
 
@@ -392,10 +401,6 @@ class cExcelFcts:
                 # Installierte Leistung nach Technologie
                 df = df_installierte_leistung_Y[df_installierte_leistung_Y.index == year]
                 df.to_excel(writer, index=True, sheet_name="Installierte Leistung")
-
-                # Wärmevollkosten
-                df = df_waermekosten_vollkosten_D[df_waermekosten_vollkosten_D.index.year == year]
-                df.to_excel(writer, index=True, sheet_name="Wärmevollkosten")
 
                 # Wärmekosten Betrieb
                 df = df_waermekosten_varCosts_D[df_waermekosten_varCosts_D.index.year == year]
@@ -425,45 +430,37 @@ class cExcelFcts:
                 df = df_speicher_flows_D[df_speicher_flows_D.index.year == year]
                 df.to_excel(writer, index=True, sheet_name="SpeicherFlows D")
 
-                # Wärmeerzeugung als Jahresdauerlinien (Tagesmittelwerte)
-                df = df_fernwaerme_erz_nach_techn_D[df_fernwaerme_erz_nach_techn_D.index.year == year]
-                df.sort_values("Wärmelast", ascending=False, ignore_index=True).to_excel(writer, index=True,
-                                                                                         sheet_name="WärmeErz-Last-D")
-                df.sort_values("Strompreis", ascending=False, ignore_index=True).to_excel(writer, index=True,
-                                                                                          sheet_name="WärmeErz-Strom-D")
+                # Wärmeerzeugung als Jahresdauerlinien (Stundenwerte)
+                df = df_fernwaerme_erz_nach_techn_H[df_fernwaerme_erz_nach_techn_H.index.year == year]
+                df.reset_index(drop=True).to_excel(writer, index=True, sheet_name="Wärmeerzeugung-H")
 
-                print(f"......Year-{year} finished (short version)")
+                # Wärmeerzeugung im Februar und Juli (Stundenwerte)
+                df = df_fernwaerme_erz_nach_techn_H[df_fernwaerme_erz_nach_techn_H.index.year == year]
+                df.loc[df.index.month == 2].to_excel(writer, index=True, sheet_name="Wärmeerzeugung_Februar")
+                df.loc[df.index.month == 7].to_excel(writer, index=True, sheet_name="Wärmeerzeugung_Juli")
+
+                # Jahresdauerlinien der einzelnen Wärmeerzeuger (Stundenwerte)
+                df = df_fernwaerme_erz_nach_techn_H[df_fernwaerme_erz_nach_techn_H.index.year == year]
+                df = pd.DataFrame(-np.sort(-df.values, axis=0), columns=df.columns)
+                df.to_excel(writer, index=True, sheet_name="Wärmeerzeugung-Sorted")
+
+                # Speicherfüllstand (Stundenwerte) allokiert
+                df = df_speicher_fuellstand_H_alloc[df_speicher_fuellstand_H_alloc.index.year == year]
+                df.to_excel(writer, index=True, sheet_name="Speicher Summen")
+
+                # Speicherfüllstand (Stundenwerte) nicht allokiert
+                df = df_speicher_fuellstand_H[df_speicher_fuellstand_H.index.year == year]
+                df.to_excel(writer, index=True, sheet_name="Speicherfüllstand H")
+
+                logger.info(f"......Year-{year} finished (short version)")
                 if not short_version:
-                    # Wärmeerzeugung als Jahresdauerlinien (Stundenwerte)
-                    df = df_fernwaerme_erz_nach_techn_H[df_fernwaerme_erz_nach_techn_H.index.year == year]
-                    df.sort_values("Wärmelast", ascending=False, ignore_index=True).to_excel(writer, index=True,
-                                                                                             sheet_name="WärmeErz-Last")
-                    df.sort_values("Strompreis", ascending=False, ignore_index=True).to_excel(writer, index=True,
-                                                                                              sheet_name="WärmeErz-Strom")
-
-                    # Wärmeerzeugung im Februar und Juli (Stundenwerte)
-                    df = df_fernwaerme_erz_nach_techn_H[df_fernwaerme_erz_nach_techn_H.index.year == year]
-                    df.loc[df.index.month == 2].to_excel(writer, index=True, sheet_name="Wärmeerzeugung_Februar")
-                    df.loc[df.index.month == 7].to_excel(writer, index=True, sheet_name="Wärmeerzeugung_Juli")
-
-                    # Jahresdauerlinien der einzelnen Wärmeerzeuger (Stundenwerte)
-                    df = df_fernwaerme_erz_nach_techn_H[df_fernwaerme_erz_nach_techn_H.index.year == year]
-                    df = pd.DataFrame(-np.sort(-df.values, axis=0), columns=df.columns)
-
-                    df.to_excel(writer, index=True, sheet_name="WärmeErz-Last-DL-H")
-
-                    # Speicherfüllstand (Stundenwerte) allokiert
-                    df = df_speicher_fuellstand_H_alloc[df_speicher_fuellstand_H_alloc.index.year == year]
-                    df.to_excel(writer, index=True, sheet_name="Speicher Summen")
-
-                    # Speicherfüllstand (Stundenwerte) nicht allokiert
-                    df = df_speicher_fuellstand_H[df_speicher_fuellstand_H.index.year == year]
-                    df.to_excel(writer, index=True, sheet_name="Speicherfüllstand H")
-                print(f"...Year-{year} finished")
+                    df = df_fernwaerme_erz_H[df_fernwaerme_erz_H.index.year == year]
+                    df.reset_index(drop=True).to_excel(writer, index=True, sheet_name="Wärmeerzeugung-Einzeln")
+            logger.info(f"...Year-{year} finished")
 
                 # TODO: weitere Grafiken
 
-        print("...Annual Plots to Excel finished")
+        logger.info("...Annual Plots to Excel finished")
 
     def run_excel_graphics_main(self,
                                 custom_output_file_path: str = "default"):
@@ -505,7 +502,7 @@ class cExcelFcts:
         ```
 
         """
-        print("Overview Plots to Excel...")
+        logger.info("Overview Plots to Excel...")
 
         if custom_output_file_path == "default":
             output_file_path = self.calc.folder
@@ -515,7 +512,7 @@ class cExcelFcts:
         templ_path_excel_main = Path(__file__).resolve().parent / "resources" / "Template_Evaluation_Overview.xlsx"
 
         wb = load_workbook(templ_path_excel_main)
-        filename = f"{self.calc.infos['calculation']['name']}__Jahresübersicht.xlsx"
+        filename = f"{self.calc.name}__Jahresübersicht.xlsx"
         path_excel_main = os.path.join(output_file_path, filename)
         wb.save(path_excel_main)
 
@@ -523,20 +520,19 @@ class cExcelFcts:
             df = self.get_fernwaerme_last_and_loss("YE", "sum")
             df.to_excel(writer, index=True, sheet_name="Waermelast und Verluste")
 
-            df = self.get_costs_and_funding("YE")
+            df = self.get_costs_and_funding_per_year()
             df.to_excel(writer, index=True, sheet_name="Kostenübersicht")
 
             df = self.get_fernwaerme_erz("YE", "sum") / 1000
             df.to_excel(writer, index=True, sheet_name="Wärmeerzeugung")
 
-            df = self.get_installierte_leistung(resamply_by="YE", rs_method="mean", flows=True, storage_capacity=False,
-                                                 grouped=True, actual_storage_capacity=False)
+            df = self.get_installierte_leistung_pro_jahr(grouped=True)
             df.to_excel(writer, index=True, sheet_name="Installierte Leistung")
 
-            df = self.get_waermekosten(with_fix_costs=True, resamply_by="YE")
+            df = self.get_waermekosten_per_period(with_fix_costs=True)
             df.to_excel(writer, index=True, sheet_name="Wärmevollkosten")
 
-            df = self.get_waermekosten(with_fix_costs=False, resamply_by="YE")
+            df = self.get_waermekosten_operation(resamply_by="YE")
             df.to_excel(writer, index=True, sheet_name="Wärmekosten Variabel")
 
             df = self.get_emissions(resamply_by="YE", rs_method="sum")
@@ -556,22 +552,25 @@ class cExcelFcts:
                 drop=True)
             df_speicher_fuellstand_sum_H.to_excel(writer, index=True, sheet_name="Speicher Summen")
 
-        print("...Overview Plots to Excel finished")
+        logger.info("...Overview Plots to Excel finished")
 
-    def get_costs_and_funding(self, resamply_by):
+    def get_costs_and_funding_per_year(self):
         funding_var = self.calc.get_effect_results(self.funding_label, origin="operation", as_TS=True)
-        funding_fix = self.calc.get_effect_results(self.funding_label, origin="invest", as_TS=True)
         costs_var = self.calc.get_effect_results(self.costs_label, origin="operation", as_TS=True)
-        costs_fix = self.calc.get_effect_results(self.costs_label, origin="invest", as_TS=True)
 
-        df = pd.DataFrame(data={"Fixkosten": costs_fix,
-                                "Variable Kosten": costs_var,
-                                "Förderung Invest": -funding_fix,
-                                "Förderung Betrieb": -funding_var},
-                          index=self.calc.timeSeries,
+        df = pd.DataFrame(data={"Variable Kosten (abzgl. Förderung)": costs_var,
+                                "Förderung Betrieb": -1 * funding_var},
+                          index=self.calc.time,
                           )
-        df = resample_data(df, self.calc.years, resamply_by, "sum")
-        return df
+        data = resample_data(df, self.calc.years, 'YE', "sum").to_dict()
+
+        funding_fix = self.calc.get_effect_results(self.funding_label, origin="invest_per_period")
+        costs_fix = self.calc.get_effect_results(self.costs_label, origin="invest_per_period")
+
+        data["Förderung Invest"] = {year: value for year, value in zip(self.calc.years, -1 * funding_fix)}
+        data["Fixkosten (abzgl. Förderung)"] = {year: value for year, value in zip(self.calc.years, costs_fix)}
+
+        return pd.DataFrame(data)
 
     def get_fernwaerme_erz(self, resamply_by, rs_method):
         '''
@@ -594,53 +593,72 @@ class cExcelFcts:
         -------
         pd.DataFrame
         '''
-
+        df_fernwaerme = self.calc.to_dataFrame(self.label_main_bus, "inout", grouped=True)
         if resamply_by == "YE":
-            df_fernwaerme = self.calc.to_dataFrame(self.label_main_bus, "inout", grouped=False)  # ohne Wärmelast, ohne Speicher
-            df_fernwaerme_grouped = self.calc.group_df_by_mapping(df_fernwaerme)
-            df_fernwaerme_grouped.drop(columns=[self.group_label_heat_demand_w_loss], inplace=True)
+            df_fernwaerme.drop(columns=[self.group_label_heat_demand_w_loss], inplace=True)    # ohne Wärmelast, ohne Speicher
         else:
-            df_fernwaerme_grouped = self.calc.to_dataFrame(self.label_main_bus, "inout", grouped=True)
-            df_fernwaerme_grouped[self.group_label_heat_demand_w_loss] = -1 * df_fernwaerme_grouped[self.group_label_heat_demand_w_loss]  # reinverting
+            df_fernwaerme[self.group_label_heat_demand_w_loss] = -1 * df_fernwaerme[self.group_label_heat_demand_w_loss]  # reinverting
+
             try:
-                df_fernwaerme_grouped = pd.concat([df_fernwaerme_grouped, self.calc.getFuelCosts()["Strompreis"]], axis=1)
+                df_fernwaerme = pd.concat([df_fernwaerme, self.calc.get_fuel_costs()["Strompreis"]], axis=1)
             except KeyError:
-                print("Strompreis was not found and therefore can not be plotted")
+                logger.warning("Strompreis was not found and therefore can not be plotted")
 
-        df_fernwaerme_erz_nach_techn = resample_data(df_fernwaerme_grouped, self.calc.years, resamply_by, rs_method)
+        df_fernwaerme_erz_nach_techn = resample_data(df_fernwaerme, self.calc.years, resamply_by, rs_method)
 
-        df_fernwaerme_erz_nach_techn = self.merge_into_dispatch_structure(df_fernwaerme_erz_nach_techn)
+        return self.merge_into_dispatch_structure(df_fernwaerme_erz_nach_techn)
 
-        return df_fernwaerme_erz_nach_techn
-
-    def get_installierte_leistung(self, resamply_by, rs_method, flows: bool, storage_capacity: bool, grouped=False,
-                                  actual_storage_capacity: bool = False):
+    def get_fernwaerme_erz_individual(self,
+                                      threshold: Union[float, Literal['auto']] = 'auto'
+                                      ) -> pd.DataFrame:
         '''
         Parameters
         ----------
-        calc1 : flix_results
-            Calculation Object
-        resamply_by : string
-            "h" for hourly resampling
-            "d" for daily resampling
-            "YE" for yearly resampling
+        threshhold_for_dropping : None, float
+            decide wether not used parts (all 0 values) should be dropped
 
         Returns
         -------
         pd.DataFrame
         '''
-        df_invest = self.calc.get_invest_results_as_TS(flows=flows, storages=storage_capacity,
-                                                       grouped=grouped, actual_storage_capacity=actual_storage_capacity)
-        df_invest = reorder_columns(df_invest)
+        def remove_near_zero(df: pd.DataFrame, tolerance: float) -> pd.DataFrame:
+            columns_to_remove = []
+            for col in df.columns:
+                if df[col].abs().max() <= tolerance:
+                    columns_to_remove.append(col)
+            return df.drop(columns=columns_to_remove)
+
+        df_fernwaerme = self.calc.to_dataFrame(self.label_main_bus, "inout", grouped=False)
+        if threshold and threshold == "auto":
+            if threshold == "auto":
+                tolerance = 0.01 / 100 * df_fernwaerme.values.max()  # 0.01% as trheshold
+                df_fernwaerme = remove_near_zero(df_fernwaerme, tolerance)
+            else:
+                df_fernwaerme = remove_near_zero(df_fernwaerme, threshold)
+
+        df_fernwaerme =  resample_data(df_fernwaerme, self.calc.years, 'h', 'mean')
+
+        return df_fernwaerme[sorted(df_fernwaerme.columns, key=lambda col: col.lower())]
+
+    def get_installierte_leistung_pro_jahr(self, grouped: bool):
+        '''
+        Parameters
+        ----------
+        calc1 : flix_results
+            Calculation Object
+
+        Returns
+        -------
+        pd.DataFrame
+        '''
+        df_invest = self.calc.get_sizes_per_period().drop(columns=self.calc.storages, errors='ignore')
+        df_invest = reorder_columns(self.calc.group_df_by_mapping(df_invest))
 
         if df_invest.empty:
             return df_invest
-        else:
-            df_invest = resample_data(df_invest, self.calc.years, resamply_by, rs_method)
-            df_invest = self.merge_into_dispatch_structure(df_invest)
-            return df_invest
+        return self.merge_into_dispatch_structure(df_invest)
 
-    def get_waermekosten(self, with_fix_costs, resamply_by):
+    def get_waermekosten_operation(self, resamply_by: Literal['YE', 'd', 'h']):
         '''
         Parameters
         ----------
@@ -660,12 +678,8 @@ class cExcelFcts:
         '''
         heat = self.calc.to_dataFrame(self.label_demand, "in")
 
-        if with_fix_costs:
-            costs_total = pd.Series(self.calc.get_effect_results(effect_name=self.costs_label, origin="all", as_TS=True),
-                                    index=self.calc.timeSeries)
-        else:
-            costs_total = pd.Series(self.calc.get_effect_results(effect_name=self.costs_label, origin="operation", as_TS=True),
-                                    index=self.calc.timeSeries)
+        costs_total = pd.Series(self.calc.get_effect_results(effect_label=self.costs_label, origin="operation", as_TS=True),
+                                index=self.calc.time)
 
         # Unterschiedung zwischen Resampling
         if resamply_by == "d":
@@ -695,6 +709,24 @@ class cExcelFcts:
 
         return df
 
+    def get_waermekosten_per_period(self, with_fix_costs: bool):
+        heat = pd.DataFrame(self.calc.to_dataFrame(self.label_demand, "in"))
+        costs_operation = self.calc.get_effect_results(effect_label=self.costs_label, origin="operation", as_TS=True)
+
+        heat = resample_data(heat, self.calc.years, 'YE', "sum")
+        costs_operation = resample_data(costs_operation, self.calc.years, 'YE', "sum")
+        if with_fix_costs:
+            costs_invest = pd.DataFrame(
+                self.calc.get_effect_results(effect_label=self.costs_label, origin="invest_per_period"),
+                index=self.calc.years
+            )
+            costs = costs_operation + costs_invest
+        else:
+            costs = costs_operation
+
+        return pd.DataFrame({'Wärmevollkosten [€/MWh]': costs.values.flatten()/heat.values.flatten()}, index=self.calc.years)
+
+
     def get_emissions(self, resamply_by, rs_method):
         '''
         Parameters
@@ -715,8 +747,8 @@ class cExcelFcts:
         '''
         heat = self.calc.to_dataFrame(self.label_demand, "in")
 
-        CO2 = pd.DataFrame(self.calc.get_effect_results(effect_name=self.co2_label_fw, origin="operation", as_TS=True),
-                           index=self.calc.timeSeries)
+        CO2 = pd.DataFrame(self.calc.get_effect_results(effect_label=self.co2_label_fw, origin="operation", as_TS=True),
+                           index=self.calc.time)
 
         CO2_per_increment = resample_data(CO2, self.calc.years, resamply_by, rs_method).iloc[:, 0]
         heat_per_increment = resample_data(heat, self.calc.years, resamply_by, rs_method).iloc[:, 0]
@@ -744,7 +776,7 @@ class cExcelFcts:
         -------
         pd.DataFrame
         '''
-        df_sources = self.calc.get_sources_and_sinks(sources=True, sinks=False, sinks_n_sources=False)
+        df_sources = self.calc.get_sources_and_sinks(sources=True, sinks=False, source_and_sinks=False)
         df = resample_data(df_sources, self.calc.years, resamply_by, rs_method)
         df = reorder_columns(df)
 
@@ -788,12 +820,11 @@ class cExcelFcts:
         -------
         resampled DataFrame with capacity of all Storages
         '''
-        invest_results_speicher = self.calc.get_invest_results_as_TS(storages=True, flows=False,
-                                                                     actual_storage_capacity=actual_storage_capacity)
+        invest_results_speicher = self.calc.get_availlability()
+        invest_results_speicher = invest_results_speicher.filter(items=self.calc.storages)
         if invest_results_speicher.empty:
-            invest_results_speicher = pd.DataFrame(np.zeros(len(self.calc.timeSeries)), index=self.calc.timeSeries)
+            invest_results_speicher = pd.DataFrame(np.zeros(len(self.calc.time)), index=self.calc.time)
             invest_results_speicher.rename(columns={invest_results_speicher.columns[0]: "Speicher"}, inplace=True)
-
         elif grouped:
             invest_results_speicher = self.calc.group_df_by_mapping(invest_results_speicher)
 
@@ -822,14 +853,12 @@ class cExcelFcts:
         -------
         resampled DataFrame with total charge_state of all Storages
         '''
-        df_speicher_chargeState = pd.DataFrame(index=self.calc.timeSeries)
-        df_speicher_nettoFlow = pd.DataFrame(index=self.calc.timeSeries)
+        df_speicher_chargeState = pd.DataFrame(index=self.calc.time)
+        df_speicher_nettoFlow = pd.DataFrame(index=self.calc.time)
 
-        list_of_speicher = [comp.label for comp in self.calc.comp_posts if comp.type == "cStorage"]
-
-        for comp in list_of_speicher:
-            df_speicher_chargeState[comp] = self.calc.results[comp]["charge_state"][:-1]  # without the last step
-            df_speicher_nettoFlow[comp] = self.calc.results[comp]["nettoFlow"]
+        for comp in self.calc.storages:
+            df_speicher_chargeState[comp] = self.calc.component_results[comp].all_results["charge_state"][:-1]  # without the last step
+            df_speicher_nettoFlow[comp] = self.calc.component_results[comp].all_results["netto_discharge"]
 
         if allocated:
             charge_state_sum = df_speicher_chargeState.sum(axis=1)
@@ -844,11 +873,13 @@ class cExcelFcts:
         return df
 
     def get_fernwaerme_last_and_loss(self, resamply_by, rs_method):
-        df_demand = self.calc.to_dataFrame(self.label_demand, "in")
-        df_loss = self.calc.to_dataFrame(self.label_demand_losses, "in")
-        df = pd.concat([df_demand, df_loss], axis=1)
-        df_summed = resample_data(df, self.calc.years, resamply_by, rs_method)
-        df_verluste_summed = (df_summed.iloc[:, 1] / df_summed.sum(axis=1) * 100).rename("Verlust[%]").round(2)
+        data = {
+            'Wärmebedarf [MWh]': self.calc.component_results[self.label_demand].inputs[0].all_results['flow_rate'],
+            'Wärmeverlust [MWh]': self.calc.component_results[self.label_demand_losses].inputs[0].all_results['flow_rate']
+        }
+
+        df_summed = resample_data(pd.DataFrame(data), self.calc.years, resamply_by, rs_method)
+        df_verluste_summed = (df_summed['Wärmeverlust [MWh]'] / df_summed.sum(axis=1) * 100).rename("Verlust[%]").round(2)
 
         return pd.concat([df_summed, df_verluste_summed], axis=1)
 
@@ -873,12 +904,10 @@ class cExcelFcts:
         -------
         resampled DataFrame with total charge_state of all Storages
         '''
-        df_speicher_nettoFlow = pd.DataFrame(index=self.calc.timeSeries)
+        df_speicher_nettoFlow = pd.DataFrame(index=self.calc.time)
 
-        list_of_speicher = [comp.label for comp in self.calc.comp_posts if comp.type == "cStorage"]
-
-        for comp in list_of_speicher:
-            df_speicher_nettoFlow[comp] = self.calc.results[comp]["nettoFlow"]*-1
+        for comp in self.calc.storages:
+            df_speicher_nettoFlow[comp] = self.calc.component_results[comp].all_results["netto_discharge"]*-1
 
         if allocated:
             df = df_speicher_nettoFlow.sum(axis=1)
@@ -956,23 +985,23 @@ def write_bus_results_to_excel(calc:flixPostXL, resample_by: Literal["YE", "d", 
     -------
     None
     """
-    print(f"...Writing Bus Results ({resample_by}) to Excel...")
+    logger.info(f"...Writing Bus Results ({resample_by}) to Excel...")
 
     if custom_output_file_path == "default":
         output_file_path = calc.folder
     else:
         output_file_path = custom_output_file_path
 
-    filename = f"{calc.infos['calculation']['name']}__Buses_{resample_by}.xlsx"
+    filename = f"{calc.name}__Buses_{resample_by}.xlsx"
     path_excel = os.path.join(output_file_path, filename)
 
-    for bus_name in calc.buses:
-        data = calc.to_dataFrame(busOrComp=bus_name, direction="inout", invert_Output=True) * -1
+    for bus_name, bus_results in calc.bus_results.items():
+        data = bus_results.to_dataframe('flow_rate')
         data = resample_data(data_frame=data, target_years=calc.years, resampling_by=resample_by,
                              resampling_method="sum")
         df_to_excel_w_chart(data, path_excel, bus_name, "MWh", "Time")
 
-    print(f"......Buses ({resample_by}) finished")
+    logger.info(f"......Buses ({resample_by}) finished")
 
 def write_component_results_to_excel(calc: flixPostXL, resample_by: Literal["YE", "d", "h"] = "d",
                                      custom_output_file_path: str = "default"):
@@ -993,225 +1022,55 @@ def write_component_results_to_excel(calc: flixPostXL, resample_by: Literal["YE"
     -------
     None
     """
-    print(f"...Writing Components Results ({resample_by}) to Excel...")
+    logger.info(f"...Writing Components Results ({resample_by}) to Excel...")
 
     if custom_output_file_path == "default":
         output_file_path = calc.folder
     else:
         output_file_path = custom_output_file_path
 
-    filename = f"{calc.infos['calculation']['name']}__Comps_{resample_by}.xlsx"
+    filename = f"{calc.name}__Comps_{resample_by}.xlsx"
     path_excel = os.path.join(output_file_path, filename)
 
-    for comp_name in calc.comps:
-        data = calc.to_dataFrame(busOrComp=comp_name, direction="inout", invert_Output=True) * -1
+    for comp_name, comp_results in calc.component_results.items():
+        data = comp_results.to_dataframe('flow_rate')
         data = resample_data(data_frame=data, target_years=calc.years, resampling_by=resample_by,
                              resampling_method="sum")
         df_to_excel_w_chart(data, path_excel, comp_name, "MWh", "Time")
 
-    print(f"......Components ({resample_by}) finished")
+    logger.info(f"......Components ({resample_by}) finished")
 
-def write_effect_results_to_excel_shares(calc, custom_output_file_path: str = "default"):
+def write_effects_per_comp_per_period_to_excel(calc: flixPostXL, custom_output_file_path: str = "default"):
     """
-    Save summarized effects data to an Excel file.
-
-    Parameters
-    ----------
-    calc : flixPostXL
-        The flixPostXL object containing the calculation results.
-    Returns
-    -------
-    None
+    Saving the effects of every component per period to excel
     """
-    print(f"...Writing Effects Results (Shares) to Excel...")
+    logger.info(f"...Writing Effects Results per Component...")
 
     if custom_output_file_path == "default":
         output_file_path = calc.folder
     else:
         output_file_path = custom_output_file_path
 
-    filename = f"{calc.infos['calculation']['name']}__Effects_Shares.xlsx"
+    filename = f"{calc.name}__Effects_per_comp.xlsx"
     path_excel = os.path.join(output_file_path, filename)
 
-    df_effects_sum = pd.DataFrame()
-    for effect_name, effect in calc.results["globalComp"].items():
-        if effect_name == "penalty":
+    for effect in calc.effect_results:
+        if effect.lower() == 'penalty':
             continue
-        new_df = pd.DataFrame(calc.get_effect_results(effect_name=effect_name, origin="all", as_TS=False,
-                                                              shares=True), index = [effect_name]).T
-        df_effects_sum = pd.concat([df_effects_sum, new_df], axis=0)
-    df_to_excel_w_chart(df_effects_sum, path_excel, "Effects_SUM_Shares", "See Legend", "Component", style="bar")
-
-    df_effects_op = pd.DataFrame()
-    for effect_name, effect in calc.results["globalComp"].items():
-        if effect_name == "penalty":
-            continue
-        new_df = pd.DataFrame(calc.get_effect_results(effect_name=effect_name, origin="operation", as_TS=False,
-                                                      shares=True), index=[effect_name]).T
-        df_effects_op = pd.concat([df_effects_op, new_df], axis=0)
-    df_to_excel_w_chart(df_effects_op, path_excel, "Effects_OP_Shares", "diverse", "Component", style="bar")
-
-    df_effects_inv = pd.DataFrame()
-    for effect_name, effect in calc.results["globalComp"].items():
-        if effect_name == "penalty":
-            continue
-        new_df = pd.DataFrame(calc.get_effect_results(effect_name=effect_name, origin="invest", as_TS=False,
-                                                      shares=True), index=[effect_name]).T
-        df_effects_inv = pd.concat([df_effects_inv, new_df], axis=0)
-    df_to_excel_w_chart(df_effects_inv, path_excel, "Effects_Inv_Shares", "diverse", "Component", style="bar")
-
-    print(f"......Effects (Shares) finished")
-
-def write_effect_results_per_comp_to_excel(calc, custom_output_file_path: str = "default"):
-    """
-    Save summarized effects data to an Excel file.
-
-    Parameters
-    ----------
-    calc : flixPostXL
-        The flixPostXL object containing the calculation results.
-    Returns
-    -------
-    None
-    """
-    print(f"...Writing Effects Results (Shares) to Excel...")
-
-    if custom_output_file_path == "default":
-        output_file_path = calc.folder
-    else:
-        output_file_path = custom_output_file_path
-
-    filename = f"{calc.infos['calculation']['name']}__Effects_per_comp.xlsx"
-    path_excel = os.path.join(output_file_path, filename)
-
-    results_operation = {}
-    results_invest = {}
-    results_total = {}
-    for effect in calc.results["globalComp"].keys():
-        if effect == "penalty":
-            continue
-        results_operation[effect] = {}
-        results_invest[effect] = {}
-        results_total[effect] = {}
-        for comp in calc.comps:
-            operation_costs = calc.get_effect_result_of_comp_without_shares(effect, comp, "operation")
-            invest_costs = calc.get_effect_result_of_comp_without_shares(effect, comp, "invest")
-            if operation_costs:
-                results_operation[effect][comp] = operation_costs
-            if invest_costs:
-                results_invest[effect][comp] = invest_costs
-            if operation_costs or invest_costs:
-                results_total[effect][comp] = operation_costs + invest_costs
-
-    results_operation["heat"] = {}
-    results_invest["heat"] = {}
-    results_total["heat"] = {}
-
-    for comp in calc.comps:
-        heat = 0
-        for flow in calc.flows:
-            if flow.from_node == comp and flow.to_node == "Fernwaerme":
-                heat += sum(flow.results["val"])
-            elif flow.from_node == "Fernwaerme" and flow.to_node == comp:
-                heat -= sum(flow.results["val"])
-        if heat:
-            results_operation["heat"][comp] = heat
-            results_invest["heat"][comp] = heat
-            results_total["heat"][comp] = heat
-
-
-    df_effects_invest = pd.DataFrame(results_invest)
-    df_effects_operation = pd.DataFrame(results_operation)
-    df_effects_total = pd.DataFrame(results_total)
-
-    try:
-        df_effects_invest["costs per heat [€/MWh]"] = df_effects_invest["costs"]/df_effects_invest["heat"]
-        df_effects_invest["costs per heat (incl. funding) [€/MWh]"] = (df_effects_invest["costs"] - df_effects_invest["funding"] ) / df_effects_invest["heat"]
-
-        df_effects_operation["costs per heat [€/MWh]"] = df_effects_operation["costs"]/df_effects_operation["heat"]
-        df_effects_operation["costs per heat (incl. funding) [€/MWh]"] = (df_effects_operation["costs"] - df_effects_operation["funding"] ) / df_effects_operation["heat"]
-
-        df_effects_total["costs per heat [€/MWh]"] = df_effects_total["costs"]/df_effects_total["heat"]
-        df_effects_total["costs per heat (incl. funding) [€/MWh]"] = (df_effects_total["costs"] - df_effects_total["funding"] ) / df_effects_total["heat"]
-    except KeyError as e:
-        print(f"Caluclation of costs per heat and cost per heat (including funding) Threw an exception: {e}")
-
-    df_to_excel_w_chart(df_effects_invest, path_excel, "Effects_Per_Comp_Invest", "See Legend", "Component Name", style="bar", bar_style="clustered")
-    df_to_excel_w_chart(df_effects_operation, path_excel, "Effects_Per_Comp_Operation", "See Legend", "Component Name",
-                        style="bar", bar_style="clustered")
-    df_to_excel_w_chart(df_effects_total, path_excel, "Effects_Per_Comp_Total", "See Legend", "Component Name",
-                        style="bar", bar_style="clustered")
-
-
-    print(f"......Effects (Shares) finished")
-
-def write_effect_results_to_excel(calc, resample_by: Literal["YE", "d", "h"] = "d",
-                                  custom_output_file_path: str = "default"):
-    """
-    Save summarized effects data to an Excel file.
-
-    Parameters
-    ----------
-    calc : flixPostXL
-        The flixPostXL object containing the calculation results.
-    resample_by : str, optional
-        The time frequency for resampling data (e.g., 'd' for daily), by default "d".
-        Allowed values are 'YE' (yearly), 'd' (daily), and 'h' (hourly).
-    custom_output_file_path : str, optional
-        Custom path to save the Excel file
-
-    Returns
-    -------
-    None
-    """
-    print(f"...Writing Effects Results ({resample_by}) to Excel...")
-
-    if custom_output_file_path == "default":
-        output_file_path = calc.folder
-    else:
-        output_file_path = custom_output_file_path
-
-    filename = f"{calc.infos['calculation']['name']}__Effects-{resample_by}.xlsx"
-    path_excel = os.path.join(output_file_path, filename)
-
-    df_effects_sum = pd.DataFrame()
-    for effect_name, effect in calc.results["globalComp"].items():
-        if effect_name == "penalty":
-            continue
-        df_effects_sum[effect_name] = calc.get_effect_results(effect_name=effect_name, origin="all", as_TS=True,
-                                                              shares=False)
-    df_effects_sum = resample_data(data_frame=df_effects_sum, target_years=calc.years, resampling_by=resample_by,
-                                   resampling_method="sum")
-    df_to_excel_w_chart(df_effects_sum, path_excel, "Effects_SUM", "See Legend", "Time", style="line")
-
-    df_effects_op = pd.DataFrame()
-    for effect_name, effect in calc.results["globalComp"].items():
-        if effect_name == "penalty":
-            continue
-        df_effects_op[effect_name] = calc.get_effect_results(effect_name=effect_name, origin="operation",
-                                                             as_TS=True, shares=False)
-    df_effects_op = resample_data(data_frame=df_effects_op, target_years=calc.years, resampling_by=resample_by,
-                                  resampling_method="sum")
-    df_to_excel_w_chart(df_effects_op, path_excel, "Effects_OP", "diverse", "Time", style="line")
-
-    df_effects_inv = pd.DataFrame()
-    for effect_name, effect in calc.results["globalComp"].items():
-        if effect_name == "penalty":
-            continue
-        df_effects_inv[effect_name] = calc.get_effect_results(effect_name=effect_name, origin="invest", as_TS=True,
-                                                              shares=False)
-    df_effects_inv = resample_data(data_frame=df_effects_inv, target_years=calc.years, resampling_by=resample_by,
-                                   resampling_method="sum")
-    df_to_excel_w_chart(df_effects_inv, path_excel, "Effects_Inv", "diverse", "Time", style="line")
-
-    print(f"......Effects ({resample_by}) finished")
+        data = {}
+        for component in calc.component_results:
+            operation = calc.get_effects_of_element(component, effect, 'operation')
+            invest = calc.get_effects_of_element(component, effect, 'invest_per_period')
+            data[component] = invest + resample_data(pd.DataFrame(operation), calc.years, 'YE', 'sum').values.flatten()
+        df = pd.DataFrame(data, index = calc.years)
+        df_to_excel_w_chart(df, path_excel, effect, "See Legend", "Component Name",
+                            style="bar", bar_style="stacked")
 
 def visualize_results(calc_results: flixPostXL,
-                      effect_shares: bool = True, effects_per_comp: bool = True,
-                      buses_yearly: bool = True, comps_yearly: bool = True, effects_yearly: bool = True,
+                      effects_per_comp_and_year: bool = True,
+                      buses_yearly: bool = True, comps_yearly: bool = True,
                       buses_daily: bool = True, comps_daily: bool = True, effects_daily: bool = True,
-                      buses_hourly: bool = False, comps_hourly: bool = False,
-                      effects_hourly: bool = False) -> None:
+                      buses_hourly: bool = False, comps_hourly: bool = False) -> None:
     """
     Visualizes the results of a flixPostXL object.
 
@@ -1254,37 +1113,28 @@ def visualize_results(calc_results: flixPostXL,
     Returns:
         flixPostXL: The calculated results.
     """
-    calc_results.visual_representation(save_to=os.path.join(calc_results.folder, f"{calc_results.label}-Model_structure.html"))
-
-    print("Writing Results to Excel (YE)...")
+    logger.info("Writing Results to Excel (YE)...")
     if buses_yearly: write_bus_results_to_excel(calc_results, "YE")
-    if effects_yearly: write_effect_results_to_excel(calc_results, "YE")
+    if effects_per_comp_and_year: write_effects_per_comp_per_period_to_excel(calc_results)
     if comps_yearly: write_component_results_to_excel(calc_results, "YE")
-    if effect_shares: write_effect_results_to_excel_shares(calc_results)
-    if effects_per_comp: write_effect_results_per_comp_to_excel(calc_results)
-    print("...Results to Excel (YE) finished...")
+    logger.info("...Results to Excel (YE) finished...")
 
-    print("Writing Results to Excel (d)...")
+    logger.info("Writing Results to Excel (d)...")
     if buses_daily: write_bus_results_to_excel(calc_results, "d")
-    if effects_daily: write_effect_results_to_excel(calc_results, "d")
     if comps_daily: write_component_results_to_excel(calc_results,  "d")
-    print("...Results to Excel (d) finished...")
+    logger.info("...Results to Excel (d) finished...")
 
-    print("Writing results to Excel (h)...")
+    logger.info("Writing results to Excel (h)...")
     if buses_hourly: write_bus_results_to_excel(calc_results, "h")
-    if effects_hourly: write_effect_results_to_excel(calc_results,  "h")
     if comps_hourly: write_component_results_to_excel(calc_results,  "h")
-    print("...Results to Excel (h) finished...")
+    logger.info("...Results to Excel (h) finished...")
 
 
 ################## PDF - OUTPUT ####################
 def create_report(calc: flixPostXL, path: str = 'report.pdf', connected_to: str = "Fernwaerme", chunk_size: int = 4):
-    print(f"Creating Report of Components connected to '{connected_to}'")
-    flows_to_plot = []
-    for flow in calc.flows:
-        if flow.to_node == connected_to or flow.from_node == connected_to:
-            if np.sum(flow.results["val"]) >= 1:
-                flows_to_plot.append(flow.label_full)
+    logger.info(f"Creating Report of Components connected to '{connected_to}'")
+    res = calc.bus_results[connected_to]
+    flows_to_plot = [flow.label_full for flow in res.inputs + res.outputs if flow.to_dataframe('flow_rate').sum().sum() >= 1]
     flows_to_plot.sort()
 
     with PdfPages(path) as pdf:
@@ -1303,27 +1153,28 @@ def create_report(calc: flixPostXL, path: str = 'report.pdf', connected_to: str 
             plt.close()
 
 def create_report_grouped(calc: flixPostXL, path: str = 'report.pdf', connected_to: str = "Fernwaerme", chunk_size: int = 4) -> None:
-    print(f"Creating Report of Components connected to '{connected_to}'")
+    logger.info(f"Creating Report of Components connected to '{connected_to}'")
     # Filtering and sorting
-    flows_to_plot = {"others": []}
-    for flow in calc.flows:
-        if flow.to_node == connected_to or flow.from_node == connected_to:
-            if np.sum(flow.results["val"]) >= 1:
-                group = flow.group if flow.group else "others"
-                if group in flows_to_plot.keys():
-                    flows_to_plot[group].append(flow.label_full)
-                else:
-                    flows_to_plot[group] = [flow.label_full]
-    for key in flows_to_plot:
-        flows_to_plot[key].sort()
-    groups = list(flows_to_plot.keys())
+    grouped_flows = {"others": []}
+    res = calc.bus_results[connected_to]
+    flows_to_plot = [flow for flow in res.inputs + res.outputs if flow.to_dataframe('flow_rate').sum().sum() >= 1]
+
+    for flow in flows_to_plot:
+        group = calc.group_map.get(flow.label_full) or 'others'
+        if group in grouped_flows.keys():
+            grouped_flows[group].append(flow.label_full)
+        else:
+            grouped_flows[group] = [flow.label_full]
+    for key in grouped_flows:
+        grouped_flows[key].sort()
+    groups = list(grouped_flows.keys())
     groups.sort()
 
 
     with PdfPages(path) as pdf:
         for group in groups:
-            items_in_group = len(flows_to_plot[group])
-            for chunk in [flows_to_plot[group][i:i + chunk_size] for i in range (0, items_in_group, chunk_size)]:
+            items_in_group = len(grouped_flows[group])
+            for chunk in [grouped_flows[group][i:i + chunk_size] for i in range (0, items_in_group, chunk_size)]:
                 fig, axes = plt.subplots(len(chunk), 1, figsize=(8.27, 11.69/4 * len(chunk)), sharex=True, sharey=True)  #A4 size
                 if not isinstance(axes, np.ndarray):  # If only one item in batch, axes is not a list...
                     axes = np.array([axes])
@@ -1339,18 +1190,11 @@ def create_report_grouped(calc: flixPostXL, path: str = 'report.pdf', connected_
 
 def create_report_per_comp(calc: flixPostXL, path: str = 'report.pdf') -> None:
     # Filtering and sorting
-    components = {}
-    for flow in calc.flows:
-        if flow.comp in components:
-            components[flow.comp].append(flow.label_full)
-        else:
-            components[flow.comp] = [flow.label_full]
+    components = {comp_label: sorted([flow.label_full
+                                      for flow in comp.inputs + comp.outputs])
+                  for comp_label, comp in calc.component_results.items()}
 
-    for key in components:
-        components[key].sort()
-    components_sorted = list(components.keys())
-    components_sorted.sort()
-
+    components_sorted = sorted(components.keys())
 
     with PdfPages(path) as pdf:
         for comp_name in components_sorted:
