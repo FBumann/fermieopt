@@ -212,93 +212,29 @@ class LinearTransformer(PowerInvestElement):
 
 
 
-class Kessel(GridFee):
-    _property_definitions = {
-        **GridFee._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "eta_th": (NO_DEFAULT, Union[int, float, str]),
-        "Brennstoff": (NO_DEFAULT, str),
-        "Zusatzkosten pro MWh Brennstoff": (0, Union[int, float, str]),
-        "Grüne Wärme": (0, Union[int, float, str]),
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-    }
+class Kessel(ThermalInvestElement):
+    eta_thermal: Union[float, str] = Field(alias="Thermischer Wirkungsgrad")
 
-    _invest_prop = "Thermische Leistung"
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        self.eta_thermal = extract_data(self.eta_thermal, data)
 
-    @property
-    def factor_grid_to_invest(self) -> float:
-        value = np.max(self.kwargs.get("relative_maximum", 1) * self.computed_props["exists"] / self.computed_props["eta_th"])
-        self.computed_props["Faktor für Netzentgeltumrechnung"] = value
-        return value
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["eta_th"] = as_time_series(self.props["eta_th"], time_series_data)
-        self.computed_props["Zusatzkosten pro MWh Brennstoff"] = as_time_series(
-            self.props["Zusatzkosten pro MWh Brennstoff"], time_series_data)
-
-        # Brennstoff
-        self.computed_props["Brennstoffkosten"] = as_time_series(self.props["Brennstoff"], time_series_data)
-        self.computed_props["CO2 Faktor"] = as_time_series(co2_factors.get(self.props["Brennstoff"], 0),
-                                                               time_series_data)
-        self.computed_props["CO2 Kosten"] = self.computed_props["CO2 Faktor"] * time_series_data["CO2"].to_numpy()
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        # Inserting effects as keys
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.Boiler(
-            label=self.props["Name"],
-            eta=self.computed_props["eta_th"],
-            Q_th=fx.Flow(
-                label='Qth',
-                meta_data=self.meta_data,
-                bus=busses[self.props["Wärmebus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            ),
-            Q_fu=fx.Flow(
-                label='Qfu',
-                bus=busses[self.props["Brennstoff"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Brennstoffkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Brennstoff"] +
-                        self.computed_props["CO2 Kosten"],
-                    effects["CO2"]: self.computed_props["CO2 Faktor"]
-                }
-            )
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        boiler = fx.linear_converters.Boiler(
+            label=self.name,
+            eta=self.eta_thermal,
+            Q_fu=fx.Flow(label="Q_fu", bus=busses["bus_fuel"]),
+            Q_th=fx.Flow(label="Q_th", bus=busses["bus_heat"],
+                         size=self._thermal_power_invest(effects, time_series_data))
         )
-
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(comp.Q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+        add_grid_fee(self.grid_fee_per_year, boiler.Q_fu, boiler.Q_th, boiler.eta, effects['costs'])
+        return boiler
 
 
 class EHK(GridFee):
