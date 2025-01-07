@@ -3,7 +3,7 @@ import logging
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from rich import print
 
 import flixOpt as fx
@@ -49,8 +49,8 @@ class InvestElement(Element):
     optional: bool = Field(alias='Optional', default=False)
     invest_costs_fixed: Union[int, float] = Field(alias='Investkosten (fix) [€]', default=0)
     invest_costs_specific: Union[int, float] = Field(alias='Investkosten (spezifisch) [€/MW]', default=0)
-    yearly_costs_fixed: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/a]', default=0)
-    yearly_costs_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (spezifisch) [€/(MW*a)]', default=0)
+    annual_costs_fixed: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/a]', default=0)
+    annual_costs_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (spezifisch) [€/(MW*a)]', default=0)
     interest_rate: Union[int, float] = Field(alias='Zinssatz', default=0)
     funding_rate: Union[int, float] = Field(alias='Fördersatz', default=0)
 
@@ -153,22 +153,29 @@ class PowerInvestElement(InvestElement):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         self.fixed_profile = extract_data(self.fixed_profile, data)
 
-    def _power_invest(self, effects: Dict[str, fx.Effect]) -> Union[float, fx.InvestParameters]:
+    def _power_invest(self, effects: Dict[str, fx.Effect], years_of_model: List[int]) -> Union[float, fx.InvestParameters]:
         if not self.needs_investment:
             return self.power
         else:
+            fixed_effects, specific_effects = self.costs_and_funding(
+                interest_rate=self.interest_rate,
+                starting_year=self.start_year,
+                lifetime=self.lifetime,
+                years_of_model=years_of_model,
+                invest_costs=self.invest_costs_fixed,
+                specific_invest_costs=self.invest_costs_specific,
+                annual_costs=self.annual_costs_fixed,
+                specific_annual_costs=self.annual_costs_specific,
+                funding_rate=self.funding_rate)
+
             return fx.InvestParameters(
                 optional=self.optional,
                 fixed_size=self.power if isinstance(self.power, (int, float)) else None,
                 minimum_size=self.minimum_power,
                 maximum_size=self.maximum_power,
 
-                specific_effects={
-                    effects['costs']: self.invest_costs_specific,
-                    effects['funding']: self.invest_costs_specific * 0.4},
-                fix_effects={
-                    effects['costs']: self.invest_costs_fixed,
-                    effects['funding']: self.invest_costs_fixed * 0.4}
+                specific_effects=insert_effects(specific_effects, effects),
+                fix_effects=insert_effects(fixed_effects, effects)
             )
 
     @property
@@ -190,22 +197,44 @@ class ThermalInvestElement(InvestElement):
 
     def _thermal_power_invest(self,
                               effects: Dict[str, fx.Effect],
-                              time_series_data: pd.DataFrame) -> Union[float, fx.InvestParameters]:
+                              years_of_model: List[int]) -> Union[float, fx.InvestParameters]:
         if not self.needs_investment:
             return self.thermal_power
         else:
+            fixed_effects, specific_effects = self.costs_and_funding(
+                interest_rate=self.interest_rate,
+                starting_year=self.start_year,
+                lifetime=self.lifetime,
+                years_of_model=years_of_model,
+                invest_costs=self.invest_costs_fixed,
+                specific_invest_costs=self.invest_costs_specific,
+                annual_costs=self.annual_costs_fixed,
+                specific_annual_costs=self.annual_costs_specific,
+                funding_rate=self.funding_rate)
+
             return fx.InvestParameters(
                 optional=self.optional,
                 fixed_size=self.thermal_power if isinstance(self.thermal_power, (int, float)) else None,
                 minimum_size=self.minimum_thermal_power,
                 maximum_size=self.maximum_thermal_power,
-                specific_effects={
-                    effects['costs']: self.invest_costs_specific + self._grid_fee_thermal(time_series_data),
-                    effects['funding']: self.invest_costs_specific * 0.4},
-                fix_effects={
-                    effects['costs']: self.invest_costs_fixed,
-                    effects['funding']: self.invest_costs_fixed * 0.4}
+                specific_effects=insert_effects(specific_effects, effects),
+                fix_effects=insert_effects(fixed_effects, effects)
             )
+
+    @classmethod
+    def add_grid_fee(cls,
+                     grid_fee: Union[int, float],
+                     grid_flow: fx.Flow,
+                     invest_flow: fx.Flow,
+                     efficiency: Union[int, float, np.ndarray],
+                     effect: fx.Effect) -> None:
+        """ Adds the grid fee as an Investment to the investment parameters of the invest_flow"""
+        if not isinstance(invest_flow.size, fx.InvestParameters) and not grid_fee == 0:
+            raise Exception("There are no InvestParameters to add the grid_fee to")
+        else:
+            invest_flow.size.specific_effects[effect] = (
+                    invest_flow.size.specific_effects.get(effect, 0)
+                    + grid_fee * np.max(grid_flow.relative_maximum / efficiency))
 
     @property
     def minimum_thermal_power(self) -> Optional[float]:
@@ -220,20 +249,6 @@ class ThermalInvestElement(InvestElement):
         return validate_invest_range(value, label="Thermische Leistung [MW]")
 
 
-def add_grid_fee(grid_fee: Union[int,float],
-                 grid_flow: fx.Flow,
-                 invest_flow: fx.Flow,
-                 efficiency: Union[int, float, np.ndarray],
-                 effect: fx.Effect):
-    """ Adds the grid fee as an Investment to the investment parameters of the invest_flow"""
-    if not isinstance(invest_flow.size, fx.InvestParameters) and not grid_fee == 0:
-        raise Exception("There are no InvestParameters to add the grid_fee to")
-    else:
-        invest_flow.size.specific_effects[effect] = (invest_flow.size.specific_effects.get(effect, 0)
-                                                      + grid_fee * np.max(grid_flow.relative_maximum / efficiency))
-    return np.max(grid_flow.relative_maximum / efficiency)
-
-
 class Sink(PowerInvestElement):
     def _convert_to_flixopt(self,
                             flow_system: fx.FlowSystem,
@@ -246,7 +261,7 @@ class Sink(PowerInvestElement):
             label=self.name,
             sink=fx.Flow(label=self.flow_label,
                          bus=busses[self.bus],
-                         size=self._power_invest(effects),
+                         size=self._power_invest(effects, years_of_model),
                          fixed_relative_profile=self.fixed_profile),
         )
 
@@ -266,6 +281,7 @@ class Source(PowerInvestElement):
                          size=self._power_invest(effects),
                          fixed_relative_profile=self.fixed_profile),
         )
+
 
 class LinearTransformer(PowerInvestElement):
     efficiency: Union[int, float, str] = Field(alias="Wirkungsgrad")
@@ -324,9 +340,9 @@ class Kessel(ThermalInvestElement):
             eta=self.eta_thermal,
             Q_fu=fx.Flow(label="Q_fu", bus=busses["bus_fuel"]),
             Q_th=fx.Flow(label="Q_th", bus=busses["bus_heat"],
-                         size=self._thermal_power_invest(effects, time_series_data))
+                         size=self._thermal_power_invest(effects, years_of_model))
         )
-        add_grid_fee(self.grid_fee_per_year, boiler.Q_fu, boiler.Q_th, boiler.eta, effects['costs'])
+        self.add_grid_fee(self.grid_fee_per_year, boiler.Q_fu, boiler.Q_th, boiler.eta, effects['costs'])
         return boiler
 
 
@@ -356,7 +372,7 @@ class KWK(ThermalInvestElement):
             eta_th=self.eta_th,
             eta_el=self.eta_el,
             Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat],
-                         size=self._thermal_power_invest(effects, time_series_data)),
+                         size=self._thermal_power_invest(effects, years_of_model)),
             P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
                          effects_per_flow_hour={
                              effects['costs']: -1 * extract_data('Strom', time_series_data),
@@ -371,7 +387,7 @@ class KWK(ThermalInvestElement):
                                               extract_data('CO2', time_series_data))
                          }),
         )
-        add_grid_fee(self.grid_fee_per_year, chp.P_el, chp.Q_th, chp.eta_el, effects['costs'])
+        self.add_grid_fee(self.grid_fee_per_year, chp.P_el, chp.Q_th, chp.eta_el, effects['costs'])
         return chp
 
     def _insert_data(self, time_series_data: pd.DataFrame):
@@ -457,7 +473,7 @@ class Waermepumpe(ThermalInvestElement):
             label=self.name,
             COP = self._get_cop(time_series_data),
             Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat],
-                         size=self._thermal_power_invest(effects, time_series_data),
+                         size=self._thermal_power_invest(effects, years_of_model),
                          relative_maximum=self.relative_maximum),
             P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
                          effects_per_flow_hour={
@@ -466,7 +482,7 @@ class Waermepumpe(ThermalInvestElement):
                          })
         )
 
-        add_grid_fee(self.grid_fee_per_year, heat_pump.P_el, heat_pump.Q_th, heat_pump.cop, effects['costs'])
+        self.add_grid_fee(self.grid_fee_per_year, heat_pump.P_el, heat_pump.Q_th, heat_pump.cop, effects['costs'])
         return heat_pump
 
     def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
@@ -589,7 +605,7 @@ class Waermepumpe(ThermalInvestElement):
 class Speicher(ThermalInvestElement):
     capacity: Union[int, float, str] = Field(alias='Kapazität [MWh]')
     invest_costs_capacity_specific: Union[int, float] = Field(alias='Investkosten [€/MWh]', default=0)
-    yearly_costs_capacity_specific: Union[int, float] = Field(alias='Sonstige Fixkosten [€/(MWh*a)]', default=0)
+    annual_costs_capacity_specific: Union[int, float] = Field(alias='Sonstige Fixkosten [€/(MWh*a)]', default=0)
 
     eta_load: Union[int, float, str] = Field(alias='eta_load')
     eta_unload: Union[int, float, str] = Field(alias='eta_unload')
@@ -618,7 +634,7 @@ class Speicher(ThermalInvestElement):
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
         self._insert_data(time_series_data)
-        invest_charge, invest_discharge = self._get_thermal_powers(effects, time_series_data, flow_system)
+        invest_charge, invest_discharge = self._get_thermal_powers(effects, years_of_model, flow_system)
 
         return fx.Storage(
             label=self.name,
@@ -638,27 +654,36 @@ class Speicher(ThermalInvestElement):
             prevent_simultaneous_charge_and_discharge=True
         )
 
-    def _get_capacity(self, effects: [str, fx.Effect]) -> Union[int, float, fx.InvestParameters]:
+    def _get_capacity(self, effects: [str, fx.Effect], years_of_model: List[int]) -> Union[int, float, fx.InvestParameters]:
         if isinstance(self.capacity, (int, float)):
             return self.capacity
         else:
+            _, specific_effects = self.costs_and_funding(
+                interest_rate=self.interest_rate,
+                starting_year=self.start_year,
+                lifetime=self.lifetime,
+                years_of_model=years_of_model,
+                invest_costs=0,
+                annual_costs=0,
+                specific_invest_costs=self.invest_costs_capacity_specific,
+                specific_annual_costs=self.annual_costs_capacity_specific,
+                funding_rate=self.funding_rate)
+
             return fx.InvestParameters(
                 optional=self.optional,
                 fixed_size=self.capacity if isinstance(self.capacity, (int, float)) else None,
                 minimum_size=self.minimum_capacity,
                 maximum_size=self.maximum_capacity,
-                specific_effects={
-                    effects['costs']: self.invest_costs_capacity_specific,
-                    effects['funding']: self.invest_costs_capacity_specific * 0.4}
+                specific_effects=insert_effects(specific_effects, effects)
             )
 
     def _get_thermal_powers(self,
                             effects: [str, fx.Effect],
-                            time_series_data: pd.DataFrame,
+                            years_of_model: List[int],
                             flow_system: fx.FlowSystem
                             ) -> Tuple[Union[int, float, fx.InvestParameters], Union[int, float, fx.InvestParameters]]:
 
-        thermal_power = self._thermal_power_invest(effects, time_series_data)
+        thermal_power = self._thermal_power_invest(effects, years_of_model)
         if isinstance(thermal_power, (int, float)):
             return thermal_power, thermal_power
 
