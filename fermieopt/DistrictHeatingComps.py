@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from rich import print
 
 import flixOpt as fx
+import flixOpt.elements
 
 logger = logging.getLogger('flixOpt')
 
@@ -227,7 +228,6 @@ class LinearTransformer(PowerInvestElement):
                                   inputs=[flow_in],
                                   outputs=[flow_out],
                                   conversion_factors=[{flow_in: self.efficiency, flow_out: 1}])
-
 
 
 class Kessel(ThermalInvestElement):
@@ -1131,9 +1131,34 @@ class ComponentFactory:
             rep += f"{comp}\n"
         return rep
 
+def extract_data(value: Union[str, Any], data: pd.DataFrame) -> Union[np.ndarray, Any]:
+    """
+    Extracts data from a DataFrame based on the provided value. If the value is a string, it is assumed to be a column name
+    and the corresponding data is returned. If the value is not a string, it is assumed to be the actual data and is simply
+    returned.
+    """
 
-##############################
+    if isinstance(value, str):
+        if value not in data.columns:
+            raise KeyError(f"Column '{value}' not found in the time series data provided. "
+                           f"Only the following columns where found: {list(data.columns)}")
+        return data[value].to_numpy()
+    else:
+        return value
 
+
+def insert_effects(dictionary: Dict[Union[fx.Effect, str], Any],
+                   effects: Dict[str, fx.Effect]) -> None:
+
+    if dictionary is None or dictionary == 0 or dictionary == {}:
+        return None
+    for effect_name, value in list(dictionary.items()):
+        if effect_name in effects.keys():
+            dictionary[effects[effect_name]] = dictionary.pop(effect_name)
+        elif not isinstance(effect_name, fx.Effect):
+            raise KeyError(f"Key '{effect_name}' is not found in effects Collection.")
+
+# Limit availability of Elements
 def exists(first_year: int, lifetime: int, years_in_model: list[int], steps_per_year: int = 8760) -> [int, np.ndarray]:
     index_per_year = np.array(index_per_year_in_model(first_year, lifetime, years_in_model))
     if np.sum(index_per_year) == 0:
@@ -1152,36 +1177,18 @@ def index_per_year_in_model(first_year: Optional[int], lifetime: Optional[int], 
         # Create a new list with 1s and 0s based on the conditions
         return [1 if first_year <= num < first_year + lifetime else 0 for num in years_of_model]
 
-def as_time_series(value: Union[float, int, str], time_series_data: pd.DataFrame) -> Union[int, float, np.ndarray]:
-    if isinstance(value, (int, float)):
-        # return np.ones(len(time_series_data.index)) * value
-        return value
-    elif value in time_series_data.columns:
-        return time_series_data[value].to_numpy()
-    else:
-        raise KeyError(f"{value} is not in TimeSeries Data of the DistrictHeatingSystem.")
 
-def calculate_cop(source_temperature: np.ndarray, target_temperature: np.ndarray, eta: float = 0.5) -> np.ndarray:
-    '''
-    Calculates the COP of a heatpump per Timestep from the Temperature of Heat sink and Heat source in Kelvin
-    Parameters
-    ----------
-    source_temperature : np.array, float, pd.Dataframe
-        Temperature of the Heat Source in Degrees Celcius
-    target_temperature : np.array, float, pd.Dataframe
-        Temperature of the Heat Sink in Degrees Celcius
-    eta : float
-        Relation to the thermodynamicaly ideal COP
+def restrict_availlability(component: flixOpt.elements.Component, exists: Union[int, float, np.ndarray]) -> flixOpt.elements.Component:
+    for flow in component.inputs + component.outputs:
+        flow.relative_maximum = flow.relative_maximum * exists
+        flow.relative_minimum = flow.relative_minimum * exists
+    if isinstance(component, fx.Storage):
+        storage_exists_exists = exists if isinstance(exists, (int, float)) else np.append(exists, exists[-1])
+        component.relative_maximum_charge_state = component.relative_maximum_charge_state * storage_exists_exists
+        component.relative_minimum_charge_state = component.relative_minimum_charge_state * storage_exists_exists
+    return component
 
-    Returns
-    -------
-    np.ndarray
 
-    '''
-    # Celsius zu Kelvin
-    source_temperature = source_temperature + 273.15
-    target_temperature = target_temperature + 273.15
-    return (target_temperature / (target_temperature - source_temperature)) * eta
 
 def bew_operation_funding_from_scop(scop: Union[int, float],
                                     unit: Literal["MWh_amb", "MWh_th", "MWh_el"] = "MWh_amb") -> Union[int, float]:
@@ -1211,18 +1218,7 @@ def bew_operation_funding_from_scop(scop: Union[int, float],
     else:
         return fund_amb * (scop - 1)
 
-
-def insert_effects(dictionary: Dict[Union[fx.Effect, str], Any],
-                   effects: Dict[str, fx.Effect]) -> None:
-
-    if dictionary is None or dictionary == 0 or dictionary == {}:
-        return None
-    for effect_name, value in list(dictionary.items()):
-        if effect_name in effects.keys():
-            dictionary[effects[effect_name]] = dictionary.pop(effect_name)
-        elif not isinstance(effect_name, fx.Effect):
-            raise KeyError(f"Key '{effect_name}' is not found in effects Collection.")
-
+# Investment stuff
 def get_annuity_factor(interest_rate: float, lifetime: int) -> float:
     if interest_rate == 0:  # Preventing ZeroDicvision
         annuity_factor = 1 / lifetime
@@ -1293,63 +1289,6 @@ def costs_and_funding(
         return d
 
     return clean_dict(fix_costs), clean_dict(specific_costs)
-
-def handle_invest_parameter(invest_parameter: Union[int, float, str, type(None)]
-                            ) -> Tuple[Optional[Union[int, float]], float, float]:
-    '''
-    Handles an 'invest_parameter' value by assessing its type and assigning appropriate min, max, and value variables.
-
-    If 'invest_parameter' is string, it should be in the format 'min-max'. If it doesn't follow this format,
-    an exception will be raised. In this case, min and max are parsed from the string, and value is set to None.
-
-    If 'invest_parameter' is not string, the min is set to 0, max is set to 1e9 and value is set to the
-    'invest_parameter' itself.
-
-    Args:
-        invest_parameter (Union[str, int, float]): A number (int, float) or min-max range (string)
-
-    Returns:
-        Tuple: Return a tuple containing:
-            - value : Value of 'invest_parameter', if it was number. Else, None
-            - min   : Minimum limit for 'invest_parameter'
-            - max   : Maximum Limit for 'invest_parameter'
-
-    Raises:
-        Exception: If 'invest_parameter' is string but does not follow 'min-max' format
-    '''
-    min, max = 0, 1e9
-    if isinstance(invest_parameter, type(None)):
-        return None, min, max
-    if isinstance(invest_parameter, (int, float)):
-        value = invest_parameter
-        return value, min, max
-    if isinstance(invest_parameter, str):
-        lower_bound, upper_bound = check_min_max_format(invest_parameter)
-        return None, lower_bound, upper_bound
-
-    raise Exception(f"Wrong format of string for thermal_power '{invest_parameter}'."
-                    f"If thermal power is passed as a string, it must be of the format 'min-max'")
-
-def check_min_max_format(input_string: str) -> Tuple[float, float]:
-    '''
-    This function checks if a string is of the format "min-max" where min and max can be integers or decimal numbers
-    with . or , as decimal separators.
-
-    Parameters
-    ----------
-    input_string : str
-        The input string to check.
-
-    Returns
-    -------
-    bool
-        True if the string matches the "min-max" format, False otherwise.
-    '''
-    input_string = input_string.replace(',', '.').replace(' ', '')
-    if not re.match(r'^\d+(.\d+)?-\d+(.\d+)?$', input_string):
-        raise ValueError(f"String '{input_string}' is not of Format 'min-max'")
-    lower_bound, upper_bound = input_string.split("-")
-    return float(lower_bound), float(upper_bound)
 
 
 def fuel_factor_for_electrical_energy(
@@ -1423,17 +1362,6 @@ def is_valid_format_segmentsOfFlows(input_string: str, mode: Literal['validate',
         raise Exception("Error encountered in parsing of String")
 
 
-def print_dict(data: Dict[str, Union[str, int, float, np.ndarray]]) -> str:
-    keys = sorted(data.keys())
-    values = [data[key] for key in keys]
-
-    representation = ""
-    for key, value in zip(keys, values):
-        representation += f"{key} = {value}\n"
-
-    return representation
-
-
 def add_effect_per_flow_hour(flow: fx.Flow, effect: fx.Effect, standard_effect: fx.Effect, factor: Union[float, np.ndarray]):
     if isinstance(flow.effects_per_flow_hour, dict):
         flow.effects_per_flow_hour.update({effect: factor})
@@ -1441,16 +1369,6 @@ def add_effect_per_flow_hour(flow: fx.Flow, effect: fx.Effect, standard_effect: 
         flow.effects_per_flow_hour = {effect: factor}
     else:
         flow.effects_per_flow_hour = {effect: factor, standard_effect: flow.effects_per_flow_hour}
-
-def restrict_availlability(component: flixOpt.elements.Component, exists: Union[int, float, np.ndarray]) -> flixOpt.elements.Component:
-    for flow in component.inputs + component.outputs:
-        flow.relative_maximum = flow.relative_maximum * exists
-        flow.relative_minimum = flow.relative_minimum * exists
-    if isinstance(component, fx.Storage):
-        storage_exists_exists = exists if isinstance(exists, (int, float)) else np.append(exists, exists[-1])
-        component.relative_maximum_charge_state = component.relative_maximum_charge_state * storage_exists_exists
-        component.relative_minimum_charge_state = component.relative_minimum_charge_state * storage_exists_exists
-    return component
 
 def update_meta_data(component: flixOpt.elements.Component, meta_data: Dict):
     if component.meta_data is None:
@@ -1461,6 +1379,8 @@ def update_meta_data(component: flixOpt.elements.Component, meta_data: Dict):
             flow.meta_data = {}
         flow.meta_data.update(meta_data)
     return component
+
+# validation functions
 
 def validate_invest_meta_data(component: flixOpt.elements.Component):
     for flow in component.inputs + component.outputs:
@@ -1488,7 +1408,6 @@ def validate_invest_meta_data(component: flixOpt.elements.Component):
                         f'which totals to {sum(flow.meta_data["specific_effects"][effect.label])}')
 
 
-# New function
 def validate_invest_range(value: Union[int, float, str], label: str) -> Union[int, float, str]:
     """
     This function was written to validate the investment range of a component.
@@ -1519,17 +1438,3 @@ def validate_invest_range(value: Union[int, float, str], label: str) -> Union[in
     else:
         raise ValueError(f"'{label}' must be a number or a string in the format 'X-Y'.")
 
-def extract_data(value: Union[str, Any], data: pd.DataFrame) -> Union[np.ndarray, Any]:
-    """
-    Extracts data from a DataFrame based on the provided value. If the value is a string, it is assumed to be a column name
-    and the corresponding data is returned. If the value is not a string, it is assumed to be the actual data and is simply
-    returned.
-    """
-
-    if isinstance(value, str):
-        if value not in data.columns:
-            raise KeyError(f"Column '{value}' not found in the time series data provided. "
-                           f"Only the following columns where found: {list(data.columns)}")
-        return data[value].to_numpy()
-    else:
-        return value
