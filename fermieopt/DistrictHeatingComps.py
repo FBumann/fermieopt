@@ -391,125 +391,81 @@ class Rueckkuehler(GridFee):
         return self.flix_comps
 
 
-class KWK(GridFee):
-    _property_definitions = {
-        **GridFee._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "eta_th": (NO_DEFAULT, Union[int, float, str]),
-        "eta_el": (NO_DEFAULT, Union[int, float, str]),
-        "Brennstoff": (NO_DEFAULT, str),
-        "Zusatzkosten pro MWh Brennstoff": (0, Union[int, float, str]),
-        # Stromvergütung CO2
-        "Vorlauftemperatur": ("TVL_FWN", Union[int, float, str]),
-        "Rücklauftemperatur": ("TRL_FWN", Union[int, float, str]),
-        "Umgebungstemperatur": ("Tamb", Union[int, float, str]),
+class KWK(ThermalInvestElement):
+    eta_th: Union[int, float, str] = Field(alias='eta_th')
+    eta_el: Union[int, float, str] = Field(alias='eta_el')
+    fuel_type: str = Field(alias='Brennstoff')
+    extra_costs_per_mwh_fuel: Union[int, float, str] = Field(alias='Zusatzkosten pro MWh Brennstoff', default=0)
+    forward_flow_temperature: Union[int, float, str] = Field(alias='Vorlauftemperatur')
+    reverse_flow_temperature: Union[int, float, str] = Field(alias='Rücklauftemperatur')
+    ambient_temperature: Union[int, float, str] = Field(alias='Umgebungstemperatur')
 
-        "Grüne Wärme": (0, Union[int, float, str]),
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-        "Strombus": ("StromEinspeisung", str),
-    }
+    bus_heat: str = Field(alias="Wärmebus", default='Fernwärme')
+    bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
-    _invest_prop = "Thermische Leistung"
+    def _convert_to_flixopt(self,
+                            flow_system: fx.FlowSystem,
+                            effects: Dict[str, fx.Effect],
+                            busses: Dict[str, fx.Bus],
+                            time_series_data: pd.DataFrame,
+                            co2_factors: Dict[str, float],
+                            years_of_model: List[int]):
+        self._insert_data(time_series_data)
 
-    @property
-    def factor_grid_to_invest(self) -> float:
-        value = np.max(self.kwargs.get("relative_maximum", 1) * self.computed_props["exists"] / self.computed_props["eta_th"])
-        self.computed_props["Faktor für Netzentgeltumrechnung"] = value
-        return value
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["eta_th"] = as_time_series(self.props["eta_th"], time_series_data)
-        self.computed_props["eta_el"] = as_time_series(self.props["eta_el"], time_series_data)
-        self.computed_props["Brennstoffkosten"] = as_time_series(self.props["Brennstoff"], time_series_data)
-        self.computed_props["Zusatzkosten pro MWh Brennstoff"] = as_time_series(
-            self.props["Zusatzkosten pro MWh Brennstoff"], time_series_data)
-
-        self.computed_props["CO2 Faktor"] = as_time_series(co2_factors.get(self.props["Brennstoff"], 0),
-                                                               time_series_data)
-        self.computed_props["CO2 Kosten"] = self.computed_props["CO2 Faktor"] * time_series_data["CO2"].to_numpy()
-        self.computed_props["Stromerlöse"] = as_time_series("Strom", time_series_data)
-        # CO2 Vergütung Strom (Ohne Kosten)
-        try:
-            self.computed_props["CO2 Reward Strom"] = fuel_factor_for_electrical_energy(
-                electrical_efficiency=self.computed_props["eta_el"],
-                thermal_efficiency=self.computed_props["eta_th"],
-                inferior_temperature=as_time_series(self.props["Umgebungstemperatur"], time_series_data),
-                forward_flow_temperature=as_time_series(self.props["Vorlauftemperatur"], time_series_data),
-                reverse_flow_temperature=as_time_series(self.props["Rücklauftemperatur"], time_series_data)
-            ) * self.computed_props["CO2 Faktor"]
-        except KeyError:
-            print(
-                f"Computation of CO2 Reward did not work properly. Using default values instedOptimization itself isnot affected. "
-                f"Only take care interpreting CO2 Emissions")
-            self.computed_props["CO2 Reward Strom"] = fuel_factor_for_electrical_energy(
-                electrical_efficiency=self.computed_props["eta_el"],
-                thermal_efficiency=self.computed_props["eta_th"],
-            ) * self.computed_props["CO2 Faktor"]
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.CHP(
-            label=self.props["Name"],
-            eta_el=self.computed_props["eta_el"],
-            eta_th=self.computed_props["eta_th"],
-            Q_th=fx.Flow(
-                label='Qth',
-                meta_data=self.meta_data,
-                bus=busses[self.props["Wärmebus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            ),
-            P_el=fx.Flow(
-                label="Pel",
-                bus=busses[self.props["Strombus"]],
-                effects_per_flow_hour={
-                    effects["costs"]: -self.computed_props["Stromerlöse"],
-                    effects["CO2FW"]: -self.computed_props["CO2 Reward Strom"]},
-            ),
-            Q_fu=fx.Flow(
-                label='Qfu',
-                bus=busses[self.props["Brennstoff"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Brennstoffkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Brennstoff"] +
-                        self.computed_props["CO2 Kosten"],
-                    effects["CO2"]: self.computed_props["CO2 Faktor"]
-                }
-            )
+        chp = fx.linear_converters.CHP(
+            label=self.name,
+            eta_th=self.eta_th,
+            eta_el=self.eta_el,
+            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat],
+                         size=self._thermal_power_invest(effects, time_series_data)),
+            P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
+                         effects_per_flow_hour={
+                             effects['costs']: -1 * extract_data('Strom', time_series_data),
+                             effects['CO2FW']: -1 * self.co2_emissions_electricity(time_series_data, co2_factors)
+                         }),
+            Q_fu=fx.Flow(label='Qfu', bus=busses[self.bus_fuel],
+                         effects_per_flow_hour={
+                             effects['costs']: (extract_data(self.fuel_type, time_series_data) +
+                                                self.extra_costs_per_mwh_fuel +
+                                                extract_data('CO2', time_series_data)),
+                             effects['CO2']: (self.co2_factor(time_series_data, co2_factors) *
+                                              extract_data('CO2', time_series_data))
+                         }),
         )
+        add_grid_fee(self.grid_fee_per_year, chp.P_el, chp.Q_th, chp.eta_el, effects['costs'])
+        return chp
 
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(comp.Q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
+    def _insert_data(self, time_series_data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(time_series_data)
+        self.eta_th = extract_data(self.eta_th, time_series_data)
+        self.eta_el = extract_data(self.eta_el, time_series_data)
+        self.extra_costs_per_mwh_fuel = extract_data(self.extra_costs_per_mwh_fuel, time_series_data)
+        self.forward_flow_temperature = extract_data(self.forward_flow_temperature, time_series_data)
+        self.reverse_flow_temperature = extract_data(self.reverse_flow_temperature, time_series_data)
+        self.ambient_temperature = extract_data(self.ambient_temperature, time_series_data)
 
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+    def co2_factor(self, time_series_data: pd.DataFrame, co2_factors: Dict[str, float]) -> float:
+        return extract_data(co2_factors.get(self.fuel_type, 0), time_series_data)
+
+    def co2_emissions_electricity(self, time_series_data: pd.DataFrame, co2_factors: Dict[str, float]) -> np.ndarray:
+        try:
+            fuel_factor_electricity = fuel_factor_for_electrical_energy(
+                electrical_efficiency=self.eta_el,
+                thermal_efficiency=self.eta_th,
+                inferior_temperature=self.ambient_temperature,
+                forward_flow_temperature=self.forward_flow_temperature,
+                reverse_flow_temperature=self.reverse_flow_temperature
+            )
+        except KeyError:
+            logger.warning(
+                f"Computation of CO2 Reward did not work properly. Using default values instead. "
+                f"Optimization itself is not affected. Only take care interpreting CO2 Emissions")
+            fuel_factor_electricity = fuel_factor_for_electrical_energy(
+                electrical_efficiency=self.eta_el,
+                thermal_efficiency=self.eta_th,
+            )
+        return fuel_factor_electricity * self.co2_factor(time_series_data, co2_factors)
 
 
 class KWKekt(EnergySystemObject):
