@@ -144,84 +144,18 @@ class ThermalInvestElement(InvestElement):
         return validate_invest_range(value, label="Thermische Leistung [MW]")
 
 
-class GridFee(EnergySystemObject):
-    """
-    Represents an object within an energy system With a Grid Connection.
-    Newly introduced Concepts:
-    Grid Connection:
-        - Yearly Costs for Connecting to a Grid
-
-    Attributes:
-        props (dict): A dictionary holding the properties of the object, initialized from keyword arguments.
-        kwargs (dict): Additional keyword arguments not directly assigned to properties.
-        computed_props (dict): Computed properties derived from the object's attributes.
-        flix_comps (List[Element]): A list of components associated with the object, where Element is a custom type representing a component in the energy system.
-
-    """
-
-    # Defining allowed properties, default values and allowed types
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Netzentgelt [€/(MW*a)]": (0, Union[int, float]),
-    }
-
-    def validate_properties(self):
-        """
-        Validates the properties against the definitions and types specified in _property_definitions and _allowed_kwargs.
-
-        Raises:
-            ValueError: If a mandatory property is missing or an invalid property is provided.
-            TypeError: If a property has an incorrect type.
-        """
-        super().validate_properties()
-
-        if not self.invest_args_viable and self.props['Netzentgelt [€/(MW*a)]'] != 0:
-            raise ValueError(f"If 'Netzentgelt [€/(MW*a)]' is used, 'Startjahr' and 'Lebensdauer' must be set!")
-
-    def compute_investment(self, years_of_model: List[int]):
-        '''
-        Extends the funcitonality of compute_investments to include Netzentgelte into the investment
-        Parameters
-        ----------
-        years_of_model
-
-        Returns
-        -------
-
-        '''
-        super().compute_investment(years_of_model)
-
-        if self.computed_props[f"Investment {self._invest_prop}"]:
-            current = self.computed_props[f"Investment {self._invest_prop}"].specific_effects.get("costs", 0)
-            self.computed_props[f"Investment {self._invest_prop}"].specific_effects["costs"] = (
-                    current + self.grid_fee_per_invest_per_a * self.years_in_model(years_of_model))
-
-            self.meta_data["specific_effects"]['costs'] = (
-                    self.meta_data["specific_effects"].get('costs', np.array([0])) +
-                    self.grid_fee_per_invest_per_a * self.accounting_years(years_of_model)
-            )
-
-        elif self.grid_fee_per_invest_per_a != 0:
-            raise Exception("'Netzentgelt [€/(MW*a)]' couldnt get applied. No valid Investment found")
-
-    @property
-    def factor_grid_to_invest(self) -> float:
-        '''
-        Calculates the least advantageous efficiency between grid and investment power
-        Typically:
-        np.max(self.computed_props["exists"] / self.efficiency_from_grid))
-        '''
-        raise Exception("Not Implemented in Child class")
-
-    @property
-    def grid_fee_per_invest_per_a(self) -> float:
-        '''
-        Calculated the 'Netzentgelt [€/(MW_th*a)]' from given 'Netzentgelt [€/(MW*a)]' and efficiency
-        '''
-        if "Netzentgelt [€/(MW_th*a)]" not in self.computed_props:
-            self.computed_props["Netzentgelt [€/(MW_th*a)]"] = (
-                    self.props["Netzentgelt [€/(MW*a)]"] * self.factor_grid_to_invest)
-        return self.computed_props["Netzentgelt [€/(MW_th*a)]"]
+def add_grid_fee(grid_fee: Union[int,float],
+                 grid_flow: fx.Flow,
+                 invest_flow: fx.Flow,
+                 efficiency: Union[int, float, np.ndarray],
+                 effect: fx.Effect):
+    """ Adds the grid fee as an Investment to the investment parameters of the invest_flow"""
+    if not isinstance(invest_flow.size, fx.InvestParameters) and not grid_fee == 0:
+        raise Exception("There are no InvestParameters to add the grid_fee to")
+    else:
+        invest_flow.size.specific_effects[effect] = (invest_flow.size.specific_effects.get(effect, 0)
+                                                      + grid_fee * np.max(grid_flow.relative_maximum / efficiency))
+    return np.max(grid_flow.relative_maximum / efficiency)
 
 
 class Sink(EnergySystemObject):
