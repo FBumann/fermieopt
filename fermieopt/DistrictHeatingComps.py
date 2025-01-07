@@ -314,7 +314,7 @@ class KWK(ThermalInvestElement):
 
     def co2_emissions_electricity(self, time_series_data: pd.DataFrame, co2_factors: Dict[str, float]) -> np.ndarray:
         try:
-            fuel_factor_electricity = fuel_factor_for_electrical_energy(
+            fuel_factor_electricity = self.fuel_factor_for_electrical_energy(
                 electrical_efficiency=self.eta_el,
                 thermal_efficiency=self.eta_th,
                 inferior_temperature=self.ambient_temperature,
@@ -325,11 +325,33 @@ class KWK(ThermalInvestElement):
             logger.warning(
                 f"Computation of CO2 Reward did not work properly. Using default values instead. "
                 f"Optimization itself is not affected. Only take care interpreting CO2 Emissions")
-            fuel_factor_electricity = fuel_factor_for_electrical_energy(
+            fuel_factor_electricity = self.fuel_factor_for_electrical_energy(
                 electrical_efficiency=self.eta_el,
                 thermal_efficiency=self.eta_th,
             )
         return fuel_factor_electricity * self.co2_factor(time_series_data, co2_factors)
+
+    @classmethod
+    def fuel_factor_for_electrical_energy(cls,
+                                          electrical_efficiency: Union[int, float, np.ndarray],
+                                          thermal_efficiency: Union[int, float, np.ndarray],
+                                          inferior_temperature: Union[int, float, np.ndarray] = 20,
+                                          forward_flow_temperature: Union[int, float, np.ndarray] = 120,
+                                          reverse_flow_temperature: Union[int, float, np.ndarray] = 60,
+                                          ) -> np.ndarray:
+        """
+        Using the carnot mehtod, the fuel factor for electrical energy in a heating network is calculated
+        https://en.wikipedia.org/wiki/Carnot_method
+        """
+        inferior_temperature = inferior_temperature + 273.15
+        forward_flow_temperature = forward_flow_temperature + 273.15
+        reverse_flow_temperature = reverse_flow_temperature + 273.15
+        superior_temperature = ((forward_flow_temperature - reverse_flow_temperature) /
+                                np.log((forward_flow_temperature / reverse_flow_temperature)))
+        n_carnot = 1 - (inferior_temperature / superior_temperature)
+
+        a_el = (1 * electrical_efficiency) / (electrical_efficiency + n_carnot * thermal_efficiency)
+        return a_el / electrical_efficiency
 
 
 class Waermepumpe(ThermalInvestElement):
@@ -1265,28 +1287,6 @@ def costs_and_funding(
         return d
 
     return clean_dict(fix_costs), clean_dict(specific_costs)
-
-
-def fuel_factor_for_electrical_energy(
-        electrical_efficiency: Union[int, float, np.ndarray],
-        thermal_efficiency: Union[int, float, np.ndarray],
-        inferior_temperature: Union[int, float, np.ndarray] = 20,
-        forward_flow_temperature: Union[int, float, np.ndarray] = 120,
-        reverse_flow_temperature: Union[int, float, np.ndarray] = 60,
-) -> np.ndarray:
-    '''
-    Using the carnot mehtod, the fuel factor for electrical energy in a heating network is calculated
-    https://en.wikipedia.org/wiki/Carnot_method
-    '''
-    inferior_temperature = inferior_temperature + 273.15
-    forward_flow_temperature = forward_flow_temperature + 273.15
-    reverse_flow_temperature = reverse_flow_temperature + 273.15
-    superior_temperature = ((forward_flow_temperature - reverse_flow_temperature) /
-                            np.log((forward_flow_temperature / reverse_flow_temperature)))
-    n_carnot = 1 - (inferior_temperature / superior_temperature)
-
-    a_el = (1 * electrical_efficiency) / (electrical_efficiency + n_carnot * thermal_efficiency)
-    return a_el / electrical_efficiency
 
 
 def tuple_of_numbers_from_str(input_string: str, delimiter='-') -> Tuple[float, ...]:
