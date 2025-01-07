@@ -67,8 +67,8 @@ class InvestElement(Element):
             raise ValueError(f"Either set BOTH or NONE of 'Startjahr' and 'Lebensdauer'!")
         return self
 
-    @classmethod
-    def get_annuity_factor(cls, interest_rate: float, lifetime: int) -> float:
+    @staticmethod
+    def annuity_factor(interest_rate: float, lifetime: int) -> float:
         """ Get the annuity factor for a given interest rate and lifetime """
         if interest_rate == 0:  # Preventing ZeroDivision
             annuity_factor = 1 / lifetime
@@ -77,8 +77,8 @@ class InvestElement(Element):
                               ((1 + interest_rate) ** lifetime - 1))
         return annuity_factor
 
-    @classmethod
-    def costs_and_funding(cls,
+    @staticmethod
+    def costs_and_funding(
             interest_rate: float,
             starting_year: int,
             lifetime: int,
@@ -113,7 +113,7 @@ class InvestElement(Element):
             1. Fixed costs and funding, with keys being strings and values being the corresponding amounts in currency units.
             2. Specific costs and funding, similar to the fixed costs but calculated per MW.
         """
-        annuity_factor = cls.get_annuity_factor(interest_rate=interest_rate, lifetime=lifetime)
+        annuity_factor = InvestElement.annuity_factor(interest_rate=interest_rate, lifetime=lifetime)
         accounting_years = np.array(
             [1 if starting_year <= year < (starting_year + lifetime) else 0 for year in years_of_model])
 
@@ -221,9 +221,8 @@ class ThermalInvestElement(InvestElement):
                 fix_effects=insert_effects(fixed_effects, effects)
             )
 
-    @classmethod
-    def add_grid_fee(cls,
-                     grid_fee: Union[int, float],
+    @staticmethod
+    def add_grid_fee(grid_fee: Union[int, float],
                      grid_flow: fx.Flow,
                      invest_flow: fx.Flow,
                      efficiency: Union[int, float, np.ndarray],
@@ -422,9 +421,8 @@ class KWK(ThermalInvestElement):
             )
         return fuel_factor_electricity * self.co2_factor(time_series_data, co2_factors)
 
-    @classmethod
-    def fuel_factor_for_electrical_energy(cls,
-                                          electrical_efficiency: Union[int, float, np.ndarray],
+    @staticmethod
+    def fuel_factor_for_electrical_energy(electrical_efficiency: Union[int, float, np.ndarray],
                                           thermal_efficiency: Union[int, float, np.ndarray],
                                           inferior_temperature: Union[int, float, np.ndarray] = 20,
                                           forward_flow_temperature: Union[int, float, np.ndarray] = 120,
@@ -508,9 +506,8 @@ class Waermepumpe(ThermalInvestElement):
         # Begrenzung auf 10 Jahre
         return fund_per_mw_el * exists(self.start_year, 10, years_of_model)
 
-    @classmethod
-    def bew_operation_funding_from_scop(cls,
-                                        scop: Union[int, float],
+    @staticmethod
+    def bew_operation_funding_from_scop(scop: Union[int, float],
                                         unit: Literal["MWh_amb", "MWh_th", "MWh_el"] = "MWh_amb"
                                         ) -> Union[int, float]:
         """
@@ -539,8 +536,8 @@ class Waermepumpe(ThermalInvestElement):
         else:
             return fund_amb * (scop - 1)
 
-    @classmethod
-    def calculate_cop(cls, source_temperature: np.ndarray, target_temperature: np.ndarray, eta: float = 0.5) -> np.ndarray:
+    @staticmethod
+    def calculate_cop(source_temperature: np.ndarray, target_temperature: np.ndarray, eta: float = 0.5) -> np.ndarray:
         """
         Calculates the COP of a heatpump per Timestep from the Temperature of Heat sink and Heat source in Kelvin
         Parameters
