@@ -349,10 +349,14 @@ class LinearTransformer(PowerInvestElement):
 class Kessel(ThermalInvestElement):
     eta_thermal: Union[float, str] = Field(alias="Thermischer Wirkungsgrad")
     fuel_type: str = Field(alias='Brennstoff')
+    fuel_cost_extra: Union[float, str] = Field(alias="Brennstoffkosten Zusatz [€/MWh_hu]", default=0)
+    _fuel_costs: Union[float, np.ndarray] = 0
 
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         self.eta_thermal = extract_data(self.eta_thermal, data)
+        self.fuel_cost_extra = extract_data(self.fuel_cost_extra, data)
+        self._fuel_costs = extract_data(self.fuel_type, data)
 
     def _convert_to_flixopt(self,
                             flow_system: fx.FlowSystem,
@@ -365,7 +369,7 @@ class Kessel(ThermalInvestElement):
             label=self.name,
             eta=self.eta_thermal,
             Q_fu=fx.Flow(label="Q_fu", bus=busses[self.fuel_type],
-                         effects_per_flow_hour={effects['costs']: extract_data(self.fuel_type, time_series_data)}),
+                         effects_per_flow_hour={effects['costs']: self._fuel_costs + self.fuel_cost_extra}),
             Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat])
         )
         self.insert_size(boiler.Q_th, effects, years_of_model)
@@ -377,12 +381,14 @@ class KWK(ThermalInvestElement):
     eta_th: Union[int, float, str] = Field(alias='eta_th')
     eta_el: Union[int, float, str] = Field(alias='eta_el')
     fuel_type: str = Field(alias='Brennstoff')
-    extra_costs_per_mwh_fuel: Union[int, float, str] = Field(alias='Zusatzkosten pro MWh Brennstoff', default=0)
+    fuel_cost_extra: Union[float, str] = Field(alias="Brennstoffkosten Zusatz [€/MWh_hu]", default=0)
     forward_flow_temperature: Union[int, float, str] = Field(alias='Vorlauftemperatur')
     reverse_flow_temperature: Union[int, float, str] = Field(alias='Rücklauftemperatur')
     ambient_temperature: Union[int, float, str] = Field(alias='Umgebungstemperatur')
 
     bus_elec: str = Field(alias="Strombus", default='StromBezug')
+
+    _fuel_costs: Union[float, np.ndarray] = 0
 
     def _convert_to_flixopt(self,
                             flow_system: fx.FlowSystem,
@@ -405,11 +411,9 @@ class KWK(ThermalInvestElement):
                          }),
             Q_fu=fx.Flow(label='Qfu', bus=busses[self.fuel_type],
                          effects_per_flow_hour={
-                             effects['costs']: (extract_data(self.fuel_type, time_series_data) +
-                                                self.extra_costs_per_mwh_fuel +
-                                                extract_data('CO2', time_series_data)),
-                             effects['CO2']: (self.co2_factor(time_series_data, co2_factors) *
-                                              extract_data('CO2', time_series_data))
+                             effects['costs']: self._fuel_costs + self.fuel_cost_extra,
+                             effects['CO2']: (self.co2_factor(time_series_data, co2_factors)
+                                              * extract_data('CO2', time_series_data))
                          }),
         )
         self.insert_size(chp.Q_th, effects, years_of_model)
@@ -421,7 +425,8 @@ class KWK(ThermalInvestElement):
         super()._insert_data(time_series_data)
         self.eta_th = extract_data(self.eta_th, time_series_data)
         self.eta_el = extract_data(self.eta_el, time_series_data)
-        self.extra_costs_per_mwh_fuel = extract_data(self.extra_costs_per_mwh_fuel, time_series_data)
+        self.fuel_cost_extra = extract_data(self.fuel_cost_extra, time_series_data)
+        self._fuel_costs = extract_data(self.fuel_type, time_series_data)
         self.forward_flow_temperature = extract_data(self.forward_flow_temperature, time_series_data)
         self.reverse_flow_temperature = extract_data(self.reverse_flow_temperature, time_series_data)
         self.ambient_temperature = extract_data(self.ambient_temperature, time_series_data)
@@ -585,7 +590,6 @@ class Waermepumpe(ThermalInvestElement):
 
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
-        super()._insert_data(data)
         self.cop = extract_data(self.cop, data)
         self.source_temperature = extract_data(self.source_temperature, data)
         self.sink_temperature = extract_data(self.sink_temperature, data)
@@ -885,7 +889,6 @@ class Abwaerme(ThermalInvestElement):
     
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
-        super()._insert_data(data)
         self.waste_heat_costs = extract_data(self.waste_heat_costs, data)
     
     def _convert_to_flixopt(self,
@@ -919,16 +922,16 @@ class KWKekt(InvestElement):
     electrical_power: Tuple[float, float] = Field(alias='Elektrische Leistung (Stützpunkte)')
     thermal_power: Tuple[float, float] = Field(alias='Thermische Leistung (Stützpunkte)')
     fuel_type: str = Field(alias='Brennstoff')
-    extra_costs_per_mwh_fuel: Union[int, float, str] = Field(alias='Zusatzkosten pro MWh Brennstoff', default=0)
+    fuel_costs: Union[float, str] = Field(alias="Brennstoffkosten [€/MWh_hu]", default=0)
     can_be_off: bool = Field(alias='Ausschaltbar', default=True)
 
     bus_elec: str = Field(alias="Strombus", default='StromEinspeisung')
     bus_heat: str = Field(alias="Wärmebus", default='Fernwärme')
 
+
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
-        super()._insert_data(data)
-        self.extra_costs_per_mwh_fuel = extract_data(self.extra_costs_per_mwh_fuel, data)
+        self.fuel_costs = extract_data(self.extra_costs_per_mwh_fuel, data)
 
     def _convert_to_flixopt(self,
                             flow_system: fx.FlowSystem,
@@ -941,8 +944,7 @@ class KWKekt(InvestElement):
 
         flow_heat = fx.Flow('Qth', busses[self.bus_heat])
         flow_fuel = fx.Flow('Qfu', busses[self.fuel_type],
-                            effects_per_flow_hour={effects["costs"]: extract_data(self.fuel_type, time_series_data) +
-                                                                     self.extra_costs_per_mwh_fuel})
+                            effects_per_flow_hour={effects["costs"]: self.fuel_costs}),
         flow_el = fx.Flow('Pel', busses[self.bus_elec],
                           effects_per_flow_hour={effects["costs"]: -1 * extract_data('Strom', time_series_data)})
 
@@ -1008,7 +1010,7 @@ class ElementFactory:
 
         self.created_comps: List[Element] = []
 
-    def create_energy_object(self, obj_type: str, **properties):
+    def create_energy_object(self, obj_type: str, properties: Dict):
         obj_class = self.get_class_by_type(obj_type)
         if obj_class:
             energy_obj: Element = obj_class(**properties)
