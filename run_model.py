@@ -14,7 +14,7 @@ solver_name = "highs"    # Choose open source solver highs
 def main(solver_name: str, excel_file_path: str):
     excel_model = ExcelModel(excel_file_path=excel_file_path)
     excel_model.district_heating_system.final_model.visualize_network(False, controls=['physics'])
-    excel_model.solve_model(solver_name="gurobi", gap_frac=0.0005, timelimit=2*3600)
+    excel_model.solve_model(solver_name=solver_name, gap_frac=0.0005, timelimit=2*3600)
     excel_model.district_heating_system.final_model.visualize_network(
         f'{excel_model.final_directory}/{excel_model.calc_name}_network.html', controls=['physics'])
 
