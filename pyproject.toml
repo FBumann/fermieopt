@@ -25,6 +25,3 @@ dependencies = [
 
 [tool.setuptools.package-data]
 fermieopt = ["flixOpt_excel/resources/ExcelTemplates/*.xlsx"]
-
-[tool.setuptools.include-package-data]
-true
