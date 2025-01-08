@@ -212,15 +212,10 @@ class DistrictHeatingSystem:
 
         for bus_data in self.bus_data:
             try:
-                name = bus_data["Name"]
+                label = bus_data["Name"]
+                busses[label] = fx.Bus(label=label, excess_penalty_per_flow_hour=None)
             except KeyError as e:
                 raise Exception(f"Every Bus needs a 'Name'! Error: {e}")
-            try:
-                media = bus_data["Medium"]
-            except KeyError as e:
-                raise Exception(f"Every Bus needs a 'medium'!  Error: {e}")
-
-            busses[name] = fx.Bus(label=name, excess_penalty_per_flow_hour=None)
 
         return busses
 
