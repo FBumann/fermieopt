@@ -13,8 +13,8 @@ from flixOpt.elements import Component
 
 from fermieopt.excel_input import ExcelData
 from fermieopt.flixPostprocessingXL import flixPostXL
-from fermieopt.DistrictHeatingComps import ComponentFactory
-from fermieopt.DistrictHeatingComps import check_min_max_format, exists
+from fermieopt.DistrictHeatingComps import ElementFactory
+from fermieopt.DistrictHeatingComps import numbers_from_str, exists
 
 
 class ExcelModel:
@@ -135,11 +135,10 @@ class DistrictHeatingSystem:
         self.effects = self.create_effects()
 
         self.helpers = self.create_helpers()
-        self.factory = ComponentFactory(time_series_data=self.time_series_data,
+        self.factory = ElementFactory(flow_system=self.final_model,
+                                      time_series_data=self.time_series_data,
                                    co2_factors=self.co2_factors,
-                                   years_of_model=self.years,
-                                   busses=self.busses,
-                                   effects=self.effects)
+                                   years_of_model=self.years)
         self.components = self.create_components()
 
         self.final_model.add_effects(*list(self.effects.values()))
@@ -254,7 +253,7 @@ class DistrictHeatingSystem:
                 years = component_data.get("Startjahr")
                 if isinstance(years, str):
                     try:
-                        first_year, last_year = check_min_max_format(years)
+                        first_year, last_year = numbers_from_str(years)
                     except ValueError:
                         raise ValueError(f'"Startjahr" must be an integer or a string of format "min-max"')
                     first_year, last_year = int(first_year), int(last_year)
