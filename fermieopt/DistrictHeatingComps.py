@@ -56,9 +56,7 @@ class InvestElement(Element):
 
     @property
     def needs_investment(self) -> bool:
-        return (self.invest_costs_fixed is not None
-                or self.invest_costs_specific is not None
-                or self.optional)
+        return self.invest_costs_fixed or self.invest_costs_specific or self.optional
 
     @model_validator(mode='after')
     def validate_years(self):
@@ -142,23 +140,13 @@ class InvestElement(Element):
 
         return clean_dict(fix_costs), clean_dict(specific_costs)
 
-
-class PowerInvestElement(InvestElement):
-    power: Union[int, float] = Field(alias='Nennleistung [MW]')
-    flow_label: str = Field(alias="Flowname")
-    fixed_profile: Optional[str] = Field(alias="Festes Profil", default=None)
-    bus: str = Field(alias="Bus")
-
-    def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
-        self.fixed_profile = extract_data(self.fixed_profile, data)
-
-    def insert_size(self, 
-                                  flow: fx.Flow, 
-                                  effects: Dict[str, fx.Effect], 
-                                  years_of_model: List[int]) -> None:
+    def insert_size(self,
+                    flow: fx.Flow,
+                    size: Union[int, float, Tuple[Union[int, float], Union[int, float]]],
+                    effects: Dict[str, fx.Effect],
+                    years_of_model: List[int]) -> None:
         if not self.needs_investment:
-            flow.size = self.power
+            flow.size = size
         else:
             fixed_effects_per_period, specific_effects_per_period = self.costs_and_funding(
                 interest_rate=self.interest_rate,
@@ -176,16 +164,27 @@ class PowerInvestElement(InvestElement):
 
             flow.size = fx.InvestParameters(
                 optional=self.optional,
-                fixed_size=self.power if isinstance(self.power, (int, float)) else None,
-                minimum_size=self.minimum_power,
-                maximum_size=self.maximum_power,
+                fixed_size=size if isinstance(size, (int, float)) else None,
+                minimum_size=None if isinstance(size, (int, float)) else size[0],
+                maximum_size=None if isinstance(size, (int, float)) else size[1],
                 fix_effects=insert_effects(fixed_effects_total, effects),
                 specific_effects=insert_effects(specific_effects_total, effects),
             )
             update_meta_data(flow,
-                             {'invest_effects': fixed_effects_per_period,
-                              'specific_effects': specific_effects_per_period
+                             {'fixed_costs': fixed_effects_per_period,
+                              'specific_costs': specific_effects_per_period
                               })
+
+
+class PowerInvestElement(InvestElement):
+    power: Union[int, float] = Field(alias='Nennleistung [MW]')
+    flow_label: str = Field(alias="Flowname")
+    fixed_profile: Optional[str] = Field(alias="Festes Profil", default=None)
+    bus: str = Field(alias="Bus")
+
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        self.fixed_profile = extract_data(self.fixed_profile, data)
 
     @property
     def minimum_power(self) -> Optional[float]:
@@ -205,40 +204,16 @@ class ThermalInvestElement(InvestElement):
     grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0)
     bus_heat: str = Field(alias="Wärmebus", default='Fernwärme')
 
-    def insert_size(self,
-                    flow: fx.Flow,
-                    effects: Dict[str, fx.Effect],
-                    years_of_model: List[int]):
-        if not self.needs_investment:
-            flow.size = self.thermal_power
-        else:
-            fixed_effects_per_period, specific_effects_per_period = self.costs_and_funding(
-                interest_rate=self.interest_rate,
-                starting_year=self.start_year,
-                lifetime=self.lifetime,
-                years_of_model=years_of_model,
-                invest_costs=self.invest_costs_fixed,
-                specific_invest_costs=self.invest_costs_specific,
-                annual_costs=self.annual_costs_fixed,
-                specific_annual_costs=self.annual_costs_specific,
-                funding_rate=self.funding_rate)
+    costs_per_mwh_heat_extra: Union[int, float, str] = Field(alias="Zusätzliche Wärmeerzeugungskosten [€/MWh]", default=0)
+    relative_maximum: Union[int, float, str] = Field(alias="Relative thermische Leistungsobergrenze", default=1)
+    relative_minimum: Union[int, float, str] = Field(alias="Relative thermische Leistungsuntergrenze", default=0)
 
-            fixed_effects_total = {effect: np.sum(values) for effect, values in fixed_effects_per_period.items()}
-            specific_effects_total = {effect: np.sum(values) for effect, values in specific_effects_per_period.items()}
 
-            flow.size = fx.InvestParameters(
-                optional=self.optional,
-                fixed_size=self.power if isinstance(self.power, (int, float)) else None,
-                minimum_size=self.minimum_power,
-                maximum_size=self.maximum_power,
-                fix_effects=insert_effects(fixed_effects_total, effects),
-                specific_effects=insert_effects(specific_effects_total, effects),
-            )
-
-            update_meta_data(flow, {
-                'invest_effects': fixed_effects_per_period,
-                'specific_effects': specific_effects_per_period
-            })
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        self.costs_per_mwh_heat_extra = extract_data(self.costs_per_mwh_heat_extra, data)
+        self.relative_maximum = extract_data(self.relative_maximum, data)
+        self.relative_minimum = extract_data(self.relative_minimum, data)
 
     @staticmethod
     def insert_grid_fee(grid_fee: Union[int, float],
@@ -252,11 +227,13 @@ class ThermalInvestElement(InvestElement):
         else:
             highest_possible_grid_draw = np.max(grid_flow.relative_maximum / efficiency)
             yearly_grid_fee = grid_fee * highest_possible_grid_draw
-            invest_flow.size.specific_effects[effect] = (yearly_grid_fee
-                                                         + invest_flow.size.specific_effects.get(effect, 0))
+            if invest_flow.size.specific_effects is None:
+                invest_flow.size.specific_effects = {effect: yearly_grid_fee}
+            else:
+                invest_flow.size.specific_effects[effect] = yearly_grid_fee + invest_flow.size.specific_effects.get(effect, 0)
             update_meta_data(invest_flow, {'yearly_grid_fee_per_thermal_power': yearly_grid_fee,
                                            'highest_possible_grid_draw': highest_possible_grid_draw})
-            update_meta_data(invest_flow, {'specific_effects': {effect: yearly_grid_fee}}, mode='add')
+            update_meta_data(invest_flow, {'specific_costs': yearly_grid_fee}, mode='add')
 
     @property
     def minimum_thermal_power(self) -> Optional[float]:
@@ -265,6 +242,10 @@ class ThermalInvestElement(InvestElement):
     @property
     def maximum_thermal_power(self):
         return float(self.thermal_power.split("-")[1]) if isinstance(self.thermal_power, str) else None
+
+    @property
+    def needs_investment(self) -> bool:
+        return super().needs_investment or self.grid_fee_per_year != 0
 
     @field_validator("thermal_power", mode="after")
     def validate_thermal_power(cls, value):
@@ -279,12 +260,17 @@ class Sink(PowerInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
+        self._insert_data(time_series_data)
+
         comp = fx.Sink(
             label=self.name,
             sink=fx.Flow(label=self.flow_label,
+                         size=1,
                          bus=busses[self.bus],
                          fixed_relative_profile=self.fixed_profile))
-        self.insert_size(comp.sink, effects, years_of_model)
+        self.insert_size(comp.sink,
+                         self.power if self.power is not None else (self.minimum_power, self.maximum_power),
+                         effects, years_of_model)
         return comp
 
 
@@ -296,6 +282,7 @@ class Source(PowerInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
+        self._insert_data(time_series_data)
         comp = fx.Source(
             label=self.name,
             source=fx.Flow(label=self.flow_label,
@@ -303,7 +290,9 @@ class Source(PowerInvestElement):
                          fixed_relative_profile=self.fixed_profile)
         )
 
-        self.insert_size(comp.source, effects, years_of_model)
+        self.insert_size(comp.source,
+                         self.power if self.power is not None else (self.minimum_power, self.maximum_power),
+                         effects, years_of_model)
         return comp
 
 
@@ -327,6 +316,7 @@ class LinearTransformer(PowerInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
+        self._insert_data(time_series_data)
 
         flow_out = fx.Flow(label=self.flow_label,
                            bus=busses[self.bus_out],
@@ -342,7 +332,9 @@ class LinearTransformer(PowerInvestElement):
                                   inputs=[flow_in],
                                   outputs=[flow_out],
                                   conversion_factors=[{flow_in: self.efficiency, flow_out: 1}])
-        self.insert_size(flow_out, effects, years_of_model)
+        self.insert_size(flow_out,
+                         self.power if self.power is not None else (self.minimum_power, self.maximum_power),
+                         effects, years_of_model)
         return comp
 
 
@@ -354,6 +346,7 @@ class Kessel(ThermalInvestElement):
 
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(data)
         self.eta_thermal = extract_data(self.eta_thermal, data)
         self.fuel_cost_extra = extract_data(self.fuel_cost_extra, data)
         self._fuel_costs = extract_data(self.fuel_type, data)
@@ -365,26 +358,35 @@ class Kessel(ThermalInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
+        self._insert_data(time_series_data)
         boiler = fx.linear_converters.Boiler(
             label=self.name,
             eta=self.eta_thermal,
             Q_fu=fx.Flow(label="Q_fu", bus=busses[self.fuel_type],
                          effects_per_flow_hour={effects['costs']: self._fuel_costs + self.fuel_cost_extra}),
-            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat])
+            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat],
+                         relative_maximum=self.relative_maximum,
+                         relative_minimum=self.relative_minimum,
+                         effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra
+                                                } if self.costs_per_mwh_heat_extra is not None else None
+                         )
         )
-        self.insert_size(boiler.Q_th, effects, years_of_model)
+        self.insert_size(boiler.Q_th,
+                         self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
+                                                                                    self.maximum_thermal_power),
+                         effects, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, boiler.Q_fu, boiler.Q_th, boiler.eta, effects['costs'])
         return boiler
 
 
 class KWK(ThermalInvestElement):
-    eta_th: Union[int, float, str] = Field(alias='eta_th')
-    eta_el: Union[int, float, str] = Field(alias='eta_el')
+    eta_th: Union[int, float, str] = Field(alias='Thermischer Wirkungsgrad')
+    eta_el: Union[int, float, str] = Field(alias='Elektrischer Wirkungsgrad')
     fuel_type: str = Field(alias='Brennstoff')
     fuel_cost_extra: Union[float, str] = Field(alias="Brennstoffkosten Zusatz [€/MWh_hu]", default=0)
-    forward_flow_temperature: Union[int, float, str] = Field(alias='Vorlauftemperatur')
-    reverse_flow_temperature: Union[int, float, str] = Field(alias='Rücklauftemperatur')
-    ambient_temperature: Union[int, float, str] = Field(alias='Umgebungstemperatur')
+    forward_flow_temperature: Union[int, float, str] = Field(alias='Vorlauftemperatur', default='TVL_FWN')
+    reverse_flow_temperature: Union[int, float, str] = Field(alias='Rücklauftemperatur', default='TRL_FWN')
+    ambient_temperature: Union[int, float, str] = Field(alias='Umgebungstemperatur', default='Tamb')
 
     bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
@@ -403,7 +405,10 @@ class KWK(ThermalInvestElement):
             label=self.name,
             eta_th=self.eta_th,
             eta_el=self.eta_el,
-            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat]),
+            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat],
+                         effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra
+                                                } if self.costs_per_mwh_heat_extra is not None else None
+                         ),
             P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
                          effects_per_flow_hour={
                              effects['costs']: -1 * extract_data('Strom', time_series_data),
@@ -416,7 +421,10 @@ class KWK(ThermalInvestElement):
                                               * extract_data('CO2', time_series_data))
                          }),
         )
-        self.insert_size(chp.Q_th, effects, years_of_model)
+        self.insert_size(chp.Q_th,
+                         self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
+                                                                                    self.maximum_thermal_power),
+                         effects, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, chp.P_el, chp.Q_th, chp.eta_el, effects['costs'])
         return chp
 
@@ -476,13 +484,11 @@ class KWK(ThermalInvestElement):
 
 
 class Waermepumpe(ThermalInvestElement):
-    cop: Optional[Union[int, float, str]] = Field(alias="COP")
-    source_temperature: Union[int, float, str] = Field(alias="Quelltemperatur")
-    sink_temperature: Union[int, float, str] = Field(alias="Zieltemperatur")
+    cop: Optional[Union[int, float, str]] = Field(alias="COP", default=None)
+    source_temperature: Union[int, float, str] = Field(alias="Quelltemperatur", default = None)
+    sink_temperature: Union[int, float, str] = Field(alias="Zieltemperatur", default='TVL_FWN')
 
-    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias="Zusatzkosten pro MWh Strom", default=0)
-    minimum_source_temperature: Optional[Union[int, float]] = Field(alias="Untergrenze für Einsatz", default=None)
-    operation_restriction: Optional[str] = Field(alias="Zeitreihe für Einsatzbeschränkung", default=None)
+    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias="Stromkosten Zusatz [€/MWh]", default=0)
 
     scop_bew: Optional[Union[int, float]] = Field(alias="SCOP für BEW", default=None)
     max_bew_elec_funding: Optional[Union[int, float]] = Field(alias="Maximale Stromkostenförderung BEW", default=None)
@@ -501,19 +507,27 @@ class Waermepumpe(ThermalInvestElement):
         heat_pump = fx.linear_converters.HeatPump(
             label=self.name,
             COP = self._get_cop(time_series_data),
-            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat], relative_maximum=self.relative_maximum),
+            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat],
+                         relative_maximum=self.relative_maximum,
+                         relative_minimum=self.relative_minimum,
+                         effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra
+                                                } if self.costs_per_mwh_heat_extra is not None else None
+                         ),
             P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
                          effects_per_flow_hour={
                              effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
                              effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model)
                          })
         )
-        self.insert_size(heat_pump.Q_th, effects, years_of_model)
+        self.insert_size(heat_pump.Q_th,
+                         self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
+                                                                                    self.maximum_thermal_power),
+                         effects, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, heat_pump.P_el, heat_pump.Q_th, heat_pump.COP, effects['costs'])
         return heat_pump
 
     def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
-        if self.cop:
+        if self.cop is not None:
             return extract_data(self.cop, time_series_data)
         else:
             return self.calculate_cop(
@@ -525,6 +539,8 @@ class Waermepumpe(ThermalInvestElement):
         return extract_data('Strom', time_series_data) + extract_data(self.extra_costs_per_mwh_elec, time_series_data)
 
     def _get_operation_funding_bew(self, time_series_data: pd.DataFrame, years_of_model: List[int]) -> Union[float, np.ndarray]:
+        if self.scop_bew is None:
+            return 0
         fund_per_mw_el = self.bew_operation_funding_from_scop(self.scop_bew, "MWh_el")
 
         electricity_costs_per_flow_hour = self._get_electricity_costs_per_mwh(time_series_data)
@@ -590,6 +606,7 @@ class Waermepumpe(ThermalInvestElement):
 
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(data)
         self.cop = extract_data(self.cop, data)
         self.source_temperature = extract_data(self.source_temperature, data)
         self.sink_temperature = extract_data(self.sink_temperature, data)
@@ -598,14 +615,12 @@ class Waermepumpe(ThermalInvestElement):
 
     @model_validator(mode='after')
     def validate_cop(self):
-        if not self.cop:
-            if not self.source_temperature or not self.sink_temperature:
-                raise Exception(f"Need to specify a 'COP' for {self.name} or "
-                                f"use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally.")
-        if self.cop:
-            if self.source_temperature or self.sink_temperature:
-                raise Exception(f"Either specify a 'COP' for {self.name} "
-                                f"OR use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally.")
+        if not self.cop and (not self.source_temperature or not self.sink_temperature):
+            raise Exception(f"Need to specify a 'COP' for {self.name} or "
+                            f"use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally.")
+        if self.cop and (self.source_temperature and self.sink_temperature):
+            raise Exception(f"Either specify a 'COP' for {self.name} "
+                            f"OR use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally.")
         return self
 
     @model_validator(mode='after')
@@ -619,28 +634,22 @@ class Waermepumpe(ThermalInvestElement):
                                 f"operation funding.")
         return self
 
-    @model_validator(mode='after')
-    def validate_operation_restriction(self):
-        if not (self.time_series_for_operation_restriction is None) == (self.minimum_source_temperature is None):
-            raise Exception(f"Need to specify either both or none of 'Zeitreihe für Einsatzbeschränkung' and "
-                            f"'ntergrenze für Einsatz' for {self.name}.")
-        return self
-
 
 class Speicher(ThermalInvestElement):
     capacity: Union[int, float, str] = Field(alias='Kapazität [MWh]')
     invest_costs_capacity_specific: Union[int, float] = Field(alias='Investkosten [€/MWh]', default=0)
-    annual_costs_capacity_specific: Union[int, float] = Field(alias='Sonstige Fixkosten [€/(MWh*a)]', default=0)
+    annual_costs_capacity_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/(MWh*a)]', default=0)
 
     eta_load: Union[int, float, str] = Field(alias='eta_load')
     eta_unload: Union[int, float, str] = Field(alias='eta_unload')
     loss_per_hour: Union[int, float, str] = Field(alias='VerlustProStunde', default=0)
 
     depends_on_temperature: bool = Field(alias='AbhängigkeitVonDT', default=False)
-    temperature_lower: Union[int, float, str] = Field(alias='Untere Temperatur')
-    temperature_upper: Union[int, float, str] = Field(alias='Obere Temperatur')
+    temperature_lower: Union[int, float, str] = Field(alias='Untere Temperatur', default='TRL_FWN')
+    temperature_upper: Union[int, float, str] = Field(alias='Obere Temperatur', default='TVL_FWN')
 
-    default_temperature_spread: Union[int, float] = Field(alias='TemperaturSpread', default=65)
+    default_temperature_spread: Union[int, float] = Field(alias='Nenn-Temperaturspreizung', default=65)
+    _normalized_temperature_spread: Union[int, float, np.ndarray] = 1
 
     def _insert_data(self, time_series_data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
@@ -650,6 +659,8 @@ class Speicher(ThermalInvestElement):
         self.loss_per_hour = extract_data(self.loss_per_hour, time_series_data)
         self.temperature_lower = extract_data(self.temperature_lower, time_series_data)
         self.temperature_upper = extract_data(self.temperature_upper, time_series_data)
+
+        _normalized_temperature_spread = self._get_normalized_temperature_spread()
 
     def _convert_to_flixopt(self,
                             flow_system: fx.FlowSystem,
@@ -662,20 +673,29 @@ class Speicher(ThermalInvestElement):
 
         storage = fx.Storage(
             label=self.name,
-            capacity_in_flow_hours=self._get_capacity(effects),
+            capacity_in_flow_hours=0,
             eta_charge=self.eta_load,
             eta_discharge=self.eta_unload,
             relative_loss_per_hour=self.loss_per_hour,
-            relative_maximum_charge_state=self.normalized_temperature_spread(time_series_data),
+            relative_maximum_charge_state=self._normalized_temperature_spread,
             charging=fx.Flow(label='QthLoad',
                              bus=busses[self.bus_heat],
-                             relative_maximum=self.normalized_temperature_spread(time_series_data)),
+                             relative_maximum=self._normalized_temperature_spread,
+                             relative_minimum=self.relative_minimum,
+                             effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra
+                                                    } if self.costs_per_mwh_heat_extra is not None else None
+                             ),
             discharging=fx.Flow(label='QthUnload',
                                 bus=busses[self.bus_heat],
-                                relative_maximum=self.normalized_temperature_spread(time_series_data)),
+                                relative_maximum=self._normalized_temperature_spread,
+                                relative_minimum=self.relative_minimum,
+                                ),
             prevent_simultaneous_charge_and_discharge=True
         )
-        self.insert_size(storage.charging, effects, years_of_model)
+        self.insert_size(storage.charging,
+                         self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
+                                                                                    self.maximum_thermal_power),
+                         effects, years_of_model)
         self.link_second_flow_size(storage.charging, storage.discharging, flow_system)
         self.insert_capacity(storage, effects, years_of_model)
         return storage
@@ -728,13 +748,10 @@ class Speicher(ThermalInvestElement):
                 specific_effects=insert_effects(specific_effects_total, effects)
             )
 
-            update_meta_data(storage, {'specific_effects': specific_effects_per_period})
+            update_meta_data(storage, {'specific_costs': specific_effects_per_period})
 
-    def normalized_temperature_spread(self, time_series_data: pd.DataFrame) -> np.ndarray:
-        return ((extract_data(self.temperature_upper, time_series_data)
-                - extract_data(self.temperature_lower, time_series_data)
-                 )
-                / self.default_temperature_spread)
+    def _get_normalized_temperature_spread(self) -> Union[float, np.ndarray]:
+        return (self.temperature_upper - self.temperature_lower) / self.default_temperature_spread
 
     @field_validator('grid_fee_per_year')
     def validate_grid_fee(cls, value):
@@ -742,14 +759,25 @@ class Speicher(ThermalInvestElement):
             raise ValueError(f"Netzentgelt is not supported for '{cls.__name__}")
         return value
 
+    @property
+    def minimum_capacity(self) -> Optional[float]:
+        return float(self.capacity.split("-")[0]) if isinstance(self.capacity, str) else None
+
+    @property
+    def maximum_capacity(self):
+        return float(self.capacity.split("-")[1]) if isinstance(self.capacity, str) else None
+
 
 class EHK(ThermalInvestElement):
     eta_thermal: Union[float, str] = Field(alias="Thermischer Wirkungsgrad")
+    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias="Stromkosten Zusatz [€/MWh]", default=0)
     bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(data)
         self.eta_thermal = extract_data(self.eta_thermal, data)
+        self.extra_costs_per_mwh_elec = extract_data(self.extra_costs_per_mwh_elec, data)
 
     def _convert_to_flixopt(self,
                             flow_system: fx.FlowSystem,
@@ -764,22 +792,32 @@ class EHK(ThermalInvestElement):
             label=self.name,
             eta=self.eta_thermal,
             P_el=fx.Flow(label="P_el", bus=busses[self.bus_elec],
-                         effects_per_flow_hour={effects['costs']: extract_data('Strom', time_series_data)}),
-            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat])
+                         effects_per_flow_hour={effects['costs']: (extract_data('Strom', time_series_data)
+                                                                   + self.extra_costs_per_mwh_elec)}),
+            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat],
+                         relative_maximum=self.relative_maximum,
+                         relative_minimum=self.relative_minimum,
+                         effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra
+                                                } if self.costs_per_mwh_heat_extra is not None else None
+                         )
         )
-        self.insert_size(ehk.Q_th, effects, years_of_model)
+        self.insert_size(ehk.Q_th,
+                         self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
+                                                                                    self.maximum_thermal_power),
+                         effects, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, ehk.P_el, ehk.Q_th, ehk.eta, effects['costs'])
         return ehk
 
 
 class Rueckkuehler(ThermalInvestElement):
     specific_electricity_demand: Union[int, float, str] = Field(alias="Strombedarf", default=0)
-    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias="Zusatzkosten pro MWh Strom", default=0)
+    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias="Stromkosten Zusatz [€/MWh]", default=0)
     
     bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(data)
         self.specific_electricity_demand = extract_data(self.specific_electricity_demand, data)
 
 
@@ -797,10 +835,19 @@ class Rueckkuehler(ThermalInvestElement):
             specific_electricity_demand=self.specific_electricity_demand,
             P_el=fx.Flow(label="P_el", bus=busses[self.bus_elec],
                          effects_per_flow_hour={effects["costs"]: time_series_data['Strom'] + self.extra_costs_per_mwh_elec}),
-            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat])
+            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat],
+                         relative_maximum=self.relative_maximum,
+                         relative_minimum=self.relative_minimum,
+                         effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra
+                                                } if self.costs_per_mwh_heat_extra is not None else None
+                         )
         )
-        self.insert_size(cool.Q_th, effects, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, cool.P_el, cool.Q_th, 1/cool.specificElectricityDemand, effects['costs'])
+        self.insert_size(cool.Q_th,
+                         self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
+                                                                                    self.maximum_thermal_power),
+                         effects, years_of_model)
+        if cool.specificElectricityDemand != 0:
+            self.insert_grid_fee(self.grid_fee_per_year, cool.P_el, cool.Q_th, 1/cool.specificElectricityDemand, effects['costs'])
         return cool
 
 
@@ -824,7 +871,9 @@ class AbwaermeWaermepumpe(Waermepumpe):
         heat_pump = fx.linear_converters.HeatPumpWithSource(
             label=self.name,
             COP = self._get_cop(time_series_data),
-            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat], relative_maximum=self.relative_maximum),
+            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat],
+                         relative_maximum=self.relative_maximum,
+                         relative_minimum=self.relative_minimum),
             P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
                          effects_per_flow_hour={
                              effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
@@ -833,7 +882,10 @@ class AbwaermeWaermepumpe(Waermepumpe):
             Q_ab=fx.Flow(label='Qab', bus=busses[self.bus_waste_heat],
                          effects_per_flow_hour={effects['costs']: self.heat_source_costs})
         )
-        self.insert_size(heat_pump.Q_th, effects, years_of_model)
+        self.insert_size(heat_pump.Q_th,
+                         self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
+                                                                                    self.maximum_thermal_power),
+                         effects, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, heat_pump.P_el, heat_pump.Q_th, heat_pump.COP, effects['costs'])
         return heat_pump
 
@@ -870,7 +922,9 @@ class Geothermie(Waermepumpe):
         heat_pump = fx.linear_converters.HeatPumpWithSource(
             label=self.name,
             COP = self._get_cop(time_series_data),
-            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat], relative_maximum=self.relative_maximum),
+            Q_th=fx.Flow(label='Qth', bus=busses[self.bus_heat],
+                         relative_maximum=self.relative_maximum,
+                         relative_minimum=self.relative_minimum),
             P_el=fx.Flow(label='Pel', bus=busses[self.bus_elec],
                          effects_per_flow_hour={
                              effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
@@ -878,7 +932,10 @@ class Geothermie(Waermepumpe):
                          }),
             Q_ab=fx.Flow(label='Qab', bus=busses[self.bus_waste_heat])
         )
-        self.insert_size(heat_pump.Q_th, effects, years_of_model)
+        self.insert_size(heat_pump.Q_th,
+                         self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
+                                                                                    self.maximum_thermal_power),
+                         effects, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, heat_pump.P_el, heat_pump.Q_th, heat_pump.COP, effects['costs'])
         return heat_pump
 
@@ -889,6 +946,7 @@ class Abwaerme(ThermalInvestElement):
     
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        super()._insert_data(data)
         self.waste_heat_costs = extract_data(self.waste_heat_costs, data)
     
     def _convert_to_flixopt(self,
@@ -912,7 +970,11 @@ class Abwaerme(ThermalInvestElement):
             conversion_factors=[{q_abw: 1, q_th: 1}]
         )
 
-        self.insert_size(q_th, effects, years_of_model)
+        self.insert_size(q_th,
+                         self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
+                                                                                    self.maximum_thermal_power),
+                         effects,
+                         years_of_model)
         # No Grid Connection!
         return comp
 
@@ -931,7 +993,7 @@ class KWKekt(InvestElement):
 
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
-        self.fuel_costs = extract_data(self.extra_costs_per_mwh_fuel, data)
+        self.fuel_costs = extract_data(self.fuel_costs, data)
 
     def _convert_to_flixopt(self,
                             flow_system: fx.FlowSystem,
@@ -944,7 +1006,7 @@ class KWKekt(InvestElement):
 
         flow_heat = fx.Flow('Qth', busses[self.bus_heat])
         flow_fuel = fx.Flow('Qfu', busses[self.fuel_type],
-                            effects_per_flow_hour={effects["costs"]: self.fuel_costs}),
+                            effects_per_flow_hour={effects["costs"]: self.fuel_costs})
         flow_el = fx.Flow('Pel', busses[self.bus_elec],
                           effects_per_flow_hour={effects["costs"]: -1 * extract_data('Strom', time_series_data)})
 
@@ -965,7 +1027,7 @@ class KWKekt(InvestElement):
             label=self.name,
             inputs=[flow_fuel],
             outputs=[flow_heat, flow_el], segmented_conversion_factors=segmented_conversion_factors)
-        self.insert_size(flow_fuel, effects, years_of_model)
+        self.insert_size(flow_fuel, self.fuel_power, effects, years_of_model)
         return comp
 
     @field_validator("electrical_power", mode="before")
@@ -1000,13 +1062,14 @@ class ElementFactory:
                  flow_system: fx.FlowSystem,
                  time_series_data: pd.DataFrame,
                  co2_factors: Dict[str, float],
-                 years_of_model: List[int]):
+                 years_of_model: List[int],
+                 busses: Dict[str, fx.Bus]):
         self.time_series_data = time_series_data
         self.co2_factors = co2_factors
         self.years_of_model = years_of_model
         self.flow_system = flow_system
         self.effects = {effect.label: effect for effect in flow_system.effect_collection.effects}
-        self.busses = {bus.label: bus for bus in flow_system.all_buses}
+        self.busses = busses
 
         self.created_comps: List[Element] = []
 
@@ -1241,14 +1304,14 @@ def validate_invest_meta_data(component: flixOpt.elements.Component):
 
             specific_effects = flow.size.specific_effects or {}  # Making sure its a dict
             for effect, value in specific_effects.items():
-                if effect.label not in flow.meta_data['specific_effects']:
-                    logger.warning(f'Effect {effect.label} not found in specific_effects meta_data. {value=}')
-                elif abs(abs(sum(flow.meta_data['specific_effects'][effect.label])) - abs(value)) >= 1e-5:
+                if effect.label not in flow.meta_data['specific_costs']:
+                    logger.warning(f'Effect {effect.label} not found in specific_costs meta_data. {value=}')
+                elif abs(abs(sum(flow.meta_data['specific_costs'][effect.label])) - abs(value)) >= 1e-5:
                     logger.critical(
                         f'The meta_data for {flow.label_full=} is not correct for the investment effects per period.'
                         f'The total {effect.label=} passed to the InvestParameters is {value}. '
-                        f'The meta_data is {flow.meta_data["specific_effects"][effect.label]}, '
-                        f'which totals to {sum(flow.meta_data["specific_effects"][effect.label])}')
+                        f'The meta_data is {flow.meta_data["specific_costs"][effect.label]}, '
+                        f'which totals to {sum(flow.meta_data["specific_costs"][effect.label])}')
 
 
 def validate_invest_range(value: Union[int, float, str], label: str) -> Union[int, float, str]:
