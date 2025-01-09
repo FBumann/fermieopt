@@ -375,14 +375,14 @@ class Kessel(FuelThermalInvestElement):
         boiler = fx.linear_converters.Boiler(
             label=self.name,
             eta=self.eta_thermal,
-            Q_fu=fx.Flow(label="Q_fu", bus=busses[self.fuel_type],
+            Q_fu=fx.Flow(label="Qfu", bus=busses[self.fuel_type],
                          effects_per_flow_hour={
                              effects['costs']: (self._fuel_costs + self.fuel_cost_extra
                                                 + (self.co2_factor(time_series_data, co2_factors)
                                                    * extract_data('CO2', time_series_data))
                                                 ),
                              effects['CO2']: self.co2_factor(time_series_data, co2_factors)}),
-            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat],
+            Q_th=fx.Flow(label="Qth", bus=busses[self.bus_heat],
                          relative_maximum=self.relative_maximum,
                          relative_minimum=self.relative_minimum,
                          effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra
@@ -691,14 +691,14 @@ class Speicher(ThermalInvestElement):
             eta_discharge=self.eta_unload,
             relative_loss_per_hour=self.loss_per_hour,
             relative_maximum_charge_state=self.relative_maximum_capacity,
-            charging=fx.Flow(label='QthLoad',
+            charging=fx.Flow(label='charging',
                              bus=busses[self.bus_heat],
                              relative_maximum=self.relative_maximum,
                              relative_minimum=self.relative_minimum,
                              effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra
                                                     } if self.costs_per_mwh_heat_extra is not None else None
                              ),
-            discharging=fx.Flow(label='QthUnload',
+            discharging=fx.Flow(label='discharging',
                                 bus=busses[self.bus_heat],
                                 relative_maximum=self.relative_maximum,
                                 relative_minimum=self.relative_minimum,
@@ -818,10 +818,10 @@ class EHK(ThermalInvestElement):
         ehk = fx.linear_converters.Power2Heat(
             label=self.name,
             eta=self.eta_thermal,
-            P_el=fx.Flow(label="P_el", bus=busses[self.bus_elec],
+            P_el=fx.Flow(label="Pel", bus=busses[self.bus_elec],
                          effects_per_flow_hour={effects['costs']: (extract_data('Strom', time_series_data)
                                                                    + self.extra_costs_per_mwh_elec)}),
-            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat],
+            Q_th=fx.Flow(label="Qth", bus=busses[self.bus_heat],
                          relative_maximum=self.relative_maximum,
                          relative_minimum=self.relative_minimum,
                          effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra
@@ -861,9 +861,9 @@ class Rueckkuehler(ThermalInvestElement):
         cool = fx.linear_converters.CoolingTower(
             label=self.name,
             specific_electricity_demand=self.specific_electricity_demand,
-            P_el=fx.Flow(label="P_el", bus=busses[self.bus_elec],
+            P_el=fx.Flow(label="Pel", bus=busses[self.bus_elec],
                          effects_per_flow_hour={effects["costs"]: time_series_data['Strom'] + self.extra_costs_per_mwh_elec}),
-            Q_th=fx.Flow(label="Q_th", bus=busses[self.bus_heat],
+            Q_th=fx.Flow(label="Qth", bus=busses[self.bus_heat],
                          relative_maximum=self.relative_maximum,
                          relative_minimum=self.relative_minimum,
                          effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra
