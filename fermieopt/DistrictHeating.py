@@ -135,15 +135,16 @@ class DistrictHeatingSystem:
         self.effects = self.create_effects()
 
         self.helpers = self.create_helpers()
-        self.factory = ElementFactory(flow_system=self.final_model,
-                                      time_series_data=self.time_series_data,
-                                   co2_factors=self.co2_factors,
-                                   years_of_model=self.years)
-        self.components = self.create_components()
 
         self.final_model.add_effects(*list(self.effects.values()))
         self.final_model.add_elements(*self.helpers)
-        self.final_model.add_elements(*self.components)
+
+        self.factory = ElementFactory(flow_system=self.final_model,
+                                      time_series_data=self.time_series_data,
+                                      co2_factors=self.co2_factors,
+                                      years_of_model=self.years,
+                                      busses=self.busses)
+        self.create_components()
 
 
     def create_effects(self) -> Dict[str, fx.Effect]:
@@ -262,16 +263,13 @@ class DistrictHeatingSystem:
             for item in items_to_remove:
                 self.components_data[comp_type].remove(item)
 
-    def create_components(self) -> List[Element]:
+    def create_components(self) -> None:
         # data manipulation if a range is given for the start year for some components
         self.augment_components_with_several_start_years()
-        comps = []
 
         for comp_type in self.components_data.keys():
             for comp_props in self.components_data[comp_type]:
-                comps.extend(self.factory.create_energy_object(comp_type, comp_props))
-
-        return comps
+                self.factory.create_energy_object(comp_type, comp_props)
 
 
     def _handle_heating_network(self):
