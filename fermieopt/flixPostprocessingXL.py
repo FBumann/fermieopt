@@ -2,6 +2,7 @@
 import os
 from typing import Literal, Optional, Dict, List, Tuple, Union
 import logging
+import pathlib
 
 import pandas as pd
 import numpy as np
@@ -29,7 +30,7 @@ class flixPostXL(fx.results.CalculationResults):
 
         self.group_map = self._add_group_mapping()
         self.years = outputYears  # add as attribute
-        self.folder = os.path.dirname(results_folder)
+        self.folder = pathlib.Path(os.path.dirname(results_folder))
 
         self.investment_effects_per_period = self._get_investment_effects_per_period()
 
@@ -56,8 +57,8 @@ class flixPostXL(fx.results.CalculationResults):
                 investment_infos[component.label] = {
                     'size': component.all_results['Investment']['size'],
                     'is_invested': component.all_results['Investment'].get('isInvested', 1),
-                    'fixed_effects': component.all_infos['meta_data'].get('fixed_effects', {}),
-                    'specific_effects': component.all_infos['meta_data'].get('specific_effects', {})
+                    'fixed_effects': component.all_infos.get('meta_data', {}).get('fixed_effects', {}),
+                    'specific_effects': component.all_infos.get('meta_data', {}).get('specific_effects', {})
                 }
 
         for flow in self.flow_results().values():
@@ -65,8 +66,8 @@ class flixPostXL(fx.results.CalculationResults):
                 investment_infos[flow.label_full] = {
                     'size': flow.all_results['Investment']['size'],
                     'is_invested': flow.all_results['Investment'].get('isInvested', 1),
-                    'fixed_effects': flow.all_infos['meta_data'].get('fixed_effects', {}),
-                    'specific_effects': flow.all_infos['meta_data'].get('specific_effects', {})
+                    'fixed_effects': flow.all_infos.get('meta_data', {}).get('fixed_effects', {}),
+                    'specific_effects': flow.all_infos.get('meta_data', {}).get('specific_effects', {})
                 }
 
         return investment_infos
