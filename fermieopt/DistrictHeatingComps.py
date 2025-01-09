@@ -25,6 +25,7 @@ class Element(BaseModel,
                            time_series_data: pd.DataFrame,
                            co2_factors: Dict[str, float] = None,
                            years_of_model: List[int] = None):
+        self._insert_data(time_series_data)
         flow_system.add_elements(
             self._convert_to_flixopt(flow_system, effects, busses, time_series_data, co2_factors, years_of_model)
         )
@@ -266,8 +267,6 @@ class Sink(PowerInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
-
         comp = fx.Sink(
             label=self.name,
             sink=fx.Flow(label=self.flow_label,
@@ -289,7 +288,6 @@ class Source(PowerInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
         comp = fx.Source(
             label=self.name,
             source=fx.Flow(label=self.flow_label,
@@ -324,8 +322,6 @@ class LinearTransformer(PowerInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
-
         flow_out = fx.Flow(label=self.flow_label,
                            bus=busses[self.bus_out],
                            fixed_relative_profile=self.fixed_profile
@@ -371,7 +367,6 @@ class Kessel(FuelThermalInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
         boiler = fx.linear_converters.Boiler(
             label=self.name,
             eta=self.eta_thermal,
@@ -413,8 +408,6 @@ class KWK(FuelThermalInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
-
         chp = fx.linear_converters.CHP(
             label=self.name,
             eta_th=self.eta_thermal,
@@ -515,8 +508,6 @@ class Waermepumpe(ThermalInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
-
         heat_pump = fx.linear_converters.HeatPump(
             label=self.name,
             COP = self._get_cop(time_series_data),
@@ -682,8 +673,6 @@ class Speicher(ThermalInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
-
         storage = fx.Storage(
             label=self.name,
             capacity_in_flow_hours=0,
@@ -813,8 +802,6 @@ class EHK(ThermalInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
-        
         ehk = fx.linear_converters.Power2Heat(
             label=self.name,
             eta=self.eta_thermal,
@@ -856,8 +843,6 @@ class Rueckkuehler(ThermalInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
-        
         cool = fx.linear_converters.CoolingTower(
             label=self.name,
             specific_electricity_demand=self.specific_electricity_demand,
@@ -895,8 +880,6 @@ class AbwaermeWaermepumpe(Waermepumpe):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
-
         heat_pump = fx.linear_converters.HeatPumpWithSource(
             label=self.name,
             COP = self._get_cop(time_series_data),
@@ -947,8 +930,6 @@ class Geothermie(Waermepumpe):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
-
         heat_pump = fx.linear_converters.HeatPumpWithSource(
             label=self.name,
             COP = self._get_cop(time_series_data),
@@ -990,8 +971,6 @@ class Abwaerme(ThermalInvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
-        
         q_th = fx.Flow(label='Qth', bus=busses[self.bus_heat],
                        relative_minimum=self.relative_minimum,
                        relative_maximum=self.relative_maximum,
@@ -1042,8 +1021,6 @@ class KWKekt(InvestElement):
                             time_series_data: pd.DataFrame,
                             co2_factors: Dict[str, float],
                             years_of_model: List[int]):
-        self._insert_data(time_series_data)
-
         flow_heat = fx.Flow('Qth', busses[self.bus_heat])
         flow_fuel = fx.Flow('Qfu', busses[self.fuel_type],
                             effects_per_flow_hour={effects["costs"]: self.fuel_costs})
