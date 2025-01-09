@@ -1234,43 +1234,6 @@ def numbers_from_str(input_string: str, delimiter: str = '-', check_ascending: b
     return numbers
 
 
-def is_valid_format_segmentsOfFlows(input_string: str, mode: Literal['validate', 'decode']) -> Union[bool, list]:
-    '''
-    This function was written to check if a string is of the format "0;0 ;5;10 ; 10;30"
-    In mode 'validate, returns bool. In mode 'decode', returns a list of numbers
-    ----------
-    Returns
-    -------
-    bool
-    '''
-
-    # Replace commas with dots to handle decimal separators
-    input_string = input_string.replace(',', '.')
-
-    # Split the string into a list of substrings using semicolon as the delimiter
-    numbers_str = input_string.split(';')
-    # Convert each substring to either int or float
-    numbers = [int(num) if '.' not in num else float(num) for num in numbers_str]
-
-    if not isinstance(numbers, list):
-        pass
-        # raise Exception("Conversion to segmentsOfFlows didnt work. Use numbers, seperated by ';'")
-    elif not all(isinstance(element, (int, float)) for element in numbers):
-        pass
-        # raise Exception("Conversion to segmentsOfFlows didnt work. Use numbers, seperated by ';'")
-    else:
-        if mode == 'validate':
-            return True
-        elif mode == 'decode':
-            return numbers
-        else:
-            raise Exception(f"{mode} is not a valid mode.")
-    if mode == 'validate':
-        return False
-    else:
-        raise Exception("Error encountered in parsing of String")
-
-
 def add_effect_per_flow_hour(flow: fx.Flow, effect: fx.Effect, standard_effect: fx.Effect, factor: Union[float, np.ndarray]):
     if isinstance(flow.effects_per_flow_hour, dict):
         flow.effects_per_flow_hour.update({effect: factor})
