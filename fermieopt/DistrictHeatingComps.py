@@ -175,6 +175,13 @@ class InvestElement(Element):
                               'specific_costs': specific_effects_per_period
                               })
 
+    def restrict_availlability(self, component: flixOpt.elements.Component, years_in_model: List[int]) -> None:
+        """
+        Restricts the availability of the component based on the start year, lifetime, and years_in_model
+        """
+        existance = exists(self.start_year, self.lifetime, years_in_model)
+        restrict_availlability(component, existance)
+
 
 class PowerInvestElement(InvestElement):
     power: Union[int, float] = Field(alias='Nennleistung [MW]')
@@ -270,6 +277,7 @@ class Sink(PowerInvestElement):
         self.insert_size(comp.sink,
                          self.power if self.power is not None else (self.minimum_power, self.maximum_power),
                          effects, years_of_model)
+        self.restrict_availlability(comp, years_of_model)
         return comp
 
 
@@ -292,6 +300,7 @@ class Source(PowerInvestElement):
         self.insert_size(comp.source,
                          self.power if self.power is not None else (self.minimum_power, self.maximum_power),
                          effects, years_of_model)
+        self.restrict_availlability(comp, years_of_model)
         return comp
 
 
@@ -334,6 +343,7 @@ class LinearTransformer(PowerInvestElement):
         self.insert_size(flow_out,
                          self.power if self.power is not None else (self.minimum_power, self.maximum_power),
                          effects, years_of_model)
+        self.restrict_availlability(comp, years_of_model)
         return comp
 
 class FuelThermalInvestElement(ThermalInvestElement):
@@ -383,6 +393,7 @@ class Kessel(FuelThermalInvestElement):
                          self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
                                                                                     self.maximum_thermal_power),
                          effects, years_of_model)
+        self.restrict_availlability(boiler, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, boiler.Q_th, boiler.eta, effects['costs'])
         return boiler
 
@@ -432,6 +443,7 @@ class KWK(FuelThermalInvestElement):
                          self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
                                                                                     self.maximum_thermal_power),
                          effects, years_of_model)
+        self.restrict_availlability(chp, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, chp.Q_th, chp.eta_th, effects['costs'])
         return chp
 
@@ -524,6 +536,7 @@ class Waermepumpe(ThermalInvestElement):
                          self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
                                                                                     self.maximum_thermal_power),
                          effects, years_of_model)
+        self.restrict_availlability(heat_pump, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'])
         return heat_pump
 
@@ -696,6 +709,7 @@ class Speicher(ThermalInvestElement):
                          self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
                                                                                     self.maximum_thermal_power),
                          effects, years_of_model)
+        self.restrict_availlability(storage, years_of_model)
         self.link_second_flow_size(storage.charging, storage.discharging, flow_system)
         self.insert_capacity(storage, effects, years_of_model)
         return storage
@@ -818,6 +832,7 @@ class EHK(ThermalInvestElement):
                          self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
                                                                                     self.maximum_thermal_power),
                          effects, years_of_model)
+        self.restrict_availlability(ehk, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, ehk.Q_th, ehk.eta, effects['costs'])
         return ehk
 
@@ -859,6 +874,7 @@ class Rueckkuehler(ThermalInvestElement):
                          self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
                                                                                     self.maximum_thermal_power),
                          effects, years_of_model)
+        self.restrict_availlability(cool, years_of_model)
         if cool.specificElectricityDemand != 0:
             self.insert_grid_fee(self.grid_fee_per_year, cool.Q_th, 1/cool.specificElectricityDemand, effects['costs'])
         return cool
@@ -899,6 +915,7 @@ class AbwaermeWaermepumpe(Waermepumpe):
                          self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
                                                                                     self.maximum_thermal_power),
                          effects, years_of_model)
+        self.restrict_availlability(heat_pump, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'])
         return heat_pump
 
@@ -952,6 +969,7 @@ class Geothermie(Waermepumpe):
                          self.thermal_power if self.thermal_power is not None else (self.minimum_thermal_power,
                                                                                     self.maximum_thermal_power),
                          effects, years_of_model)
+        self.restrict_availlability(heat_pump, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'])
         return heat_pump
 
@@ -996,6 +1014,7 @@ class Abwaerme(ThermalInvestElement):
                                                                                     self.maximum_thermal_power),
                          effects,
                          years_of_model)
+        self.restrict_availlability(comp, years_of_model)
         # No Grid Connection!
         return comp
 
@@ -1049,6 +1068,7 @@ class KWKekt(InvestElement):
             inputs=[flow_fuel],
             outputs=[flow_heat, flow_el], segmented_conversion_factors=segmented_conversion_factors)
         self.insert_size(flow_fuel, self.fuel_power, effects, years_of_model)
+        self.restrict_availlability(comp, years_of_model)
         return comp
 
     @field_validator("electrical_power", mode="before")
