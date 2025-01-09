@@ -20,7 +20,9 @@ classifiers = [
 ]
 dependencies = [
     "flixOpt @git+https://github.com/flixOpt/flixOpt.git@v1.0.0",
-    "pydantic >=2.10.1"
+    "pydantic >=2.10.1",
+    "openpyxl >=-3.1.5",
+    "pprintpp >=0.4.0"
 ]
 
 [tool.setuptools.package-data]
