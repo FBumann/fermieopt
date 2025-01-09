@@ -177,9 +177,6 @@ class InvestElement(Element):
                               })
 
     def restrict_availlability(self, component: flixOpt.elements.Component, years_in_model: List[int]) -> None:
-        """
-        Restricts the availability of the component based on the start year, lifetime, and years_in_model
-        """
         existance = exists(self.start_year, self.lifetime, years_in_model)
         restrict_availlability(component, existance)
 
@@ -191,7 +188,6 @@ class PowerInvestElement(InvestElement):
     bus: str = Field(alias="Bus")
 
     def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         self.fixed_profile = extract_data(self.fixed_profile, data)
 
     @property
@@ -218,7 +214,6 @@ class ThermalInvestElement(InvestElement):
 
 
     def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         self.costs_per_mwh_heat_extra = extract_data(self.costs_per_mwh_heat_extra, data)
         self.relative_maximum = extract_data(self.relative_maximum, data)
         self.relative_minimum = extract_data(self.relative_minimum, data)
@@ -310,7 +305,6 @@ class LinearTransformer(PowerInvestElement):
     cost_per_mwh_in: Union[int, float, str] = Field(alias="Kosten pro MWh von Bus", default=0)
 
     def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         super()._insert_data(data)
         self.efficiency = extract_data(self.efficiency, data)
         self.cost_per_mwh_in = extract_data(self.cost_per_mwh_in, data)
@@ -349,7 +343,6 @@ class FuelThermalInvestElement(ThermalInvestElement):
     _fuel_costs: Union[float, np.ndarray] = 0
 
     def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         super()._insert_data(data)
         self.eta_thermal = extract_data(self.eta_thermal, data)
         self.fuel_cost_extra = extract_data(self.fuel_cost_extra, data)
@@ -441,7 +434,6 @@ class KWK(FuelThermalInvestElement):
         return chp
 
     def _insert_data(self, time_series_data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         super()._insert_data(time_series_data)
         self.eta_el = extract_data(self.eta_el, time_series_data)
         self.forward_flow_temperature = extract_data(self.forward_flow_temperature, time_series_data)
@@ -610,7 +602,6 @@ class Waermepumpe(ThermalInvestElement):
         return (target_temperature / (target_temperature - source_temperature)) * eta
 
     def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         super()._insert_data(data)
         self.cop = extract_data(self.cop, data)
         self.source_temperature = extract_data(self.source_temperature, data)
@@ -656,7 +647,6 @@ class Speicher(ThermalInvestElement):
     default_temperature_spread: Union[int, float] = Field(alias='Nenn-Temperaturspreizung', default=65)
 
     def _insert_data(self, time_series_data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         super()._insert_data(time_series_data)
         self.eta_load = extract_data(self.eta_load, time_series_data)
         self.eta_unload = extract_data(self.eta_unload, time_series_data)
@@ -790,7 +780,6 @@ class EHK(ThermalInvestElement):
     bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
     def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         super()._insert_data(data)
         self.eta_thermal = extract_data(self.eta_thermal, data)
         self.extra_costs_per_mwh_elec = extract_data(self.extra_costs_per_mwh_elec, data)
@@ -831,7 +820,6 @@ class Rueckkuehler(ThermalInvestElement):
     bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
     def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         super()._insert_data(data)
         self.specific_electricity_demand = extract_data(self.specific_electricity_demand, data)
 
@@ -870,7 +858,6 @@ class AbwaermeWaermepumpe(Waermepumpe):
     bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
     
     def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         self.heat_source_costs = extract_data(self.heat_source_costs, data)
 
     def _convert_to_flixopt(self,
@@ -908,7 +895,6 @@ class Geothermie(Waermepumpe):
     bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
     
     def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         super()._insert_data(data)
         self.amount_of_pump_electricity = extract_data(self.amount_of_pump_electricity, data)
     
@@ -960,7 +946,6 @@ class Abwaerme(ThermalInvestElement):
     bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
     
     def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         super()._insert_data(data)
         self.waste_heat_costs = extract_data(self.waste_heat_costs, data)
     
@@ -1011,7 +996,6 @@ class KWKekt(InvestElement):
 
 
     def _insert_data(self, data: pd.DataFrame):
-        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         self.fuel_costs = extract_data(self.fuel_costs, data)
 
     def _convert_to_flixopt(self,
