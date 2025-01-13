@@ -66,8 +66,7 @@ class flixPostXL(fx.results.CalculationResults):
                 investment_infos[flow.label_full] = {
                     'size': flow.all_results['Investment']['size'],
                     'is_invested': flow.all_results['Investment'].get('isInvested', 1),
-                    'fixed_effects': flow.all_infos.get('meta_data', {}).get('fixed_effects', {}),
-                    'specific_effects': flow.all_infos.get('meta_data', {}).get('specific_effects', {})
+                    'effects': flow.all_infos['meta_data']['invest'] if 'meta_data' in flow.all_infos else {},
                 }
 
         return investment_infos
@@ -78,17 +77,11 @@ class flixPostXL(fx.results.CalculationResults):
         invest_effects_per_period = {effect: {} for effect in self.effect_results}
 
         for element, element_infos in self.investment_infos().items():
-            used_effects = list(
-                set(element_infos.get('fixed_effects', {}).keys()).union(
-                    element_infos.get('specific_effects', {}).keys())
-            )
-            for effect in used_effects:
-                invest_effects_per_period[effect][element] = {
-                    'fixed_effects':
-                        element_infos['fixed_effects'].get(effect, np.array([0])) * element_infos['is_invested'],
-                    'specific_effects':
-                        element_infos['specific_effects'].get(effect, np.array([0])) * element_infos['size']
-                }
+            for effect, values in element_infos['effects'].items():
+                invest_effects_per_period[effect][element] = (
+                        values['fixed_effects'] * element_infos['is_invested']
+                        + values['specific_effects'] * element_infos['size']
+                )
 
         # Validate, that the sum of the computed invest effects per Period match the values from the optimization
         logger.debug('Validating Investment Effects...')
@@ -96,21 +89,16 @@ class flixPostXL(fx.results.CalculationResults):
             if effect_label == 'Penalty':
                 continue
             for element, new_result in invest_effects_per_period[effect_label].items():
-                old_result = {
-                    'fixed_effects': effect_results.all_results['invest']['Shares'].get(f'{element}__fix_effects', 0),
-                    'specific_effects': effect_results.all_results['invest']['Shares'].get(f'{element}__specific_effects', 0)
-                }
+                old_result = (
+                    effect_results.all_results['invest']['Shares'].get(f'{element}__fix_effects', 0)
+                    + effect_results.all_results['invest']['Shares'].get(f'{element}__specific_effects', 0)
+                )
 
-                if sum(new_result['fixed_effects']) != old_result['fixed_effects']:
+                if sum(new_result) != old_result:
                     logger.critical(
-                        f'Getting the fixed investment effects per Period was not succesfull for {element=}.'
-                        f'The value from the optimizer {old_result["fixed_effects"]} differs from the self '
-                        f'computed value {sum(new_result["fixed_effects"])}.')
-                if sum(new_result['specific_effects']) != old_result['specific_effects']:
-                    logger.critical(
-                        f'Getting the specific investment effects per Period was not succesfull for {element=}.'
-                        f'The value from the optimizer {old_result["specific_effects"]} differs from the self '
-                        f'computed value {sum(new_result["specific_effects"])}.')
+                        f'Getting the investment effects per Period was not succesfull for {element=}.'
+                        f'The value from the optimizer {old_result} differs from the self '
+                        f'computed value {sum(new_result)}.')
 
         return invest_effects_per_period
 
@@ -262,6 +250,7 @@ class flixPostXL(fx.results.CalculationResults):
             if abs(abs(computed_total)-abs(total)) > 1e-5:
                 logger.critical(f'Total of individual results for {effect=:>25} {"invest_per_period":<10} doesnt match computation after '
                                 f'solve: {computed_total=:>20.5f}     {total=:>20.5f}')
+
     def _write_investment_effects_per_period_into_effect_results(self):
         """
         This function writes the investment effects per period into the EffectResults.
@@ -272,12 +261,9 @@ class flixPostXL(fx.results.CalculationResults):
         for effect, effect_results in self.effect_results.items():
             if effect == 'Penalty':
                 continue
-            effects_per_period = {
-                f"{key}__{sub_key}": sub_value
-                for key, value in self.investment_effects_per_period[effect].items()
-                for sub_key, sub_value in value.items()
-                if not np.all(sub_value == 0)
-            }
+            effects_per_period = {key: value for key, value in self.investment_effects_per_period[effect].items()
+                                  if not np.all(value == 0)}
+
             effect_results.all_results['invest']['Shares_per_period'] = {
                 key: value for key, value in effects_per_period.items()
             }
