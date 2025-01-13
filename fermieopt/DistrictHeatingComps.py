@@ -742,7 +742,7 @@ class Speicher(ThermalInvestElement):
 
             specific_effects_total = {effects[effect]: np.sum(values) for effect, values in specific_effects_per_period.items()}
 
-            storage.size = fx.InvestParameters(
+            storage.capacity_in_flow_hours = fx.InvestParameters(
                 optional=self.optional,
                 fixed_size=self.capacity if isinstance(self.capacity, (int, float)) else None,
                 minimum_size=self.minimum_capacity,
