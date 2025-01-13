@@ -49,7 +49,7 @@ class flixPostXL(fx.results.CalculationResults):
         return [comp for comp, comp_results in self.component_results.items()
                 if 'Storage' in comp_results.all_infos['class'].split(':')]
 
-    def investment_infos(self) -> Dict[str, Union[int, float, Dict[str, np.ndarray[float]]]]:
+    def investment_infos(self) -> Dict[str, Dict[str, Union[int, float, np.ndarray[float]]]]:
         investment_infos = {}
 
         for component in self.component_results.values():
@@ -57,8 +57,7 @@ class flixPostXL(fx.results.CalculationResults):
                 investment_infos[component.label] = {
                     'size': component.all_results['Investment']['size'],
                     'is_invested': component.all_results['Investment'].get('isInvested', 1),
-                    'fixed_effects': component.all_infos.get('meta_data', {}).get('fixed_effects', {}),
-                    'specific_effects': component.all_infos.get('meta_data', {}).get('specific_effects', {})
+                    'effects': component.all_infos['meta_data']['invest'] if 'meta_data' in component.all_infos else {},
                 }
 
         for flow in self.flow_results().values():
@@ -162,7 +161,7 @@ class flixPostXL(fx.results.CalculationResults):
             conversion_factors[effect_label] = 1  # Share to itself is 1
             for effect, conversion_factor in conversion_factors.items():
                 for origin, value in self.effect_results[effect].all_results['invest']['Shares_per_period'].items():
-                    if any([origin.startswith(f'{label}__') for label in labels]):
+                    if origin in labels:
                         total =  total + value * conversion_factor
         else:
             logger.critical(f'Not allowed domain. Must be in {["invest", "operation", "invest_per_period"]}')
