@@ -4,8 +4,8 @@ import numpy as np
 
 
 class EffectMetaData(TypedDict):
-    fixed_effects: Dict[np.ndarray[Union[int, float]]]
-    specific_effects: Dict[np.ndarray[Union[int, float]]]
+    fixed_effects: np.ndarray[Union[int, float]]
+    specific_effects: np.ndarray[Union[int, float]]
 
 
 class InvestMetaData(TypedDict):

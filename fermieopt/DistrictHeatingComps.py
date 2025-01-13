@@ -173,6 +173,8 @@ class InvestElement(Element):
                 fix_effects=fixed_effects_total,
                 specific_effects=specific_effects_total
             )
+            if not flow.meta_data:
+                flow.meta_data = MetaDataFactory.create()
 
             flow.meta_data['invest']['costs']['fixed_effects'] += fixed_effects_per_period.get('costs', 0)
             flow.meta_data['invest']['costs']['specific_effects'] += specific_effects_per_period.get('costs', 0)
@@ -238,6 +240,8 @@ class ThermalInvestElement(InvestElement):
                 invest_flow.size.specific_effects[effect] = yearly_grid_fee + invest_flow.size.specific_effects.get(effect, 0)
 
             assert effect.label == 'costs', f"Effect {effect.label} is not 'costs', which is expected in this function"
+            if not invest_flow.meta_data:
+                invest_flow.meta_data = MetaDataFactory.create()
             invest_flow.meta_data['invest']['costs']['specific_effects'] += yearly_grid_fee
             invest_flow.meta_data['yearly_grid_fee_per_thermal_power'] = yearly_grid_fee
             invest_flow.meta_data['highest_possible_grid_draw'] = highest_possible_grid_draw
