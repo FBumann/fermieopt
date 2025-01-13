@@ -4,7 +4,6 @@ import logging
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator, model_validator, PrivateAttr
-from rich import print
 
 import flixOpt as fx
 import flixOpt.elements

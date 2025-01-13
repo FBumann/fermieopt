@@ -2,9 +2,11 @@
 import os
 import shutil
 import datetime
+import logging
 import numpy as np
 import pandas as pd
 from rich import print
+from rich.console import Console
 from typing import Dict, List, Optional
 
 import flixOpt as fx
@@ -15,6 +17,8 @@ from fermieopt.excel_input import ExcelData
 from fermieopt.flixPostprocessingXL import flixPostXL
 from fermieopt.DistrictHeatingComps import ElementFactory
 from fermieopt.DistrictHeatingComps import numbers_from_str, exists
+
+logger = logging.getLogger('flixOpt')
 
 
 class ExcelModel:
@@ -78,19 +82,22 @@ class ExcelModel:
             df.to_excel(writer, index=True, sheet_name="Internally_computed_data")
 
         with open(os.path.join(self.final_directory, f"{self.calc_name}__Component_data.txt"), "w", encoding='utf-8') as log_file:
-            print(self.excel_data.components_data, log_file)
+            console = Console(file=log_file, width=10000)
+            console.print(self.excel_data.components_data)
 
         try:
             with open(os.path.join(self.final_directory, f"{self.calc_name}__System_Description.txt"), "w", encoding='utf-8') as log_file:
-                print(self.district_heating_system.final_model, file=log_file)
+                console = Console(file=log_file, width=10000)
+                console.print(self.district_heating_system.final_model)
         except:
-            print()
+            logger.warning("Could not write System Description to file")
 
         try:
             with open(os.path.join(self.final_directory, f"{self.calc_name}__Input_and_Preprocessing_Comps.txt"), "w", encoding='utf-8') as log_file:
-                print(self.district_heating_system.factory.print_comps(), file=log_file)
+                console = Console(file=log_file, width=1000)
+                console.print(self.district_heating_system.factory.print_comps())
         except:
-            print()
+            logger.warning("Could not write Input and Preprocessing Components to file")
 
     def _adjust_calc_name_and_results_folder(self):
         now = datetime.datetime.now()
