@@ -3,11 +3,12 @@ import logging
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, PrivateAttr
 from rich import print
 
 import flixOpt as fx
 import flixOpt.elements
+from fermieopt.meta_data import MetaDataFactory, MetaData
 
 logger = logging.getLogger('flixOpt')
 
@@ -17,6 +18,7 @@ class Element(BaseModel,
               extra = 'forbid'):  # Forbids unexpected keys in input data
     name: str = Field(alias="Name")
     group: Optional[str] = Field(alias='Gruppe', default=None)
+    _meta_data: MetaData = PrivateAttr(default_factory=MetaDataFactory.create)
 
     def add_to_flow_system(self,
                            flow_system: fx.FlowSystem,
@@ -86,7 +88,7 @@ class InvestElement(Element):
             specific_invest_costs: float,
             annual_costs: float,
             specific_annual_costs: float,
-            funding_rate: float) -> Tuple[Dict[str, List[float]], Dict[str, List[float]]]:
+            funding_rate: float) -> Tuple[Dict[str, np.ndarray[float]], Dict[str, np.ndarray[float]]]:
         """
         Calculates the annual costs and funding for an investment based on various financial parameters.
 
@@ -118,12 +120,12 @@ class InvestElement(Element):
 
         # Calculate costs and funding
         fix_costs = {
-            "costs": ((invest_costs * annuity_factor + annual_costs) * accounting_years).tolist(),
-            "funding": (invest_costs * annuity_factor * funding_rate * accounting_years).tolist()
+            "costs": ((invest_costs * annuity_factor + annual_costs) * accounting_years),
+            "funding": (invest_costs * annuity_factor * funding_rate * accounting_years)
         }
         specific_costs = {
-            "costs": ((specific_invest_costs * annuity_factor + specific_annual_costs) * accounting_years).tolist(),
-            "funding": ((specific_invest_costs * annuity_factor * funding_rate) * accounting_years).tolist()
+            "costs": ((specific_invest_costs * annuity_factor + specific_annual_costs) * accounting_years),
+            "funding": ((specific_invest_costs * annuity_factor * funding_rate) * accounting_years)
         }
 
         def clean_dict(d):
@@ -171,10 +173,11 @@ class InvestElement(Element):
                 fix_effects=fixed_effects_total,
                 specific_effects=specific_effects_total
             )
-            update_meta_data(flow,
-                             {'fixed_costs': fixed_effects_per_period,
-                              'specific_costs': specific_effects_per_period
-                              })
+
+            flow.meta_data['invest']['costs']['fixed_effects'] += fixed_effects_per_period.get('costs', 0)
+            flow.meta_data['invest']['costs']['specific_effects'] += specific_effects_per_period.get('costs', 0)
+            flow.meta_data['invest']['funding']['fixed_effects'] += fixed_effects_per_period.get('funding', 0)
+            flow.meta_data['invest']['funding']['specific_effects'] += specific_effects_per_period.get('funding', 0)
 
     def restrict_availlability(self, component: flixOpt.elements.Component, years_in_model: List[int]) -> None:
         existance = exists(self.start_year, self.lifetime, years_in_model)
@@ -233,9 +236,11 @@ class ThermalInvestElement(InvestElement):
                 invest_flow.size.specific_effects = {effect: yearly_grid_fee}
             else:
                 invest_flow.size.specific_effects[effect] = yearly_grid_fee + invest_flow.size.specific_effects.get(effect, 0)
-            update_meta_data(invest_flow, {'yearly_grid_fee_per_thermal_power': yearly_grid_fee,
-                                           'highest_possible_grid_draw': highest_possible_grid_draw})
-            update_meta_data(invest_flow, {'specific_costs': yearly_grid_fee}, mode='add')
+
+            assert effect.label == 'costs', f"Effect {effect.label} is not 'costs', which is expected in this function"
+            invest_flow.meta_data['invest']['costs']['specific_effects'] += yearly_grid_fee
+            invest_flow.meta_data['yearly_grid_fee_per_thermal_power'] = yearly_grid_fee
+            invest_flow.meta_data['highest_possible_grid_draw'] = highest_possible_grid_draw
 
     @property
     def minimum_thermal_power(self) -> Optional[float]:
@@ -741,7 +746,8 @@ class Speicher(ThermalInvestElement):
                 specific_effects=specific_effects_total
             )
 
-            update_meta_data(storage, {'specific_costs': specific_effects_per_period})
+            storage.meta_data['invest']['costs']['specific_effects'] += specific_effects_per_period['costs']
+            storage.meta_data['invest']['funding']['specific_effects'] += specific_effects_per_period['funding']
 
     def _get_normalized_temperature_spread(self) -> Union[float, np.ndarray]:
         return (self.temperature_upper - self.temperature_lower) / self.default_temperature_spread
@@ -1222,34 +1228,6 @@ def add_effect_per_flow_hour(flow: fx.Flow, effect: fx.Effect, standard_effect: 
         flow.effects_per_flow_hour = {effect: factor}
     else:
         flow.effects_per_flow_hour = {effect: factor, standard_effect: flow.effects_per_flow_hour}
-
-
-def update_meta_data(element: flixOpt.elements.Element,
-                     meta_data: Dict[str, Any],
-                     mode: Literal['replace', 'add'] = 'replace'
-                     ):
-    if element.meta_data is None:
-        element.meta_data = {}
-
-    if mode == 'replace':
-        element.meta_data.update(meta_data)
-    elif mode == 'add':
-        for key, value in meta_data.items():
-            if isinstance(value, list):
-                if (isinstance(item, (int, float)) for item in value):
-                    value = np.array(value)
-                else:
-                    raise ValueError(f"Value for key '{key}' must be a list of numeric values (int or float) with {mode=}.")
-            if isinstance(value, (int, float, np.ndarray)):
-                # Add to existing value if the key exists and is numeric
-                if key in element.meta_data and isinstance(element.meta_data[key], (int, float, np.ndarray)):
-                    element.meta_data[key] += value
-                else:
-                    # Add new key-value pair if the key doesn't exist
-                    element.meta_data[key] = value
-            else:
-                raise ValueError(f"Value for key '{key}' must be numeric (int or float).")
-
 
 # validation functions
 
