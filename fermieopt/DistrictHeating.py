@@ -4,12 +4,12 @@ import shutil
 import datetime
 import numpy as np
 import pandas as pd
-from pprintpp import pprint as pp
+from rich import print
 from typing import Dict, List, Optional
 
 import flixOpt as fx
-from flixOpt.structure import Element
-from flixOpt.elements import Component
+import flixOpt.structure
+import flixOpt.elements
 
 from fermieopt.excel_input import ExcelData
 from fermieopt.flixPostprocessingXL import flixPostXL
@@ -33,7 +33,7 @@ class ExcelModel:
         print("Initiated Comps:")
         categorized_comps = {}
         for comp in self.district_heating_system.final_model.components:
-            comp: Component
+            comp: flixOpt.elements.Component
             category = type(comp).__name__
             if category not in categorized_comps:
                 categorized_comps[category] = [comp.label]
@@ -78,7 +78,7 @@ class ExcelModel:
             df.to_excel(writer, index=True, sheet_name="Internally_computed_data")
 
         with open(os.path.join(self.final_directory, f"{self.calc_name}__Component_data.txt"), "w", encoding='utf-8') as log_file:
-            pp(self.excel_data.components_data, log_file)
+            print(self.excel_data.components_data, log_file)
 
         try:
             with open(os.path.join(self.final_directory, f"{self.calc_name}__System_Description.txt"), "w", encoding='utf-8') as log_file:
@@ -220,7 +220,7 @@ class DistrictHeatingSystem:
 
         return busses
 
-    def create_helpers(self) -> List[Element]:
+    def create_helpers(self) -> List[flixOpt.structure.Element]:
         Pout1 = fx.Flow(label="Strompreis",
                       bus=self.busses['StromEinspeisung'],
                       size=0,
