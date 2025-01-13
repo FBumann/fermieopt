@@ -72,6 +72,7 @@ class flixPostXL(fx.results.CalculationResults):
 
     def _get_investment_effects_per_period(
             self) -> Dict[str, Dict[str, Dict[Literal['fixed_effects', 'specific_effects'], np.ndarray[float]]]]:
+        self._sum_up_invest_effects_per_element()
 
         invest_effects_per_period = {effect: {} for effect in self.effect_results}
 
@@ -88,10 +89,7 @@ class flixPostXL(fx.results.CalculationResults):
             if effect_label == 'Penalty':
                 continue
             for element, new_result in invest_effects_per_period[effect_label].items():
-                old_result = (
-                    effect_results.all_results['invest']['Shares'].get(f'{element}__fix_effects', 0)
-                    + effect_results.all_results['invest']['Shares'].get(f'{element}__specific_effects', 0)
-                )
+                old_result = effect_results.all_results['invest']['Shares'].get(element, 0)
 
                 if sum(new_result) != old_result:
                     logger.critical(
@@ -100,6 +98,27 @@ class flixPostXL(fx.results.CalculationResults):
                         f'computed value {sum(new_result)}.')
 
         return invest_effects_per_period
+
+    def _sum_up_invest_effects_per_element(self):
+        def combine_keys(data: dict[str, int]) -> dict[str, int]:
+            combined_data = {}
+
+            for key, value in data.items():
+                if "__fix_effects" in key or "__specific_effects" in key:
+                    # Extract the common prefix
+                    prefix = key.rsplit("__", 1)[0]
+                    # Combine values into the prefix key
+                    combined_data[prefix] = combined_data.get(prefix, 0) + value
+                elif key not in combined_data:  # Preserve unique keys without suffix
+                    combined_data[key] = value
+
+            return combined_data
+
+        for effect_name, effect_results in self.effect_results.items():
+            if effect_name == 'Penalty':
+                continue
+            effect_results.all_results['invest']['Shares'] = combine_keys(effect_results.all_results['invest']['Shares'])
+
 
     def _get_factors_between_effects(self) -> Tuple[Dict[Tuple[str, str], Union[int, float, np.ndarray[float]]],
                                                     Dict[Tuple[str, str], Union[int, float, np.ndarray[float]]]]:
@@ -152,7 +171,7 @@ class flixPostXL(fx.results.CalculationResults):
             conversion_factors[effect_label] = 1  # Share to itself is 1
             for effect, conversion_factor in conversion_factors.items():
                 for origin, value in self.effect_results[effect].all_results['invest']['Shares'].items():
-                    if any([origin.startswith(f'{label}__') for label in labels]):
+                    if origin in labels:
                         total =  total + value * conversion_factor
         elif domain == 'invest_per_period':
             total = np.zeros_like(self.years)
