@@ -15,8 +15,7 @@ import flixOpt.elements
 
 from fermieopt.excel_input import ExcelData
 from fermieopt.flixPostprocessingXL import flixPostXL
-from fermieopt.DistrictHeatingComps import ElementFactory
-from fermieopt.DistrictHeatingComps import numbers_from_str, exists
+from fermieopt.DistrictHeatingComps import ElementFactory, extract_data, numbers_from_str, exists
 
 logger = logging.getLogger('flixOpt')
 
@@ -231,19 +230,19 @@ class DistrictHeatingSystem:
         Pout1 = fx.Flow(label="Strompreis",
                       bus=self.busses['StromEinspeisung'],
                       size=0,
-                      effects_per_flow_hour=self.time_series_data["Strom"])
+                      effects_per_flow_hour=extract_data("Strom", self.time_series_data))
         Pout2 = fx.Flow(label="Gaspreis",
                       bus=self.busses['Erdgas'],
                       size=0,
-                      effects_per_flow_hour=self.time_series_data["Erdgas"])
+                      effects_per_flow_hour=extract_data("Erdgas", self.time_series_data))
         Pout3 = fx.Flow(label="Wasserstoffpreis",
                       bus=self.busses['Wasserstoff'],
                       size=0,
-                      effects_per_flow_hour=self.time_series_data["Wasserstoff"])
+                      effects_per_flow_hour=extract_data("Wasserstoff", self.time_series_data))
         Pout4 = fx.Flow(label="EBSPreis",
                       bus=self.busses['EBS'],
                       size=0,
-                      effects_per_flow_hour=self.time_series_data["EBS"])
+                      effects_per_flow_hour=extract_data("EBS", self.time_series_data))
 
         return[fx.LinearConverter(label="HelperPreise", inputs=[], outputs=[Pout1, Pout2, Pout3, Pout4],
                                    conversion_factors=[{Pout1: 1, Pout2: 1, Pout3: 1, Pout4: 1}])

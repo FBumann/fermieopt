@@ -846,7 +846,7 @@ class Rueckkuehler(ThermalInvestElement):
             label=self.name,
             specific_electricity_demand=self.specific_electricity_demand,
             P_el=fx.Flow(label="Pel", bus=busses[self.bus_elec],
-                         effects_per_flow_hour={effects["costs"]: time_series_data['Strom'] + self.extra_costs_per_mwh_elec}),
+                         effects_per_flow_hour={effects["costs"]: extract_data('Strom', time_series_data) + self.extra_costs_per_mwh_elec}),
             Q_th=fx.Flow(label="Qth", bus=busses[self.bus_heat],
                          relative_maximum=self.relative_maximum,
                          relative_minimum=self.relative_minimum,
