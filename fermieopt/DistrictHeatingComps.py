@@ -749,9 +749,11 @@ class Speicher(ThermalInvestElement):
                 maximum_size=self.maximum_capacity,
                 specific_effects=specific_effects_total
             )
+            if not storage.meta_data:
+                storage.meta_data = MetaDataFactory.create()
 
-            storage.meta_data['invest']['costs']['specific_effects'] += specific_effects_per_period['costs']
-            storage.meta_data['invest']['funding']['specific_effects'] += specific_effects_per_period['funding']
+            storage.meta_data['invest']['costs']['specific_effects'] += specific_effects_per_period.get('costs', 0)
+            storage.meta_data['invest']['funding']['specific_effects'] += specific_effects_per_period.get('funding', 0)
 
     def _get_normalized_temperature_spread(self) -> Union[float, np.ndarray]:
         return (self.temperature_upper - self.temperature_lower) / self.default_temperature_spread
