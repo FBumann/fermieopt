@@ -329,7 +329,7 @@ class flixPostXL(fx.results.CalculationResults):
 
         # TODO: THis might not be entirely viable
         additional_shares = {}
-        for effect, effect_results in self.effect_results.items():
+        for effect in self.effect_results:
             if effect == 'Penalty':
                 continue
             factors = {key[0]: value for key, value in self.shares_between_effects_invest.items() if key[1] == effect}
@@ -648,10 +648,10 @@ class flixPostXL(fx.results.CalculationResults):
         isStorage = False
         try:
             flow = self.flow_results()[flow_name]
-        except KeyError:
+        except KeyError as e:
             raise KeyError(
                 f'The Flow with the label {flow_name} was not found. Choose from {self.flow_results().keys()}'
-            )
+            ) from e
 
         data = flow.variables['flow_rate']
         unit = 'Flow Hours'
@@ -667,7 +667,7 @@ class flixPostXL(fx.results.CalculationResults):
                     nbPeriods, nbTimeStepsPerPeriod
                 )
                 + ' and nbTimeStepsPerPeriod The error was: {}.'.format(e)
-            )
+            ) from e
         vmax = data.max() if not vmax else vmax
 
         if not fig or not ax:

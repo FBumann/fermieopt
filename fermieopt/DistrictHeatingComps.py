@@ -1475,14 +1475,14 @@ def validate_invest_range(value: Union[int, float, str], label: str) -> Union[in
                 raise ValueError("Invalid range format. Expected 'X-Y'.")
             try:
                 start, end = float(parts[0]), float(parts[1])
-            except ValueError:
-                raise ValueError("Invalid range format. Expected 'X-Y'.")
+            except ValueError as e:
+                raise ValueError("Invalid range format. Expected 'X-Y'.") from e
             if start >= end:
                 raise ValueError('Range start must be less than range end.')
             if start < 0:
                 raise ValueError('Range start must be positive.')
             return value
         except ValueError as e:
-            raise ValueError(f'Invalid thermal power format: {e}')
+            raise ValueError(f'Invalid thermal power format: {e}') from e
     else:
         raise ValueError(f"'{label}' must be a number or a string in the format 'X-Y'.")

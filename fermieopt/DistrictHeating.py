@@ -96,8 +96,9 @@ class ExcelModel:
             ) as log_file:
                 console = Console(file=log_file, width=10000)
                 console.print(self.district_heating_system.final_model)
-        except:
+        except Exception as e:
             logger.warning('Could not write System Description to file')
+            logger.warning(f'Exception: {e}')
 
         try:
             with open(
@@ -107,8 +108,9 @@ class ExcelModel:
             ) as log_file:
                 console = Console(file=log_file, width=1000)
                 console.print(self.district_heating_system.factory.print_comps())
-        except:
+        except Exception as e:
             logger.warning('Could not write Input and Preprocessing Components to file')
+            logger.warning(f'Exception: {e}')
 
     def _adjust_calc_name_and_results_folder(self):
         now = datetime.datetime.now()
@@ -263,7 +265,7 @@ class DistrictHeatingSystem:
                 label = bus_data['Name']
                 busses[label] = fx.Bus(label=label, excess_penalty_per_flow_hour=None)
             except KeyError as e:
-                raise Exception(f"Every Bus needs a 'Name'! Error: {e}")
+                raise Exception(f"Every Bus needs a 'Name'! Error: {e}") from e
 
         return busses
 
@@ -310,8 +312,8 @@ class DistrictHeatingSystem:
                 if isinstance(years, str):
                     try:
                         first_year, last_year = numbers_from_str(years)
-                    except ValueError:
-                        raise ValueError('"Startjahr" must be an integer or a string of format "min-max"')
+                    except ValueError as e:
+                        raise ValueError('"Startjahr" must be an integer or a string of format "min-max"') from e
                     first_year, last_year = int(first_year), int(last_year)
                     items_to_remove.append(component_data)
                     for year in self.years:

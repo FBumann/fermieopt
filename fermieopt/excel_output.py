@@ -230,7 +230,7 @@ def df_to_excel_w_chart(
     """
     try:
         wb = load_workbook(filepath)
-    except:
+    except Exception:
         template_path = Path(__file__).resolve().parent / 'resources' / 'Template_blanco.xlsx'
 
         wb = load_workbook(template_path)
