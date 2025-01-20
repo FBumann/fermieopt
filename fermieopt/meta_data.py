@@ -21,14 +21,14 @@ class MetaDataFactory:
     @staticmethod
     def create() -> MetaData:
         return {
-            "invest": {
-                "costs": {
-                    "fixed_effects": np.array([0], dtype=float),
-                    "specific_effects": np.array([0], dtype=float),
+            'invest': {
+                'costs': {
+                    'fixed_effects': np.array([0], dtype=float),
+                    'specific_effects': np.array([0], dtype=float),
                 },
-                "funding": {
-                    "fixed_effects": np.array([0], dtype=float),
-                    "specific_effects": np.array([0], dtype=float),
+                'funding': {
+                    'fixed_effects': np.array([0], dtype=float),
+                    'specific_effects': np.array([0], dtype=float),
                 },
             },
         }

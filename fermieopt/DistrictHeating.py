@@ -32,8 +32,8 @@ class ExcelModel:
 
     def print_comps_in_categories(self):
         # String-resources
-        print("###############################################")
-        print("Initiated Comps:")
+        print('###############################################')
+        print('Initiated Comps:')
         categorized_comps = {}
         for comp in self.district_heating_system.final_model.components:
             comp: flixOpt.elements.Component
@@ -44,7 +44,7 @@ class ExcelModel:
                 categorized_comps[category].append(comp.label)
 
         for category, comps in categorized_comps.items():
-            print(f"{category}: {comps}")
+            print(f'{category}: {comps}')
 
     def solve_model(self, solver_name: str, gap_frac: float = 0.01, timelimit: int = 3600):
         self.print_comps_in_categories()
@@ -54,12 +54,14 @@ class ExcelModel:
         calculation = fx.FullCalculation(self.calc_name, self.district_heating_system.final_model, 'pyomo')
         calculation.do_modeling()
 
-        calculation.solve(fx.solvers.GurobiSolver(mip_gap=gap_frac, time_limit_seconds=timelimit),
-                          save_results=os.path.join(self.final_directory, "SolveResults"))
+        calculation.solve(
+            fx.solvers.GurobiSolver(mip_gap=gap_frac, time_limit_seconds=timelimit),
+            save_results=os.path.join(self.final_directory, 'SolveResults'),
+        )
         self.calc_name = calculation.name
         calc_results = self.load_results()
 
-        with open(os.path.join(self.final_directory, f"{self.calc_name}__calc_info.txt"), "w") as log_file:
+        with open(os.path.join(self.final_directory, f'{self.calc_name}__calc_info.txt'), 'w') as log_file:
             calc_info = f"""calc = flixPostXL(nameOfCalc='{self.calc_name}', 
             results_folder='{os.path.join(self.final_directory, 'SolveResults')}', 
             outputYears={self.years})"""
@@ -67,54 +69,67 @@ class ExcelModel:
             log_file.write(calc_info)
 
     def load_results(self) -> flixPostXL:
-        return flixPostXL(nameOfCalc=self.calc_name,
-                          results_folder=os.path.join(self.final_directory, "SolveResults"),
-                          outputYears=self.years)
+        return flixPostXL(
+            nameOfCalc=self.calc_name,
+            results_folder=os.path.join(self.final_directory, 'SolveResults'),
+            outputYears=self.years,
+        )
 
     def _create_dirs_and_save_input_data(self):
         os.mkdir(self.final_directory)
-        input_data_path = os.path.join(self.final_directory, f"{self.calc_name}__Skript.xlsx")
+        input_data_path = os.path.join(self.final_directory, f'{self.calc_name}__Skript.xlsx')
         shutil.copy2(self.input_excel_file_path, input_data_path)
 
-        with (pd.ExcelWriter(input_data_path, mode="a", engine="openpyxl", if_sheet_exists='overlay') as writer):
+        with pd.ExcelWriter(input_data_path, mode='a', engine='openpyxl', if_sheet_exists='overlay') as writer:
             df = self.district_heating_system.time_series_data_internal
-            df.to_excel(writer, index=True, sheet_name="Internally_computed_data")
+            df.to_excel(writer, index=True, sheet_name='Internally_computed_data')
 
-        with open(os.path.join(self.final_directory, f"{self.calc_name}__Component_data.txt"), "w", encoding='utf-8') as log_file:
+        with open(
+            os.path.join(self.final_directory, f'{self.calc_name}__Component_data.txt'), 'w', encoding='utf-8'
+        ) as log_file:
             console = Console(file=log_file, width=10000)
             console.print(self.excel_data.components_data)
 
         try:
-            with open(os.path.join(self.final_directory, f"{self.calc_name}__System_Description.txt"), "w", encoding='utf-8') as log_file:
+            with open(
+                os.path.join(self.final_directory, f'{self.calc_name}__System_Description.txt'), 'w', encoding='utf-8'
+            ) as log_file:
                 console = Console(file=log_file, width=10000)
                 console.print(self.district_heating_system.final_model)
         except:
-            logger.warning("Could not write System Description to file")
+            logger.warning('Could not write System Description to file')
 
         try:
-            with open(os.path.join(self.final_directory, f"{self.calc_name}__Input_and_Preprocessing_Comps.txt"), "w", encoding='utf-8') as log_file:
+            with open(
+                os.path.join(self.final_directory, f'{self.calc_name}__Input_and_Preprocessing_Comps.txt'),
+                'w',
+                encoding='utf-8',
+            ) as log_file:
                 console = Console(file=log_file, width=1000)
                 console.print(self.district_heating_system.factory.print_comps())
         except:
-            logger.warning("Could not write Input and Preprocessing Components to file")
+            logger.warning('Could not write Input and Preprocessing Components to file')
 
     def _adjust_calc_name_and_results_folder(self):
         now = datetime.datetime.now()
-        self.calc_name = f"{now.strftime('%Y-%m-%d')}_{self.calc_name}"
+        self.calc_name = f'{now.strftime("%Y-%m-%d")}_{self.calc_name}'
         self.final_directory = os.path.join(self.excel_data.results_directory, self.calc_name)
         if os.path.exists(self.final_directory):
             for i in range(1, 100):
-                calc_name = self.calc_name + "_" + str(i)
+                calc_name = self.calc_name + '_' + str(i)
                 final_directory = os.path.join(os.path.dirname(self.final_directory), calc_name)
                 if not os.path.exists(final_directory):
                     self.calc_name = calc_name
                     self.final_directory = final_directory
                     if i >= 5:
-                        print(f"There are over {i} different calculations with the same name. "
-                              f"Please choose a different name next time.")
+                        print(
+                            f'There are over {i} different calculations with the same name. '
+                            f'Please choose a different name next time.'
+                        )
                     if i >= 99:
-                        raise Exception("Maximum number of different calculations with the same name exceeded. "
-                                        "Max is 9999.")
+                        raise Exception(
+                            'Maximum number of different calculations with the same name exceeded. Max is 9999.'
+                        )
                     break
 
 
@@ -122,10 +137,12 @@ class DistrictHeatingSystem:
     def __init__(self, excel_data: ExcelData):
         self.time_series_data = excel_data.time_series_data
         self.time_series_data_internal = pd.DataFrame(index=self.time_series_data.index)
-        self.components_data = {**excel_data.components_data,
-                                "Sink": excel_data.further_components_data["Sink"],
-                                "Source": excel_data.further_components_data["Source"]}
-        self.bus_data = excel_data.further_components_data["Bus"]
+        self.components_data = {
+            **excel_data.components_data,
+            'Sink': excel_data.further_components_data['Sink'],
+            'Source': excel_data.further_components_data['Source'],
+        }
+        self.bus_data = excel_data.further_components_data['Bus']
 
         self.years = excel_data.years
         self.timeSeries = excel_data.time_series_data.index.to_numpy()
@@ -145,51 +162,70 @@ class DistrictHeatingSystem:
         self.final_model.add_effects(*list(self.effects.values()))
         self.final_model.add_elements(*self.helpers)
 
-        self.factory = ElementFactory(flow_system=self.final_model,
-                                      time_series_data=self.time_series_data,
-                                      co2_factors=self.co2_factors,
-                                      years_of_model=self.years,
-                                      busses=self.busses)
+        self.factory = ElementFactory(
+            flow_system=self.final_model,
+            time_series_data=self.time_series_data,
+            co2_factors=self.co2_factors,
+            years_of_model=self.years,
+            busses=self.busses,
+        )
         self.create_components()
-
 
     def create_effects(self) -> Dict[str, fx.Effect]:
         effects = {}
-        effects['target'] = fx.Effect('target', 'i.E.', 'Target',  # name, unit, description
-                                        is_objective=True)  # defining costs as objective of optimiziation
-        effects['costs'] = fx.Effect('costs', '€', 'Kosten', is_standard=True,
-                                       specific_share_to_other_effects_operation={effects['target']: 1},
-                                       specific_share_to_other_effects_invest={effects['target']: 1})
+        effects['target'] = fx.Effect(
+            'target',
+            'i.E.',
+            'Target',  # name, unit, description
+            is_objective=True,
+        )  # defining costs as objective of optimiziation
+        effects['costs'] = fx.Effect(
+            'costs',
+            '€',
+            'Kosten',
+            is_standard=True,
+            specific_share_to_other_effects_operation={effects['target']: 1},
+            specific_share_to_other_effects_invest={effects['target']: 1},
+        )
 
-        effects['funding'] = fx.Effect('funding', '€', 'Funding Gesamt',
-                                         specific_share_to_other_effects_operation={effects['costs']: -1},
-                                         specific_share_to_other_effects_invest={effects['costs']: -1})
+        effects['funding'] = fx.Effect(
+            'funding',
+            '€',
+            'Funding Gesamt',
+            specific_share_to_other_effects_operation={effects['costs']: -1},
+            specific_share_to_other_effects_invest={effects['costs']: -1},
+        )
 
         effects['CO2FW'] = fx.Effect('CO2FW', 't', 'CO2Emissionen der Fernwaerme')
 
-        effects['CO2'] = fx.Effect('CO2', 't', 'CO2Emissionen',
-                                     specific_share_to_other_effects_operation={effects['CO2FW']: 1})
+        effects['CO2'] = fx.Effect(
+            'CO2', 't', 'CO2Emissionen', specific_share_to_other_effects_operation={effects['CO2FW']: 1}
+        )
 
         effects['Gruene_Waerme'] = fx.Effect('Gruene_Waerme', 'MWh', 'Menge an produzierter grüner Wärme')
 
         # Limit CO2 Emissions per year
-        yearly_co2 = add_yearly_effects_with_bounds(effects['CO2FW'],
-                                                    years=self.years,
-                                                    lower_bounds=[None]*len(self.years),
-                                                    upper_bounds=self.co2_limits,
-                                                    label='CO2Limit',
-                                                    unit='t',
-                                                    description="Effect to limit the Emissions per year")
+        yearly_co2 = add_yearly_effects_with_bounds(
+            effects['CO2FW'],
+            years=self.years,
+            lower_bounds=[None] * len(self.years),
+            upper_bounds=self.co2_limits,
+            label='CO2Limit',
+            unit='t',
+            description='Effect to limit the Emissions per year',
+        )
         effects.update(yearly_co2)
 
         # Limit CO2 Emissions per year
-        yearly_gw = add_yearly_effects_with_bounds(effects['Gruene_Waerme'],
-                                                    years=self.years,
-                                                    lower_bounds=self.green_heat_min,
-                                                    upper_bounds=[None]*len(self.years),
-                                                    label='Gruene_Waerme_Limits',
-                                                    unit='MWh',
-                                                    description="Effect to limit the Gruene_Waerme per year")
+        yearly_gw = add_yearly_effects_with_bounds(
+            effects['Gruene_Waerme'],
+            years=self.years,
+            lower_bounds=self.green_heat_min,
+            upper_bounds=[None] * len(self.years),
+            label='Gruene_Waerme_Limits',
+            unit='MWh',
+            description='Effect to limit the Gruene_Waerme per year',
+        )
         effects.update(yearly_gw)
 
         effects.update(self.create_invest_groups())
@@ -199,19 +235,24 @@ class DistrictHeatingSystem:
         effects = {}
         for key, comp_type in self.components_data.items():
             for comp in comp_type:
-                label = comp.get("Investgruppe")
+                label = comp.get('Investgruppe')
                 if isinstance(label, str) and label not in effects.keys():
-                    limits = label.split(":")[-1]
-                    if "-" in limits:
-                        lb, ub = limits.split("-")
+                    limits = label.split(':')[-1]
+                    if '-' in limits:
+                        lb, ub = limits.split('-')
                         min_sum = float(lb)
                         max_sum = float(ub)
                     else:
                         min_sum = None
                         max_sum = float(limits)
-                    label_new = label.replace(":", "")
-                    effects[label] = fx.Effect(label=label_new, description="Limiting Investments per group",
-                                                 unit="Stk", minimum_total=min_sum, maximum_total=max_sum)
+                    label_new = label.replace(':', '')
+                    effects[label] = fx.Effect(
+                        label=label_new,
+                        description='Limiting Investments per group',
+                        unit='Stk',
+                        minimum_total=min_sum,
+                        maximum_total=max_sum,
+                    )
         return effects
 
     def create_busses(self) -> Dict:
@@ -219,7 +260,7 @@ class DistrictHeatingSystem:
 
         for bus_data in self.bus_data:
             try:
-                label = bus_data["Name"]
+                label = bus_data['Name']
                 busses[label] = fx.Bus(label=label, excess_penalty_per_flow_hour=None)
             except KeyError as e:
                 raise Exception(f"Every Bus needs a 'Name'! Error: {e}")
@@ -227,32 +268,45 @@ class DistrictHeatingSystem:
         return busses
 
     def create_helpers(self) -> List[flixOpt.structure.Element]:
-        Pout1 = fx.Flow(label="Strompreis",
-                      bus=self.busses['StromEinspeisung'],
-                      size=0,
-                      effects_per_flow_hour=extract_data("Strom", self.time_series_data))
-        Pout2 = fx.Flow(label="Gaspreis",
-                      bus=self.busses['Erdgas'],
-                      size=0,
-                      effects_per_flow_hour=extract_data("Erdgas", self.time_series_data))
-        Pout3 = fx.Flow(label="Wasserstoffpreis",
-                      bus=self.busses['Wasserstoff'],
-                      size=0,
-                      effects_per_flow_hour=extract_data("Wasserstoff", self.time_series_data))
-        Pout4 = fx.Flow(label="EBSPreis",
-                      bus=self.busses['EBS'],
-                      size=0,
-                      effects_per_flow_hour=extract_data("EBS", self.time_series_data))
+        Pout1 = fx.Flow(
+            label='Strompreis',
+            bus=self.busses['StromEinspeisung'],
+            size=0,
+            effects_per_flow_hour=extract_data('Strom', self.time_series_data),
+        )
+        Pout2 = fx.Flow(
+            label='Gaspreis',
+            bus=self.busses['Erdgas'],
+            size=0,
+            effects_per_flow_hour=extract_data('Erdgas', self.time_series_data),
+        )
+        Pout3 = fx.Flow(
+            label='Wasserstoffpreis',
+            bus=self.busses['Wasserstoff'],
+            size=0,
+            effects_per_flow_hour=extract_data('Wasserstoff', self.time_series_data),
+        )
+        Pout4 = fx.Flow(
+            label='EBSPreis',
+            bus=self.busses['EBS'],
+            size=0,
+            effects_per_flow_hour=extract_data('EBS', self.time_series_data),
+        )
 
-        return[fx.LinearConverter(label="HelperPreise", inputs=[], outputs=[Pout1, Pout2, Pout3, Pout4],
-                                   conversion_factors=[{Pout1: 1, Pout2: 1, Pout3: 1, Pout4: 1}])
-                                   ]
+        return [
+            fx.LinearConverter(
+                label='HelperPreise',
+                inputs=[],
+                outputs=[Pout1, Pout2, Pout3, Pout4],
+                conversion_factors=[{Pout1: 1, Pout2: 1, Pout3: 1, Pout4: 1}],
+            )
+        ]
 
     def augment_components_with_several_start_years(self):
         for comp_type in self.components_data:
             items_to_remove = []
             for component_data in self.components_data[comp_type]:
-                years = component_data.get("Startjahr")
+                years = component_data.get('Startjahr')
                 if isinstance(years, str):
                     try:
                         first_year, last_year = numbers_from_str(years)
@@ -263,8 +317,8 @@ class DistrictHeatingSystem:
                     for year in self.years:
                         if first_year <= year <= last_year:
                             new_comp_data = component_data.copy()
-                            new_comp_data["Startjahr"] = year
-                            new_comp_data["Name"] = f"{new_comp_data['Name']}_{year}"
+                            new_comp_data['Startjahr'] = year
+                            new_comp_data['Name'] = f'{new_comp_data["Name"]}_{year}'
                             self.components_data[comp_type].append(new_comp_data)
             for item in items_to_remove:
                 self.components_data[comp_type].remove(item)
@@ -276,7 +330,6 @@ class DistrictHeatingSystem:
         for comp_type in self.components_data.keys():
             for comp_props in self.components_data[comp_type]:
                 self.factory.create_energy_object(comp_type, comp_props)
-
 
     def _handle_heating_network(self):
         """
@@ -298,86 +351,92 @@ class DistrictHeatingSystem:
 
         """
 
-        self.time_series_data['Tamb24mean'] = calculate_hourly_rolling_mean(series=self.time_series_data['Tamb'],
-                                                                            window_size=24)
+        self.time_series_data['Tamb24mean'] = calculate_hourly_rolling_mean(
+            series=self.time_series_data['Tamb'], window_size=24
+        )
         self.time_series_data_internal['Tamb24mean'] = self.time_series_data['Tamb24mean']
         # Check i fTermperatures are given directly as Time Series
-        if "TVL_FWN" and "TRL_FWN" in self.time_series_data.keys():
-            print("TVL_FWN and TRL_FWN where included in the input data set")
+        if 'TVL_FWN' and 'TRL_FWN' in self.time_series_data.keys():
+            print('TVL_FWN and TRL_FWN where included in the input data set')
             return
-        elif "TVL_FWN" in self.time_series_data.keys() or "TRL_FWN" in self.time_series_data.keys():
+        elif 'TVL_FWN' in self.time_series_data.keys() or 'TRL_FWN' in self.time_series_data.keys():
             raise Exception("Either include both or None of 'TVL_FWN' and 'TRL_FWN' in the Input Dataset")
 
         # Check if Fators are given
-        if any(item is None for item in self.heating_network_temperature_curves["ff"]):
+        if any(item is None for item in self.heating_network_temperature_curves['ff']):
             raise Exception("If 'TVL_FWN' and 'TRL_FWN' are not provided, factors for temperature curves are needed")
-        if any(item is None for item in self.heating_network_temperature_curves["rf"]):
+        if any(item is None for item in self.heating_network_temperature_curves['rf']):
             raise Exception("If 'TVL_FWN' and 'TRL_FWN' are not provided, factors for temperature curves are needed")
 
         # Berechnung der Netzwerktemperaturen
         df_tvl = pd.Series()
-        for i, factors in enumerate(self.heating_network_temperature_curves["ff"]):
-            df = linear_interpolation_with_bounds(input_data=self.time_series_data["Tamb24mean"].iloc[i*8760:(i+1)*8760],
-                                                  lower_bound=factors["lb"],
-                                                  upper_bound=factors["ub"],
-                                                  value_below_bound=factors["value_lb"],
-                                                  value_above_bound=factors["value_ub"])
+        for i, factors in enumerate(self.heating_network_temperature_curves['ff']):
+            df = linear_interpolation_with_bounds(
+                input_data=self.time_series_data['Tamb24mean'].iloc[i * 8760 : (i + 1) * 8760],
+                lower_bound=factors['lb'],
+                upper_bound=factors['ub'],
+                value_below_bound=factors['value_lb'],
+                value_above_bound=factors['value_ub'],
+            )
             df_tvl = pd.concat([df_tvl, df])
-        self.time_series_data["TVL_FWN"] = df_tvl
-        self.time_series_data_internal["TVL_FWN"] = df_tvl
+        self.time_series_data['TVL_FWN'] = df_tvl
+        self.time_series_data_internal['TVL_FWN'] = df_tvl
 
         df_trl = pd.Series()
-        for i, factors in enumerate(self.heating_network_temperature_curves["rf"]):
-            df = linear_interpolation_with_bounds(input_data=self.time_series_data["Tamb24mean"].iloc[i*8760:(i+1)*8760],
-                                                  lower_bound=factors["lb"],
-                                                  upper_bound=factors["ub"],
-                                                  value_below_bound=factors["value_lb"],
-                                                  value_above_bound=factors["value_ub"])
+        for i, factors in enumerate(self.heating_network_temperature_curves['rf']):
+            df = linear_interpolation_with_bounds(
+                input_data=self.time_series_data['Tamb24mean'].iloc[i * 8760 : (i + 1) * 8760],
+                lower_bound=factors['lb'],
+                upper_bound=factors['ub'],
+                value_below_bound=factors['value_lb'],
+                value_above_bound=factors['value_ub'],
+            )
             df_trl = pd.concat([df_trl, df])
-        self.time_series_data["TRL_FWN"] = df_trl
-        self.time_series_data_internal["TRL_FWN"] = df_trl
+        self.time_series_data['TRL_FWN'] = df_trl
+        self.time_series_data_internal['TRL_FWN'] = df_trl
 
-        if "SinkLossHeat" not in self.time_series_data.keys():  # Berechnung der Netzverluste
+        if 'SinkLossHeat' not in self.time_series_data.keys():  # Berechnung der Netzverluste
             k_loss_netz = 0.4640  # in MWh/K        # Vereinfacht, ohne Berücksichtigung einer sich ändernden Netzlänge
             # TODO: Factor into excel
-            self.time_series_data["SinkLossHeat"] = (k_loss_netz *
-                                                     ((self.time_series_data["TVL_FWN"] + self.time_series_data["TRL_FWN"]) / 2 -
-                                                      self.time_series_data["Tamb"]))
-            self.time_series_data_internal["SinkLossHeat"] = self.time_series_data["SinkLossHeat"]
-            print("Heating losses where calculated")
+            self.time_series_data['SinkLossHeat'] = k_loss_netz * (
+                (self.time_series_data['TVL_FWN'] + self.time_series_data['TRL_FWN']) / 2
+                - self.time_series_data['Tamb']
+            )
+            self.time_series_data_internal['SinkLossHeat'] = self.time_series_data['SinkLossHeat']
+            print('Heating losses where calculated')
         else:
-            print("Heating losses where included in the input data set")
+            print('Heating losses where included in the input data set')
 
 
 def calculate_hourly_rolling_mean(series: pd.Series, window_size: int = 24) -> pd.Series:
     """
-        Calculate the hourly rolling mean of a time series.
+    Calculate the hourly rolling mean of a time series.
 
-        Parameters:
-        - series (pd.Series): Time series data with hourly values. It should be indexed with datetime.
-        - window_size (int): Size of the rolling window. Default is 24.
+    Parameters:
+    - series (pd.Series): Time series data with hourly values. It should be indexed with datetime.
+    - window_size (int): Size of the rolling window. Default is 24.
 
-        Returns:
-        - pd.Series: Hourly rolling mean of the input time series.
+    Returns:
+    - pd.Series: Hourly rolling mean of the input time series.
 
-        Raises:
-        - ValueError: If the index of the series is not in datetime format or if the hourly step is not 1 hour.
+    Raises:
+    - ValueError: If the index of the series is not in datetime format or if the hourly step is not 1 hour.
 
-        Example:
-        ```
-        hourly_data = pd.Series(...)  # Replace ... with your hourly data
-        result = calculate_hourly_rolling_mean(hourly_data)
-        ```
+    Example:
+    ```
+    hourly_data = pd.Series(...)  # Replace ... with your hourly data
+    result = calculate_hourly_rolling_mean(hourly_data)
+    ```
 
-        """
+    """
     # Check if the index is in datetime format
     if not pd.api.types.is_datetime64_any_dtype(series.index):
-        raise ValueError("The index of the input series must be in datetime format.")
+        raise ValueError('The index of the input series must be in datetime format.')
 
     # Check if the hourly step is 1 hour for every step
     hourly_steps = (series.index[1:] - series.index[:-1]).total_seconds() / 3600
     if not all(step == 1 for step in hourly_steps):
-        raise ValueError("The time series must have a consistent 1-hour hourly step.")
+        raise ValueError('The time series must have a consistent 1-hour hourly step.')
 
     ser = series.copy()
     # Calculate the rolling mean using the specified window size
@@ -389,8 +448,9 @@ def calculate_hourly_rolling_mean(series: pd.Series, window_size: int = 24) -> p
     return rolling_mean
 
 
-def linear_interpolation_with_bounds(input_data: pd.Series, lower_bound: float, upper_bound: float,
-                                     value_below_bound: float, value_above_bound: float) -> pd.Series:
+def linear_interpolation_with_bounds(
+    input_data: pd.Series, lower_bound: float, upper_bound: float, value_below_bound: float, value_above_bound: float
+) -> pd.Series:
     """
     Apply linear interpolation within specified bounds and assign fixed values outside the bounds.
 
@@ -422,16 +482,21 @@ def linear_interpolation_with_bounds(input_data: pd.Series, lower_bound: float, 
         elif input_data.iloc[i] >= upper_bound:
             output_array[i] = value_above_bound
         else:
-            output_array[i] = (value_below_bound +
-                               ((value_below_bound - value_above_bound) / (lower_bound - upper_bound)) *
-                               (input_data.iloc[i] - lower_bound))
+            output_array[i] = value_below_bound + (
+                (value_below_bound - value_above_bound) / (lower_bound - upper_bound)
+            ) * (input_data.iloc[i] - lower_bound)
     return pd.Series(output_array, index=input_data.index)
 
 
-def add_yearly_effects_with_bounds(base_effect: fx.Effect,
-                                   years: List[int], lower_bounds: List[Optional[float]],
-                                   upper_bounds: List[Optional[float]],
-                                   label: str, unit: str, description: str) -> Dict[str, fx.Effect]:
+def add_yearly_effects_with_bounds(
+    base_effect: fx.Effect,
+    years: List[int],
+    lower_bounds: List[Optional[float]],
+    upper_bounds: List[Optional[float]],
+    label: str,
+    unit: str,
+    description: str,
+) -> Dict[str, fx.Effect]:
     """
     Creates multiple new Effects for yearly allocation of values. Gets values from the base_effect (Factor = 1).
     If no bounds are given, no effect is created.
@@ -452,9 +517,10 @@ def add_yearly_effects_with_bounds(base_effect: fx.Effect,
     yearly_effects = {}
     for year, lower_bound, upper_bound in zip(years, lower_bounds, upper_bounds, strict=False):
         if lower_bound is not None or upper_bound is not None:
-            full_label = f"{label}{year}"
-            yearly_effects[full_label] = fx.Effect(full_label, unit, description,
-                                                     minimum_operation=lower_bound, maximum_operation=upper_bound)
+            full_label = f'{label}{year}'
+            yearly_effects[full_label] = fx.Effect(
+                full_label, unit, description, minimum_operation=lower_bound, maximum_operation=upper_bound
+            )
 
             base_effect.specific_share_to_other_effects_operation.update(
                 {yearly_effects[full_label]: exists(first_year=year, lifetime=1, years_in_model=years)}

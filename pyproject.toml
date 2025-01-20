@@ -41,7 +41,7 @@ exclude = [
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "N"]  # Enable linting rules by category (e.g., error, warnings, unused imports)
+select = ["E", "F", "W", "I", "B"]  # Enable linting rules by category (e.g., error, warnings, unused imports)
 ignore = [  # Ignore specific rules
     "E501",  # Ignore line-length checks (use Black for formatting)
     "F401",  # Allow unused imports in some cases (use __all__)
