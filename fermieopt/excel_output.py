@@ -414,7 +414,7 @@ class cExcelFcts:
 
         templ_path_excel_year = Path(__file__).resolve().parent / 'resources' / 'Template_Evaluation_Year.xlsx'
 
-        for index, year in enumerate(self.calc.years):
+        for year in self.calc.years:
             wb = load_workbook(templ_path_excel_year)
             filename = f'{self.calc.name}__Jahr_{year}.xlsx'
             path_excel_year = os.path.join(output_file_path, filename)

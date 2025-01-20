@@ -44,6 +44,6 @@ if __name__ == '__main__':
 :param gap_frac:
     0...1 ; gap to relaxed solution. Higher values for faster solving. 0...1
 :param timelimit:
-    timelimit in seconds. After this time limit is exceeded, the solution process is stopped and the best yet found result is used. 
+    timelimit in seconds. After this time limit is exceeded, the solution process is stopped and the best yet found result is used.
     If no result is found yet, the Process is aborted
 """

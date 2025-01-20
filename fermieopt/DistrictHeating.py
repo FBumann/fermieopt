@@ -59,11 +59,11 @@ class ExcelModel:
             save_results=os.path.join(self.final_directory, 'SolveResults'),
         )
         self.calc_name = calculation.name
-        calc_results = self.load_results()
+        self.load_results()
 
         with open(os.path.join(self.final_directory, f'{self.calc_name}__calc_info.txt'), 'w') as log_file:
-            calc_info = f"""calc = flixPostXL(nameOfCalc='{self.calc_name}', 
-            results_folder='{os.path.join(self.final_directory, 'SolveResults')}', 
+            calc_info = f"""calc = flixPostXL(nameOfCalc='{self.calc_name}',
+            results_folder='{os.path.join(self.final_directory, 'SolveResults')}',
             outputYears={self.years})"""
 
             log_file.write(calc_info)
@@ -233,7 +233,7 @@ class DistrictHeatingSystem:
 
     def create_invest_groups(self):
         effects = {}
-        for key, comp_type in self.components_data.items():
+        for comp_type in self.components_data.values():
             for comp in comp_type:
                 label = comp.get('Investgruppe')
                 if isinstance(label, str) and label not in effects.keys():

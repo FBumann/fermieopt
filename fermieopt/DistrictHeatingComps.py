@@ -1330,7 +1330,7 @@ def extract_data(value: Union[str, Any], data: pd.DataFrame) -> Union[np.ndarray
 def insert_effects(dictionary: Dict[Union[fx.Effect, str], Any], effects: Dict[str, fx.Effect]) -> None:
     if dictionary is None or dictionary == 0 or dictionary == {}:
         return None
-    for effect_name, value in list(dictionary.items()):
+    for effect_name in dictionary:
         if effect_name in effects.keys():
             dictionary[effects[effect_name]] = dictionary.pop(effect_name)
         elif not isinstance(effect_name, fx.Effect):

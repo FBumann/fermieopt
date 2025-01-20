@@ -311,7 +311,7 @@ def convert_component_data_types(component_data: Dict[str, pd.DataFrame]) -> Dic
         The updated dictionary with DataFrames containing data with the correct data types.
     """
 
-    for key, subset_df in component_data.items():
+    for subset_df in component_data.values():
         # Replace all nan values with None
         subset_df.replace({np.nan: None}, inplace=True)
 
