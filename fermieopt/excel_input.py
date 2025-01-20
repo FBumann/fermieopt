@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 import os
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
 import re
-from typing import List, Dict, Any, Tuple, Optional
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
 
 
 class ExcelData:
@@ -83,14 +84,14 @@ class ExcelData:
         condition_1 = all(isinstance(info, str) for info in factor_infos)
         condition_2 = all(isinstance(info, type(None)) for info in factor_infos)
         if not (condition_1 or condition_2):
-            raise Exception(f"Either specify heating Network curves for all years or for None")
+            raise Exception("Either specify heating Network curves for all years or for None")
         if condition_1:
             for i, curve in enumerate(factor_infos):
                 factor_infos[i] = curve.replace(",", ".").replace(" ", "")
                 if not re.match(r'^-?\d+/\d+;\d+/\d+$', curve):
-                    raise Exception(f"Use Text to specify the Temperature Curve of the heating network. "
-                                    f"Use Form: ' 'lb'/'value_lb';'ub'/'value_ub' '."
-                                    f"Example:    '-8/120;10/95'.")
+                    raise Exception("Use Text to specify the Temperature Curve of the heating network. "
+                                    "Use Form: ' 'lb'/'value_lb';'ub'/'value_ub' '."
+                                    "Example:    '-8/120;10/95'.")
         factors = []
         for infos in factor_infos:
             if not infos:
@@ -115,7 +116,7 @@ class ExcelData:
             elif isinstance(self.years[i], int):
                 continue
             else:
-                raise ValueError(f"Every year must be an Integer.")
+                raise ValueError("Every year must be an Integer.")
 
         # self.results_directory
         if not os.path.exists(self.results_directory):
@@ -125,21 +126,21 @@ class ExcelData:
 
         # self.sheetnames_ts_data
         if not all(isinstance(name, str) for name in self._sheetnames_ts_data):
-            raise Exception(f"Use Text to specify the Sheetnames of TimeSeries Data")
+            raise Exception("Use Text to specify the Sheetnames of TimeSeries Data")
         if not len(self._sheetnames_ts_data) == len(self.years):
-            raise Exception(f"The number of 'years' and the number of 'Zeitreihen Sheets' must match.")
+            raise Exception("The number of 'years' and the number of 'Zeitreihen Sheets' must match.")
 
         # self.sheetnames_ts_data_extra
         if self._sheetnames_ts_data_extra:
             if not all(isinstance(name, str) for name in self._sheetnames_ts_data_extra):
-                raise Exception(f"Use Text to specify the Sheetnames of TimeSeries Data")
+                raise Exception("Use Text to specify the Sheetnames of TimeSeries Data")
             if len(self._sheetnames_ts_data_extra) != 0 and len(self._sheetnames_ts_data_extra) != len(self.years):
-                raise Exception(f"The number of 'years' and the number of 'Sonstige Zeitreihen Sheets' must match. "
-                                f"You can also not use 'Sonstige Zeitreihen Sheets' at all. Just leave the lines blank")
+                raise Exception("The number of 'years' and the number of 'Sonstige Zeitreihen Sheets' must match. "
+                                "You can also not use 'Sonstige Zeitreihen Sheets' at all. Just leave the lines blank")
 
         # self._sheetnames_components
         if not all(isinstance(name, str) for name in self._sheetnames_components):
-            raise Exception(f"Use Text to specify the Sheetnames of Components")
+            raise Exception("Use Text to specify the Sheetnames of Components")
         if len(self._sheetnames_components) == 0:
             raise Exception("At least One Sheet Name must be given")
 

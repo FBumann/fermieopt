@@ -1,7 +1,7 @@
 from pathlib import Path
 
+from fermieopt.excel_output import cExcelFcts, create_report_grouped, visualize_results
 from fermieopt.flixPostprocessingXL import flixPostXL
-from fermieopt.excel_output import visualize_results, create_report_grouped, cExcelFcts
 
 calc_results = flixPostXL(nameOfCalc='2025-01-06_Basis+TAB-2030',
             results_folder=r'C:\Users\FELIBUMA\Downloads\Test_new_model\2025-01-06_Basis+TAB-2030\SolveResults',

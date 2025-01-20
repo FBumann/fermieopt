@@ -1,13 +1,13 @@
-from typing import Optional, Union, Any, Dict, Literal, List, Tuple
 import logging
-
-import numpy as np
-import pandas as pd
-from pydantic import BaseModel, Field, field_validator, model_validator, PrivateAttr
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import flixOpt as fx
 import flixOpt.elements
-from fermieopt.meta_data import MetaDataFactory, MetaData
+import numpy as np
+import pandas as pd
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+
+from fermieopt.meta_data import MetaData, MetaDataFactory
 
 logger = logging.getLogger('flixOpt')
 
@@ -64,7 +64,7 @@ class InvestElement(Element):
     def validate_years(self):
         """Validates the start and lifetime of the element"""
         if not (self.start_year is None) == (self.lifetime is None):
-            raise ValueError(f"Either set BOTH or NONE of 'Startjahr' and 'Lebensdauer'!")
+            raise ValueError("Either set BOTH or NONE of 'Startjahr' and 'Lebensdauer'!")
         return self
 
     @staticmethod
@@ -459,8 +459,8 @@ class KWK(FuelThermalInvestElement):
             )
         except KeyError:
             logger.warning(
-                f"Computation of CO2 Reward did not work properly. Using default values instead. "
-                f"Optimization itself is not affected. Only take care interpreting CO2 Emissions")
+                "Computation of CO2 Reward did not work properly. Using default values instead. "
+                "Optimization itself is not affected. Only take care interpreting CO2 Emissions")
             fuel_factor_electricity = self.fuel_factor_for_electrical_energy(
                 electrical_efficiency=self.eta_el,
                 thermal_efficiency=self.eta_thermal,
@@ -700,7 +700,7 @@ class Speicher(ThermalInvestElement):
         self.link_second_flow_size(storage.charging, storage.discharging, flow_system)
         self.insert_capacity(storage, effects, years_of_model)
         return storage
-    
+
     def link_second_flow_size(self, flow_with_size: fx.Flow, flow_to_link: fx.Flow, flow_system: fx.FlowSystem) -> None:
         """
         Links the size of the second flow to the size of the first flow. If needed, a new Effect is added to the FlowSystem
@@ -714,13 +714,13 @@ class Speicher(ThermalInvestElement):
                 fixed_size=flow_with_size.size.fixed_size,
                 minimum_size=flow_with_size.size.minimum_size,
                 maximum_size=flow_with_size.size.maximum_size)
-    
+
             if flow_with_size.size.fixed_size is None:
                 effect = fx.Effect(label=f"{self.name}_link_thermal_power", unit="",
                                  description=f"Links the charge and discharge investment value of storage {self.name}",
                                  minimum_invest=0, maximum_invest=0)
                 flow_system.add_effects(effect)
-    
+
                 flow_with_size.size.specific_effects[effect] = 1
                 flow_to_link.size.specific_effects = {effect: -1}
 
@@ -827,7 +827,7 @@ class EHK(ThermalInvestElement):
 class Rueckkuehler(ThermalInvestElement):
     specific_electricity_demand: Union[int, float, str] = Field(alias="Strombedarf", default=0)
     extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias="Stromkosten Zusatz [€/MWh]", default=0)
-    
+
     bus_elec: str = Field(alias="Strombus", default='StromBezug')
 
     def _insert_data(self, data: pd.DataFrame):
@@ -867,7 +867,7 @@ class Rueckkuehler(ThermalInvestElement):
 class AbwaermeWaermepumpe(Waermepumpe):
     heat_source_costs: Union[int, float, str] = Field('Abwärmekosten')
     bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
-    
+
     def _insert_data(self, data: pd.DataFrame):
         self.heat_source_costs = extract_data(self.heat_source_costs, data)
 
@@ -904,11 +904,11 @@ class AbwaermeWaermepumpe(Waermepumpe):
 class Geothermie(Waermepumpe):
     amount_of_pump_electricity: Union[int, float, str] = Field(alias='Anteil Pumpstrom pro MW_geo')
     bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
-    
+
     def _insert_data(self, data: pd.DataFrame):
         super()._insert_data(data)
         self.amount_of_pump_electricity = extract_data(self.amount_of_pump_electricity, data)
-    
+
     def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
         if self.cop:
             return extract_data(self.cop, time_series_data)
@@ -919,7 +919,7 @@ class Geothermie(Waermepumpe):
                 eta=0.5)
 
             return cop_wo_pump / (1 + self.amount_of_pump_electricity)
-    
+
     def _convert_to_flixopt(self,
                             flow_system: fx.FlowSystem,
                             effects: Dict[str, fx.Effect],
@@ -955,11 +955,11 @@ class Geothermie(Waermepumpe):
 class Abwaerme(ThermalInvestElement):
     waste_heat_costs: Union[int, float, str] = Field(alias='Abwärmekosten')
     bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
-    
+
     def _insert_data(self, data: pd.DataFrame):
         super()._insert_data(data)
         self.waste_heat_costs = extract_data(self.waste_heat_costs, data)
-    
+
     def _convert_to_flixopt(self,
                             flow_system: fx.FlowSystem,
                             effects: Dict[str, fx.Effect],
@@ -1047,7 +1047,7 @@ class KWKekt(InvestElement):
     def validate_electrical_power(cls, value):
         start_end = numbers_from_str(value)
         if len(start_end) != 2:
-            raise ValueError(f"The electrical power points must be exactly 2 numbers (start and end).")
+            raise ValueError("The electrical power points must be exactly 2 numbers (start and end).")
         else:
             return start_end
 
@@ -1061,7 +1061,7 @@ class KWKekt(InvestElement):
             raise ValueError(f"The number of electrical power points ({len(self.electrical_power)}) must match the "
                              f"number of thermal power points ({len(self.thermal_power)}).")
 
-        for epp, tpp in zip(self.electrical_power, self.thermal_power):
+        for epp, tpp in zip(self.electrical_power, self.thermal_power, strict=False):
             if epp / self.fuel_power > 1:
                 raise ValueError(f"The electric efficiency of {self.props['Name']} exceeds 100%.")
             if tpp / self.fuel_power > 1:
@@ -1220,7 +1220,7 @@ def numbers_from_str(input_string: str, delimiter: str = '-', check_ascending: b
 
     if not numbers:  # Check for empty results
         raise ValueError(f"Invalid input: '{input_string}'. No valid numbers found.")
-    if check_ascending and not all(x <= y for x, y in zip(numbers, numbers[1:])):
+    if check_ascending and not all(x <= y for x, y in zip(numbers, numbers[1:], strict=False)):
         raise ValueError(f"Invalid input: '{input_string}'. Numbers must be in ascending order. "
                          f"Found a violation in the sequence: {numbers}.")
     return numbers

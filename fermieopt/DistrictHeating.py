@@ -1,21 +1,21 @@
 # -*- coding: utf-8 -*-
-import os
-import shutil
 import datetime
 import logging
+import os
+import shutil
+from typing import Dict, List, Optional
+
+import flixOpt as fx
+import flixOpt.elements
+import flixOpt.structure
 import numpy as np
 import pandas as pd
 from rich import print
 from rich.console import Console
-from typing import Dict, List, Optional
 
-import flixOpt as fx
-import flixOpt.structure
-import flixOpt.elements
-
+from fermieopt.DistrictHeatingComps import ElementFactory, exists, extract_data, numbers_from_str
 from fermieopt.excel_input import ExcelData
 from fermieopt.flixPostprocessingXL import flixPostXL
-from fermieopt.DistrictHeatingComps import ElementFactory, extract_data, numbers_from_str, exists
 
 logger = logging.getLogger('flixOpt')
 
@@ -113,8 +113,8 @@ class ExcelModel:
                         print(f"There are over {i} different calculations with the same name. "
                               f"Please choose a different name next time.")
                     if i >= 99:
-                        raise Exception(f"Maximum number of different calculations with the same name exceeded. "
-                                        f"Max is 9999.")
+                        raise Exception("Maximum number of different calculations with the same name exceeded. "
+                                        "Max is 9999.")
                     break
 
 
@@ -257,7 +257,7 @@ class DistrictHeatingSystem:
                     try:
                         first_year, last_year = numbers_from_str(years)
                     except ValueError:
-                        raise ValueError(f'"Startjahr" must be an integer or a string of format "min-max"')
+                        raise ValueError('"Startjahr" must be an integer or a string of format "min-max"')
                     first_year, last_year = int(first_year), int(last_year)
                     items_to_remove.append(component_data)
                     for year in self.years:
@@ -310,9 +310,9 @@ class DistrictHeatingSystem:
 
         # Check if Fators are given
         if any(item is None for item in self.heating_network_temperature_curves["ff"]):
-            raise Exception(f"If 'TVL_FWN' and 'TRL_FWN' are not provided, factors for temperature curves are needed")
+            raise Exception("If 'TVL_FWN' and 'TRL_FWN' are not provided, factors for temperature curves are needed")
         if any(item is None for item in self.heating_network_temperature_curves["rf"]):
-            raise Exception(f"If 'TVL_FWN' and 'TRL_FWN' are not provided, factors for temperature curves are needed")
+            raise Exception("If 'TVL_FWN' and 'TRL_FWN' are not provided, factors for temperature curves are needed")
 
         # Berechnung der Netzwerktemperaturen
         df_tvl = pd.Series()
@@ -450,7 +450,7 @@ def add_yearly_effects_with_bounds(base_effect: fx.Effect,
 
     """
     yearly_effects = {}
-    for year, lower_bound, upper_bound in zip(years, lower_bounds, upper_bounds):
+    for year, lower_bound, upper_bound in zip(years, lower_bounds, upper_bounds, strict=False):
         if lower_bound is not None or upper_bound is not None:
             full_label = f"{label}{year}"
             yearly_effects[full_label] = fx.Effect(full_label, unit, description,

@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
-import os
-from typing import Literal, Optional, Dict, List, Tuple, Union
 import logging
+import os
 import pathlib
-
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import flixOpt as fx
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 logger = logging.getLogger('flixOpt')
 
@@ -306,7 +305,7 @@ class flixPostXL(fx.results.CalculationResults):
                         self.effect_results[origin].all_results['invest']['invest_per_period'] * factor
                 )
         for effect, value in additional_shares.items():
-            self.effect_results[effect].all_results['invest']['Shares_per_period'][f'From other effects'] = value
+            self.effect_results[effect].all_results['invest']['Shares_per_period']['From other effects'] = value
             self.effect_results[effect].all_results['invest']['invest_per_period'] += value
 
     def _add_group_mapping(self) -> Dict:

@@ -1,8 +1,10 @@
 import logging
+
 logger = logging.getLogger('flixOpt')
-from fermieopt.DistrictHeating import ExcelModel
-from fermieopt.excel_output import visualize_results, create_report_grouped, cExcelFcts
 from pathlib import Path
+
+from fermieopt.DistrictHeating import ExcelModel
+from fermieopt.excel_output import cExcelFcts, create_report_grouped, visualize_results
 
 # Specify paths and solver_name
 excel_file_path = r'Template_Input.xlsx'  # path of excel input file

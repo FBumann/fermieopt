@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-import os
 import logging
-from typing import Union, List, Literal, Optional
-
-import pandas as pd
-import numpy as np
+import os
 from pathlib import Path
-from openpyxl import load_workbook
-from openpyxl.chart import BarChart, Reference,LineChart
-from openpyxl.utils.dataframe import dataframe_to_rows
-from matplotlib.backends.backend_pdf import PdfPages
+from typing import List, Literal, Optional, Union
+
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.backends.backend_pdf import PdfPages
+from openpyxl import load_workbook
+from openpyxl.chart import BarChart, LineChart, Reference
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 from fermieopt.flixPostprocessingXL import flixPostXL
 
@@ -567,8 +567,8 @@ class cExcelFcts:
         funding_fix = self.calc.get_effect_results(self.funding_label, origin="invest_per_period")
         costs_fix = self.calc.get_effect_results(self.costs_label, origin="invest_per_period")
 
-        data["Förderung Invest"] = {year: value for year, value in zip(self.calc.years, -1 * funding_fix)}
-        data["Fixkosten (abzgl. Förderung)"] = {year: value for year, value in zip(self.calc.years, costs_fix)}
+        data["Förderung Invest"] = {year: value for year, value in zip(self.calc.years, -1 * funding_fix, strict=False)}
+        data["Fixkosten (abzgl. Förderung)"] = {year: value for year, value in zip(self.calc.years, costs_fix, strict=False)}
 
         return pd.DataFrame(data)
 
@@ -1044,7 +1044,7 @@ def write_effects_per_comp_per_period_to_excel(calc: flixPostXL, custom_output_f
     """
     Saving the effects of every component per period to excel
     """
-    logger.info(f"...Writing Effects Results per Component...")
+    logger.info("...Writing Effects Results per Component...")
 
     if custom_output_file_path == "default":
         output_file_path = calc.folder
@@ -1144,7 +1144,7 @@ def create_report(calc: flixPostXL, path: str = 'report.pdf', connected_to: str 
             if not isinstance(axes, np.ndarray):  # If only one item in batch, axes is not a list...
                 axes = np.array([axes])
 
-            for ax, flow_name in zip(axes.flatten(), chunk):
+            for ax, flow_name in zip(axes.flatten(), chunk, strict=False):
                 fig, ax = calc.plotOperationColorMap(flow_name, nbPeriods=365 * len(calc.years), fig=fig, ax=ax,
                                                      ylabel="time of day", xlabel="day")
                 ax.set_title(flow_name)  # Set individual title for each subplot
@@ -1179,7 +1179,7 @@ def create_report_grouped(calc: flixPostXL, path: str = 'report.pdf', connected_
                 if not isinstance(axes, np.ndarray):  # If only one item in batch, axes is not a list...
                     axes = np.array([axes])
 
-                for ax, flow_name in zip(axes.flatten(), chunk):
+                for ax, flow_name in zip(axes.flatten(), chunk, strict=False):
                     fig, ax = calc.plotOperationColorMap(flow_name, nbPeriods=365 * len(calc.years), fig=fig, ax=ax,
                                                          ylabel="time of day", xlabel="day")
                     ax.set_title(flow_name)  # Set individual title for each subplot
@@ -1202,7 +1202,7 @@ def create_report_per_comp(calc: flixPostXL, path: str = 'report.pdf') -> None:
             fig, axes = plt.subplots(nrOfSubplots, 1, figsize=(8.27, 11.69/4 * nrOfSubplots) , sharex=True, sharey=True)  # A4 size
             if not isinstance(axes, np.ndarray):  # If only one item in batch, axes is not a list...
                 axes = np.array([axes])
-            for ax, flow_name in zip(axes.flatten(), components[comp_name]):
+            for ax, flow_name in zip(axes.flatten(), components[comp_name], strict=False):
                 fig, ax = calc.plotOperationColorMap(flow_name, nbPeriods=365 * len(calc.years), fig=fig, ax=ax,
                                                      ylabel="time of day", xlabel="day")
                 ax.set_title(flow_name)  # Set individual title for each subplot
