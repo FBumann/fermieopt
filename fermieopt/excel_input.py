@@ -227,6 +227,27 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
 
         return self
 
+    @model_validator(mode='after')
+    def validate_time_series_data(self):
+        if len(self.time_series_data) / 8760 != len(self.meta_data_time.years):
+            raise Exception(
+                f"Length of DataFrame ({len(self.time_series_data)}) and the Number of years "
+                f"({len(self.meta_data_time.years)}don't match. Expecting 8760 rows per year.")
+
+        columns_with_nan = self.time_series_data.columns[self.time_series_data.isna().any()]
+        if not columns_with_nan.empty:
+            raise Exception(f'There are missing values in the time series data: {columns_with_nan}.')
+
+        return self
+
+    @model_validator(mode='after')
+    def check_used_columns(self):
+        if 'Vorlauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
+            logger.warning('Column "Vorlauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.')
+        if 'Rücklauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
+            logger.warning('Column "Rücklauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.')
+        return self
+    
     def _read_time_series_data(self, excel_file: pd.ExcelFile) -> pd.DataFrame:
         # Extract time series data (assuming the second sheet contains time series data)
         time_series_data = pd.concat(
