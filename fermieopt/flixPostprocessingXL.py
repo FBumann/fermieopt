@@ -11,7 +11,7 @@ import pandas as pd
 logger = logging.getLogger('flixOpt')
 
 
-class FLixPostXL(fx.results.CalculationResults):
+class FlixPostXL(fx.results.CalculationResults):
     """
     Extending the functionality of fx.results.CalculationResults, this class interacts with meta_data
     and other extra data stored in the results to create extra functionailty.
@@ -490,7 +490,7 @@ class FLixPostXL(fx.results.CalculationResults):
 
         Parameters
         ----------
-        calc : FLixPostXL
+        calc : FlixPostXL
             Solved calculation of type flixPostXL.
 
         Returns

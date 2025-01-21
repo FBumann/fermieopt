@@ -14,7 +14,7 @@ from rich.console import Console
 
 from fermieopt.DistrictHeatingComps import ElementFactory, exists, extract_data, numbers_from_str
 from fermieopt.excel_input import ExcelData
-from fermieopt.flixPostprocessingXL import FLixPostXL
+from fermieopt.flixPostprocessingXL import FlixPostXL
 
 logger = logging.getLogger('flixOpt')
 
@@ -67,8 +67,8 @@ class ExcelModel:
 
             log_file.write(calc_info)
 
-    def load_results(self) -> FLixPostXL:
-        return FLixPostXL(
+    def load_results(self) -> FlixPostXL:
+        return FlixPostXL(
             calculation_name=self.calc_name,
             results_folder=os.path.join(self.final_directory, 'SolveResults'),
             output_years=self.years,

@@ -1,9 +1,9 @@
 from pathlib import Path
 
 from fermieopt.excel_output import ExcelFcts, create_report_grouped, visualize_results
-from fermieopt.flixPostprocessingXL import FLixPostXL
+from fermieopt.flixPostprocessingXL import FlixPostXL
 
-calc_results = FLixPostXL(
+calc_results = FlixPostXL(
     calculation_name='2025-01-06_Basis+TAB-2030',
     results_folder=r'C:\Users\FELIBUMA\Downloads\Test_new_model\2025-01-06_Basis+TAB-2030\SolveResults',
     output_years=[2030],

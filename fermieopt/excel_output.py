@@ -11,7 +11,7 @@ from openpyxl import load_workbook
 from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-from fermieopt.flixPostprocessingXL import FLixPostXL
+from fermieopt.flixPostprocessingXL import FlixPostXL
 
 logger = logging.getLogger('flixOpt')
 
@@ -293,7 +293,7 @@ class ExcelFcts:
 
     def __init__(
         self,
-        calc: FLixPostXL,
+        calc: FlixPostXL,
         costs_label: str = 'costs',
         funding_label: str = 'funding',
         co2_label_fw: str = 'CO2FW',
@@ -319,14 +319,14 @@ class ExcelFcts:
         Generate detailed annual comparison plots and save them to individual Excel workbooks for each year.
 
         Parameters:
-        - calc (FLixPostXL): Solved calculation of type FLixPostXL.
+        - calc (FlixPostXL): Solved calculation of type FlixPostXL.
         - short_version (bool): If True, generate a shortened version of the plots. Default is False.
         - custom_output_file_path (str): A custom output folder path for the Excel workbooks. default: Same as calc.
 
         Returns:
         None
 
-        The function generates detailed annual comparison plots based on the provided calculation results (FLixPostXL)
+        The function generates detailed annual comparison plots based on the provided calculation results (FlixPostXL)
         and saves them to individual Excel workbooks. The workbooks are created using a template specified in the calculation.
 
         Plots and corresponding data are organized into different sheets within each workbook for the specified years:
@@ -357,7 +357,7 @@ class ExcelFcts:
 
         Example:
         ```
-        calc = FLixPostXL(...)  # Create or obtain FLixPostXL instance
+        calc = FlixPostXL(...)  # Create or obtain FlixPostXL instance
         run_excel_graphics_years(calc)  # Save the detailed workbooks in the default location
         run_excel_graphics_years(
             calc, short_version=True
@@ -493,13 +493,13 @@ class ExcelFcts:
         Generate annual comparison plots and save them to an Excel workbook.
 
         Parameters:
-        - calc (FLixPostXL): Solved calculation of type FLixPostXL.
+        - calc (FlixPostXL): Solved calculation of type FlixPostXL.
         - custom_output_file_path (str): A custom output file path (full path) for the Excel workbook. Default: Same as calc.
 
         Returns:
         None
 
-        The function generates various annual comparison plots based on the provided calculation results (FLixPostXL)
+        The function generates various annual comparison plots based on the provided calculation results (FlixPostXL)
         and saves them to an Excel workbook. The workbook is created using a template specified in the calculation.
 
         Plots and corresponding data are organized into different sheets within the workbook:
@@ -521,7 +521,7 @@ class ExcelFcts:
 
         Example:
         ```
-        calc = FLixPostXL(...)  # Create or obtain FLixPostXL instance
+        calc = FlixPostXL(...)  # Create or obtain FlixPostXL instance
         run_excel_graphics_main(calc)  # Save the workbook in the default location
         run_excel_graphics_main(
             calc, custom_output_file_path='path/to/save/file.xlsx'
@@ -1023,14 +1023,14 @@ class ExcelFcts:
 
 
 def write_bus_results_to_excel(
-    calc: FLixPostXL, resample_by: Literal['YE', 'd', 'h'] = 'd', custom_output_file_path: str = 'default'
+    calc: FlixPostXL, resample_by: Literal['YE', 'd', 'h'] = 'd', custom_output_file_path: str = 'default'
 ):
     """
     Save the in- and out-flows of every bus to an Excel file.
 
     Parameters
     ----------
-    calc : FLixPostXL
+    calc : FlixPostXL
         The flixPostXL object containing the calculation results.
     resample_by : str, optional
         The time frequency for resampling data (e.g., 'd' for daily), by default "d".
@@ -1063,14 +1063,14 @@ def write_bus_results_to_excel(
 
 
 def write_component_results_to_excel(
-    calc: FLixPostXL, resample_by: Literal['YE', 'd', 'h'] = 'd', custom_output_file_path: str = 'default'
+    calc: FlixPostXL, resample_by: Literal['YE', 'd', 'h'] = 'd', custom_output_file_path: str = 'default'
 ):
     """
     Save the in- and out-flows of every component to an Excel file.
 
     Parameters
     ----------
-    calc : FLixPostXL
+    calc : FlixPostXL
         The flixPostXL object containing the calculation results.
     resample_by : str, optional
         The time frequency for resampling data (e.g., 'd' for daily), by default "d".
@@ -1102,7 +1102,7 @@ def write_component_results_to_excel(
     logger.info(f'......Components ({resample_by}) finished')
 
 
-def write_effects_per_comp_per_period_to_excel(calc: FLixPostXL, custom_output_file_path: str = 'default'):
+def write_effects_per_comp_per_period_to_excel(calc: FlixPostXL, custom_output_file_path: str = 'default'):
     """
     Saving the effects of every component per period to excel
     """
@@ -1129,7 +1129,7 @@ def write_effects_per_comp_per_period_to_excel(calc: FLixPostXL, custom_output_f
 
 
 def visualize_results(
-    calc_results: FLixPostXL,
+    calc_results: FlixPostXL,
     effects_per_comp_and_year: bool = True,
     buses_yearly: bool = True,
     comps_yearly: bool = True,
@@ -1179,7 +1179,7 @@ def visualize_results(
         effects_hourly (bool): Whether to write hourly results for effects to excel. Default is False.
 
     Returns:
-        FLixPostXL: The calculated results.
+        FlixPostXL: The calculated results.
     """
     logger.info('Writing Results to Excel (YE)...')
     if buses_yearly:
@@ -1206,7 +1206,7 @@ def visualize_results(
 
 
 ################## PDF - OUTPUT ####################
-def create_report(calc: FLixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4):
+def create_report(calc: FlixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4):
     logger.info(f"Creating Report of Components connected to '{connected_to}'")
     res = calc.bus_results[connected_to]
     flows_to_plot = [
@@ -1233,7 +1233,7 @@ def create_report(calc: FLixPostXL, path: str = 'report.pdf', connected_to: str 
 
 
 def create_report_grouped(
-    calc: FLixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4
+    calc: FlixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4
 ) -> None:
     logger.info(f"Creating Report of Components connected to '{connected_to}'")
     # Filtering and sorting
@@ -1273,7 +1273,7 @@ def create_report_grouped(
                 plt.close()
 
 
-def create_report_per_comp(calc: FLixPostXL, path: str = 'report.pdf') -> None:
+def create_report_per_comp(calc: FlixPostXL, path: str = 'report.pdf') -> None:
     # Filtering and sorting
     components = {
         comp_label: sorted([flow.label_full for flow in comp.inputs + comp.outputs])
