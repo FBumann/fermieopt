@@ -6,11 +6,7 @@ import shutil
 from typing import Dict, List, Optional
 
 import flixOpt as fx
-import flixOpt.elements
 import flixOpt.structure
-import numpy as np
-import pandas as pd
-from rich import print
 from rich.console import Console
 
 from fermieopt.DistrictHeatingComps import ElementFactory, exists, extract_data, numbers_from_str
@@ -21,9 +17,13 @@ logger = logging.getLogger('flixOpt')
 
 
 class ExcelModel:
+    _solvers = {
+        'gurobi': fx.solvers.GurobiSolver,
+        'highs': fx.solvers.HighsSolver,
+    }
+
     def __init__(self, excel_file_path: str):
         self.excel_data = ExcelData(file_path=pathlib.Path(excel_file_path))
-        self.final_directory = self.excel_data.results_directory / self.excel_data.meta_data.calc_name
         self.final_model = fx.FlowSystem(time_series=self.excel_data.time_series_data.index)
         self._busses = self._create_busses()
         self._effects = self._create_effects()
@@ -33,109 +33,49 @@ class ExcelModel:
 
         self._create_components()
 
-    def print_comps_in_categories(self):
-        # String-resources
-        print('###############################################')
-        print('Initiated Comps:')
-        categorized_comps = {}
-        for comp in self.district_heating_system.final_model.components:
-            comp: flixOpt.elements.Component
-            category = type(comp).__name__
-            if category not in categorized_comps:
-                categorized_comps[category] = [comp.label]
-            else:
-                categorized_comps[category].append(comp.label)
-
-        for category, comps in categorized_comps.items():
-            print(f'{category}: {comps}')
-
     def solve_model(self, solver_name: str, gap_frac: float = 0.01, timelimit: int = 3600):
-        self.print_comps_in_categories()
-        self._adjust_calc_name_and_results_folder()
+        self.excel_data.meta_data.calc_name = (
+            f'{datetime.datetime.now().strftime("%Y-%m-%d-%HH-%MM")}_{self.excel_data.meta_data.calc_name}'
+        )
+
         self._create_dirs_and_save_input_data()
 
-        calculation = fx.FullCalculation(self.calc_name, self.district_heating_system.final_model, 'pyomo')
+        calculation = fx.FullCalculation(self.calc_name, self.final_model, 'pyomo')
         calculation.do_modeling()
 
         calculation.solve(
-            fx.solvers.GurobiSolver(mip_gap=gap_frac, time_limit_seconds=timelimit),
-            save_results=os.path.join(self.final_directory, 'SolveResults'),
+            self._solvers[solver_name](mip_gap=gap_frac, time_limit_seconds=timelimit),
+            save_results=self._solve_results_folder,
         )
-        self.calc_name = calculation.name
-        self.load_results()
 
         with open(os.path.join(self.final_directory, f'{self.calc_name}__calc_info.txt'), 'w') as log_file:
-            calc_info = f"""calc = flixPostXL(nameOfCalc='{self.calc_name}',
+            calc_info = f"""results = FlixPostXL(calculation_name='{self.calc_name}',
             results_folder='{os.path.join(self.final_directory, 'SolveResults')}',
-            outputYears={self.years})"""
-
+            output_years={self.years})"""
             log_file.write(calc_info)
 
     def load_results(self) -> FlixPostXL:
         return FlixPostXL(
-            calculation_name=self.calc_name,
-            results_folder=os.path.join(self.final_directory, 'SolveResults'),
+            calculation_name=self.excel_data.meta_data.calc_name,
+            results_folder=self._solve_results_folder,
             output_years=self.years,
         )
 
     def _create_dirs_and_save_input_data(self):
-        os.mkdir(self.final_directory)
-        input_data_path = os.path.join(self.final_directory, f'{self.calc_name}__Skript.xlsx')
-        shutil.copy2(self.input_excel_file_path, input_data_path)
+        os.makedirs(self.final_directory, exist_ok=True)
+        shutil.copy2(self.excel_data.file_path, self.final_directory / f'{self.calc_name}__Skript.xlsx')
 
-        with pd.ExcelWriter(input_data_path, mode='a', engine='openpyxl', if_sheet_exists='overlay') as writer:
-            df = self.district_heating_system.time_series_data_internal
-            df.to_excel(writer, index=True, sheet_name='Internally_computed_data')
-
-        with open(
-            os.path.join(self.final_directory, f'{self.calc_name}__Component_data.txt'), 'w', encoding='utf-8'
-        ) as log_file:
+        with open(self.final_directory / f'{self.calc_name}__Component_data.txt', 'w', encoding='utf-8') as log_file:
             console = Console(file=log_file, width=10000)
             console.print(self.excel_data.components_data)
+            logger.info('Component Data written to file')
 
-        try:
-            with open(
-                os.path.join(self.final_directory, f'{self.calc_name}__System_Description.txt'), 'w', encoding='utf-8'
-            ) as log_file:
-                console = Console(file=log_file, width=10000)
-                console.print(self.district_heating_system.final_model)
-        except Exception as e:
-            logger.warning('Could not write System Description to file')
-            logger.warning(f'Exception: {e}')
-
-        try:
-            with open(
-                os.path.join(self.final_directory, f'{self.calc_name}__Input_and_Preprocessing_Comps.txt'),
-                'w',
-                encoding='utf-8',
-            ) as log_file:
-                console = Console(file=log_file, width=1000)
-                console.print(self.district_heating_system.factory.print_comps())
-        except Exception as e:
-            logger.warning('Could not write Input and Preprocessing Components to file')
-            logger.warning(f'Exception: {e}')
-
-    def _adjust_calc_name_and_results_folder(self):
-        now = datetime.datetime.now()
-        self.calc_name = f'{now.strftime("%Y-%m-%d")}_{self.calc_name}'
-        self.final_directory = os.path.join(self.excel_data.results_directory, self.calc_name)
-        if os.path.exists(self.final_directory):
-            for i in range(1, 100):
-                calc_name = self.calc_name + '_' + str(i)
-                final_directory = os.path.join(os.path.dirname(self.final_directory), calc_name)
-                if not os.path.exists(final_directory):
-                    self.calc_name = calc_name
-                    self.final_directory = final_directory
-                    if i >= 5:
-                        print(
-                            f'There are over {i} different calculations with the same name. '
-                            f'Please choose a different name next time.'
-                        )
-                    if i >= 99:
-                        raise Exception(
-                            'Maximum number of different calculations with the same name exceeded. Max is 9999.'
-                        )
-                    break
+        with open(
+            self.final_directory / f'{self.calc_name}__System_Description.txt', 'w', encoding='utf-8'
+        ) as log_file:
+            console = Console(file=log_file, width=10000)
+            console.print(self.final_model)
+            logger.info('System Description written to file')
 
     def _create_busses(self) -> Dict[str, fx.Bus]:
         busses = {}
@@ -320,6 +260,18 @@ class ExcelModel:
             else:
                 combined_components_data[key] = value
         return combined_components_data
+
+    @property
+    def final_directory(self) -> pathlib.Path:
+        return self.excel_data.results_directory / self.calc_name
+
+    @property
+    def calc_name(self) -> str:
+        return self.excel_data.meta_data.calc_name
+
+    @property
+    def _solve_results_folder(self) -> pathlib.Path:
+        return self.final_directory / 'SolveResults'
 
 
 def add_yearly_effects_with_bounds(
