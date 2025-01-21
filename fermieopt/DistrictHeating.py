@@ -3,7 +3,7 @@ import logging
 import os
 import pathlib
 import shutil
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 import flixOpt as fx
 import flixOpt.structure
@@ -67,7 +67,7 @@ class ExcelModel:
 
         with open(self.final_directory / f'{self.calc_name}__Component_data.txt', 'w', encoding='utf-8') as log_file:
             console = Console(file=log_file, width=10000)
-            console.print(self.excel_data.components_data)
+            console.print(self.components_data)
             logger.info('Component Data written to file')
 
         with open(
@@ -80,7 +80,7 @@ class ExcelModel:
     def _create_busses(self) -> Dict[str, fx.Bus]:
         busses = {}
 
-        for bus_data in self.excel_data.components_data['Bus']:
+        for bus_data in self.bus_data:
             try:
                 label = bus_data['Name']
                 busses[label] = fx.Bus(label=label, excess_penalty_per_flow_hour=None)
@@ -127,7 +127,7 @@ class ExcelModel:
             effects['CO2FW'],
             years=self.years,
             lower_bounds=[None] * len(self.years),
-            upper_bounds=self.excel_data.meta_data_time.co2_limits,
+            upper_bounds=self.excel_data.meta_data_time.co2_limit,
             label='CO2Limit',
             unit='t',
             description='Effect to limit the Emissions per year',
@@ -196,7 +196,7 @@ class ExcelModel:
             busses=self._busses,
         )
 
-        for comp_type, comp_instances_data in self.component_data.values():
+        for comp_type, comp_instances_data in self.components_data.items():
             for comp_props in comp_instances_data:
                 element_factory.create_energy_object(comp_type, comp_props)
 
@@ -250,7 +250,7 @@ class ExcelModel:
         return self.excel_data.meta_data_time.years
 
     @property
-    def component_data(self):
+    def components_data(self):
         combined_components_data = self.excel_data.components_data.copy()
         for key, value in self.excel_data.flow_system_data.items():
             if key in combined_components_data:
@@ -260,6 +260,10 @@ class ExcelModel:
             else:
                 combined_components_data[key] = value
         return combined_components_data
+
+    @property
+    def bus_data(self) -> List[Dict[str, Any]]:
+        return self.excel_data.flow_system_data['Bus']
 
     @property
     def final_directory(self) -> pathlib.Path:

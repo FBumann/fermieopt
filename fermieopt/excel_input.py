@@ -67,6 +67,17 @@ class MetaData(BaseModel):
     def convert_co2_factors(cls, co2_factor_gas):
         return {'Gas': co2_factor_gas}
 
+    @field_validator('sheets_components', mode='before')
+    @classmethod
+    def convert_sheets_components(cls, sheets_components):
+        import math
+
+        return [
+            value
+            for value in sheets_components
+            if value is not None and not (isinstance(value, float) and math.isnan(value))
+        ]
+
 
 class MetaDataTime(BaseModel):
     sheets_time_series: List[str] = Field(
@@ -76,8 +87,8 @@ class MetaDataTime(BaseModel):
         alias='Sonstige Zeitreihen Sheets', description='An aditional list of sheet names for time series data.'
     )
     years: List[int] = Field(alias='Jahre')
-    co2_limits: List[float] = Field(alias='CO2-Limits')
-    green_heat_min: List[float] = Field(alias='Grüne Wärme Minimum [MWh]')
+    co2_limit: List[Optional[float]] = Field(alias='CO2-limit')  #TODO: rename to CO2-Limits [t/a]
+    green_heat_min: List[Optional[float]] = Field(alias='Grüne Wärme Minimum [MWh]')  #TODO: rename to Grüne Wärme Minimum [MWh/a]
 
     @classmethod
     def from_dataframe(cls, df: pd.DataFrame) -> 'MetaDataTime':
@@ -128,7 +139,7 @@ class MetaDataTime(BaseModel):
         return value
 
 
-class ExcelData(BaseModel, arbitrary_types_allowed=True):
+class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     """
     A Pydantic model to represent Excel data related to energy modeling.
     """
@@ -167,6 +178,21 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
             raise ValueError("The Excel file does not contain a 'Allgemeines' sheet.")
 
         meta_data_df = pd.read_excel(excel_file, sheet_name='Allgemeines')
+        meta_data_df = meta_data_df.loc[:, ~meta_data_df.columns.str.startswith('Unnamed')]
+        meta_data_df = meta_data_df.replace(
+            {
+                np.nan: None,
+                '': None,
+                'NaN': None,
+                'None': None,
+                'null': None,
+                'NULL': None,
+                'ja': True,
+                'Ja': True,
+                'nein': False,
+                'Nein': False,
+            }
+        )
 
         # Create MetaData and MetaDataTime instances
         self.meta_data = MetaData.from_dataframe(meta_data_df)
@@ -197,6 +223,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
         self.flow_system_data = self._read_components(
             excel_file, sheets=['System'], valid_keys=['Bus', 'Sink', 'Source']
         )
+        logger.info('Component Data from all sheets read sucessully.')
 
         return self
 
@@ -216,12 +243,12 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
                     pd.read_excel(excel_file, sheet_name=sheet_name, skiprows=[1, 2])
                     for sheet_name in self.meta_data_time.sheets_time_series_others
                 ],
-                axis=1,
+                axis=0,
                 ignore_index=True,
             )
             time_series_data = pd.concat([time_series_data, time_series_data_extra], axis=1)
         # Adding the Index ain datetime format
-        a_time_series = datetime(2021, 1, 1) + np.arange(8760 * len(self.years)) * timedelta(hours=1)
+        a_time_series = datetime(2021, 1, 1) + np.arange(8760 * len(self.meta_data_time.years)) * timedelta(hours=1)
         a_time_series = a_time_series.astype('datetime64')
         time_series_data.index = a_time_series
         return time_series_data
@@ -232,11 +259,11 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
         component_data_by_type = {}
         for sheet_name in sheets:
             df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, nrows=30)
-            component_data_by_type = organize_component_data_by_type(df, valid_keys)
+            component_data = organize_component_data_by_type(df, valid_keys)
+            component_data_by_type = combine_dicts_of_component_data(component_data_by_type, component_data)
             logger.info(f"Component Data of Sheet '{sheet_name}' was read sucessfully.")
         component_data_converted = convert_component_data_types(component_data_by_type)
         component_data_final = seperate_component_data_into_single_dicts(component_data_converted)
-        logger.info('Component Data from all sheets read sucessully.')
         return component_data_final
 
 
@@ -433,3 +460,9 @@ def validate_time_series_data(df: pd.DataFrame, years: List[int]) -> None:
     columns_with_nan = df.columns[df.isna().any()]
     if not columns_with_nan.empty:
         raise Exception(f'There are missing values in the columns: {columns_with_nan}.')
+
+
+def is_nan(value) -> bool:
+    import math
+
+    return value is None or value == '' or value == np.nan or isinstance(value, float) and math.isnan(value)
