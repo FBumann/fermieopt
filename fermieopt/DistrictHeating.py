@@ -3,7 +3,7 @@ import logging
 import os
 import pathlib
 import shutil
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 import flixOpt as fx
 import flixOpt.structure
