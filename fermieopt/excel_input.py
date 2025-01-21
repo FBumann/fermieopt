@@ -17,7 +17,7 @@ class MetaData(BaseModel):
 
     results_directory: pathlib.Path = Field(alias='Speicherort', description='The directory where results are stored.')
     calc_name: str = Field(alias='Name', description='The name of the calculation.')
-    co2_factors: float = Field(
+    co2_factors: Dict[str, float] = Field(
         alias='CO2 Faktor Erdgas [t/MWh_hu]', description='A dictionary mapping sources to CO2 factors.'
     )
     sheets_components: List[str] = Field(alias='Erzeuger Sheets', description='A list of sheet names for components.')
@@ -61,6 +61,11 @@ class MetaData(BaseModel):
         if not path.is_dir():
             raise NotADirectoryError(f"The path '{path}' is not a directory.")
         return path
+
+    @field_validator('co2_factors', mode='before')
+    @classmethod
+    def convert_co2_factors(cls, co2_factor_gas):
+        return {'Gas': co2_factor_gas}
 
 
 class MetaDataTime(BaseModel):
@@ -129,23 +134,6 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
     """
 
     file_path: pathlib.Path = Field(alias='File Path', description='The path to the Excel file.')
-    _valid_components: Tuple[str] = PrivateAttr(
-        default=(
-            'KWK',
-            'Kessel',
-            'Speicher',
-            'EHK',
-            'Waermepumpe',
-            'AbwaermeHT',
-            'AbwaermeWP',
-            'Rueckkuehler',
-            'KWKekt',
-            'Geothermie',
-            'LinearTransformer_1_1',
-            'Sink',
-            'Source',
-        )
-    )
 
     meta_data: Optional[MetaData] = Field(default=None)
     meta_data_time: Optional[MetaDataTime] = Field(default=None)
@@ -189,7 +177,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
         self.time_series_data = self._read_time_series_data(excel_file)
 
         # Extract component data (assuming it's in separate sheets named by component)
-        self.components_data: Dict = self._read_components(
+        self.components_data  = self._read_components(
             excel_file,
             self.meta_data.sheets_components,
             valid_keys=[
@@ -204,11 +192,9 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
                 'KWKekt',
                 'Geothermie',
                 'LinearTransformer_1_1',
-                'Sink',
-                'Source',
             ],
         )
-        self.flow_system_data: Dict = self._read_components(
+        self.flow_system_data = self._read_components(
             excel_file, sheets=['System'], valid_keys=['Bus', 'Sink', 'Source']
         )
 
@@ -242,7 +228,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
 
     def _read_components(
         self, excel_file: pd.ExcelFile, sheets: List[str], valid_keys: List[str]
-    ) -> Dict[str, pd.DataFrame]:
+    ) -> Dict[str, List[Dict[str, Any]]]:
         component_data_by_type = {}
         for sheet_name in sheets:
             df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, nrows=30)
