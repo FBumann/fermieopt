@@ -1,4 +1,5 @@
 import datetime
+import pathlib
 import logging
 import os
 import shutil
@@ -21,13 +22,16 @@ logger = logging.getLogger('flixOpt')
 
 class ExcelModel:
     def __init__(self, excel_file_path: str):
-        self.excel_data = ExcelData(file_path=excel_file_path)
-        self.district_heating_system = DistrictHeatingSystem(self.excel_data)
+        self.excel_data = ExcelData(file_path=pathlib.Path(excel_file_path))
+        self.final_directory = self.excel_data.results_directory / self.excel_data.meta_data.calc_name
+        self.final_model = fx.FlowSystem(time_series=self.excel_data.time_series_data.index)
+        self._busses = self._create_busses()
+        self._effects = self._create_effects()
 
-        self.calc_name = self.excel_data.calc_name
-        self.final_directory = os.path.join(self.excel_data.results_directory, self.calc_name)
-        self.input_excel_file_path = excel_file_path
-        self.years = self.excel_data.years
+        self.final_model.add_elements(*self._create_helpers())
+        self.final_model.add_effects(*list(self._effects.values()))
+
+        self._create_components()
 
     def print_comps_in_categories(self):
         # String-resources
@@ -133,47 +137,20 @@ class ExcelModel:
                         )
                     break
 
+    def _create_busses(self) -> Dict[str, fx.Bus]:
+        busses = {}
 
-class DistrictHeatingSystem:
-    def __init__(self, excel_data: ExcelData):
-        self.time_series_data = excel_data.time_series_data
-        self.time_series_data_internal = pd.DataFrame(index=self.time_series_data.index)
-        self.components_data = {
-            **excel_data.components_data,
-            'Sink': excel_data.further_components_data['Sink'],
-            'Source': excel_data.further_components_data['Source'],
-        }
-        self.bus_data = excel_data.further_components_data['Bus']
+        for bus_data in self.excel_data.components_data['Bus']:
+            try:
+                label = bus_data['Name']
+                busses[label] = fx.Bus(label=label, excess_penalty_per_flow_hour=None)
+            except KeyError as e:
+                raise Exception(f"Every Bus needs a 'Name'! Error: {e}") from e
 
-        self.years = excel_data.years
-        self.timeSeries = excel_data.time_series_data.index.to_numpy()
-        self.co2_limits = excel_data.co2_limits
-        self.green_heat_min = excel_data.green_heat_min
-        self.co2_factors = excel_data.co2_factors
-        self.heating_network_temperature_curves = excel_data.heating_network_temperature_curves
+        return busses
 
-        self._handle_heating_network()
-
-        self.final_model = fx.FlowSystem(time_series=self.timeSeries)
-        self.busses = self.create_busses()
-        self.effects = self.create_effects()
-
-        self.helpers = self.create_helpers()
-
-        self.final_model.add_effects(*list(self.effects.values()))
-        self.final_model.add_elements(*self.helpers)
-
-        self.factory = ElementFactory(
-            flow_system=self.final_model,
-            time_series_data=self.time_series_data,
-            co2_factors=self.co2_factors,
-            years_of_model=self.years,
-            busses=self.busses,
-        )
-        self.create_components()
-
-    def create_effects(self) -> Dict[str, fx.Effect]:
-        effects = {}
+    def _create_effects(self) -> Dict[str, fx.Effect]:
+        effects = dict()
         effects['target'] = fx.Effect(
             'target',
             'i.E.',
@@ -210,7 +187,7 @@ class DistrictHeatingSystem:
             effects['CO2FW'],
             years=self.years,
             lower_bounds=[None] * len(self.years),
-            upper_bounds=self.co2_limits,
+            upper_bounds=self.excel_data.meta_data_time.co2_limits,
             label='CO2Limit',
             unit='t',
             description='Effect to limit the Emissions per year',
@@ -221,7 +198,7 @@ class DistrictHeatingSystem:
         yearly_gw = add_yearly_effects_with_bounds(
             effects['Gruene_Waerme'],
             years=self.years,
-            lower_bounds=self.green_heat_min,
+            lower_bounds=self.excel_data.meta_data_time.green_heat_min,
             upper_bounds=[None] * len(self.years),
             label='Gruene_Waerme_Limits',
             unit='MWh',
@@ -229,13 +206,85 @@ class DistrictHeatingSystem:
         )
         effects.update(yearly_gw)
 
-        effects.update(self.create_invest_groups())
+        effects.update(self._create_invest_groups())
         return effects
 
-    def create_invest_groups(self):
+    def _create_helpers(self) -> List[flixOpt.structure.Element]:
+        p_out1 = fx.Flow(
+            label='Strompreis',
+            bus=self._busses['StromEinspeisung'],
+            size=0,
+            effects_per_flow_hour=extract_data('Strom', self.excel_data.time_series_data),
+        )
+        p_out2 = fx.Flow(
+            label='Gaspreis',
+            bus=self._busses['Erdgas'],
+            size=0,
+            effects_per_flow_hour=extract_data('Erdgas', self.excel_data.time_series_data),
+        )
+        p_out3 = fx.Flow(
+            label='Wasserstoffpreis',
+            bus=self._busses['Wasserstoff'],
+            size=0,
+            effects_per_flow_hour=extract_data('Wasserstoff', self.excel_data.time_series_data),
+        )
+        p_out4 = fx.Flow(
+            label='EBSPreis',
+            bus=self._busses['EBS'],
+            size=0,
+            effects_per_flow_hour=extract_data('EBS', self.excel_data.time_series_data),
+        )
+
+        return [
+            fx.LinearConverter(
+                label='HelperPreise',
+                inputs=[],
+                outputs=[p_out1, p_out2, p_out3, p_out4],
+                conversion_factors=[{p_out1: 1, p_out2: 1, p_out3: 1, p_out4: 1}],
+            )
+        ]
+
+    def _create_components(self) -> None:
+        # data manipulation if a range is given for the start year for some components
+        self._augment_components_with_several_start_years()
+
+        element_factory = ElementFactory(
+            flow_system=self.final_model,
+            time_series_data=self.excel_data.time_series_data,
+            co2_factors=self.excel_data.meta_data.co2_factors,
+            years_of_model=self.excel_data.meta_data_time.years,
+            busses=self._busses,
+        )
+
+        for comp_type, comp_instances_data in self.component_data.values():
+            for comp_props in comp_instances_data:
+                element_factory.create_energy_object(comp_type, comp_props)
+
+    def _augment_components_with_several_start_years(self):
+        for comp_type in self.excel_data.components_data:
+            items_to_remove = []
+            for component_data in self.excel_data.components_data[comp_type]:
+                years = component_data.get('Startjahr')
+                if isinstance(years, str):
+                    try:
+                        first_year, last_year = numbers_from_str(years)
+                    except ValueError as e:
+                        raise ValueError('"Startjahr" must be an integer or a string of format "min-max"') from e
+                    first_year, last_year = int(first_year), int(last_year)
+                    items_to_remove.append(component_data)
+                    for year in self.excel_data.meta_data_time.years:
+                        if first_year <= year <= last_year:
+                            new_comp_data = component_data.copy()
+                            new_comp_data['Startjahr'] = year
+                            new_comp_data['Name'] = f'{new_comp_data["Name"]}_{year}'
+                            self.excel_data.components_data[comp_type].append(new_comp_data)
+            for item in items_to_remove:
+                self.excel_data.components_data[comp_type].remove(item)
+
+    def _create_invest_groups(self):
         effects = {}
-        for comp_type in self.components_data.values():
-            for comp in comp_type:
+        for comp_type, comps in self.excel_data.components_data.items():
+            for comp in comps:
                 label = comp.get('Investgruppe')
                 if isinstance(label, str) and label not in effects.keys():
                     limits = label.split(':')[-1]
@@ -256,157 +305,21 @@ class DistrictHeatingSystem:
                     )
         return effects
 
-    def create_busses(self) -> Dict:
-        busses = {}
+    @property
+    def years(self) -> List[int]:
+        return self.excel_data.meta_data_time.years
 
-        for bus_data in self.bus_data:
-            try:
-                label = bus_data['Name']
-                busses[label] = fx.Bus(label=label, excess_penalty_per_flow_hour=None)
-            except KeyError as e:
-                raise Exception(f"Every Bus needs a 'Name'! Error: {e}") from e
-
-        return busses
-
-    def create_helpers(self) -> List[flixOpt.structure.Element]:
-        p_out1 = fx.Flow(
-            label='Strompreis',
-            bus=self.busses['StromEinspeisung'],
-            size=0,
-            effects_per_flow_hour=extract_data('Strom', self.time_series_data),
-        )
-        p_out2 = fx.Flow(
-            label='Gaspreis',
-            bus=self.busses['Erdgas'],
-            size=0,
-            effects_per_flow_hour=extract_data('Erdgas', self.time_series_data),
-        )
-        p_out3 = fx.Flow(
-            label='Wasserstoffpreis',
-            bus=self.busses['Wasserstoff'],
-            size=0,
-            effects_per_flow_hour=extract_data('Wasserstoff', self.time_series_data),
-        )
-        p_out4 = fx.Flow(
-            label='EBSPreis',
-            bus=self.busses['EBS'],
-            size=0,
-            effects_per_flow_hour=extract_data('EBS', self.time_series_data),
-        )
-
-        return [
-            fx.LinearConverter(
-                label='HelperPreise',
-                inputs=[],
-                outputs=[p_out1, p_out2, p_out3, p_out4],
-                conversion_factors=[{p_out1: 1, p_out2: 1, p_out3: 1, p_out4: 1}],
-            )
-        ]
-
-    def augment_components_with_several_start_years(self):
-        for comp_type in self.components_data:
-            items_to_remove = []
-            for component_data in self.components_data[comp_type]:
-                years = component_data.get('Startjahr')
-                if isinstance(years, str):
-                    try:
-                        first_year, last_year = numbers_from_str(years)
-                    except ValueError as e:
-                        raise ValueError('"Startjahr" must be an integer or a string of format "min-max"') from e
-                    first_year, last_year = int(first_year), int(last_year)
-                    items_to_remove.append(component_data)
-                    for year in self.years:
-                        if first_year <= year <= last_year:
-                            new_comp_data = component_data.copy()
-                            new_comp_data['Startjahr'] = year
-                            new_comp_data['Name'] = f'{new_comp_data["Name"]}_{year}'
-                            self.components_data[comp_type].append(new_comp_data)
-            for item in items_to_remove:
-                self.components_data[comp_type].remove(item)
-
-    def create_components(self) -> None:
-        # data manipulation if a range is given for the start year for some components
-        self.augment_components_with_several_start_years()
-
-        for comp_type in self.components_data.keys():
-            for comp_props in self.components_data[comp_type]:
-                self.factory.create_energy_object(comp_type, comp_props)
-
-    def _handle_heating_network(self):
-        """
-        # TODO: Redo docstring
-        Handle heating network parameters in the input DataFrame.
-
-        This function calculates or checks the presence of key parameters related to the heating network,
-        including supply temperature (TVL_FWN), return temperature (TRL_FWN), and network losses (SinkLossHeat).
-        If not already present in the dataframe, creates them and returns the filled dataframe
-
-
-        Raises:
-        - Exception: If one of "TVL_FWN" or "TRL_FWN" is not present in the input DataFrame and needs calculation.
-
-        Example:
-        ```python
-        handle_heating_network(my_dataframe)
-        ```
-
-        """
-
-        self.time_series_data['Tamb24mean'] = calculate_hourly_rolling_mean(
-            series=self.time_series_data['Tamb'], window_size=24
-        )
-        self.time_series_data_internal['Tamb24mean'] = self.time_series_data['Tamb24mean']
-        # Check i fTermperatures are given directly as Time Series
-        if 'TVL_FWN' and 'TRL_FWN' in self.time_series_data.keys():
-            print('TVL_FWN and TRL_FWN where included in the input data set')
-            return
-        elif 'TVL_FWN' in self.time_series_data.keys() or 'TRL_FWN' in self.time_series_data.keys():
-            raise Exception("Either include both or None of 'TVL_FWN' and 'TRL_FWN' in the Input Dataset")
-
-        # Check if Fators are given
-        if any(item is None for item in self.heating_network_temperature_curves['ff']):
-            raise Exception("If 'TVL_FWN' and 'TRL_FWN' are not provided, factors for temperature curves are needed")
-        if any(item is None for item in self.heating_network_temperature_curves['rf']):
-            raise Exception("If 'TVL_FWN' and 'TRL_FWN' are not provided, factors for temperature curves are needed")
-
-        # Berechnung der Netzwerktemperaturen
-        df_tvl = pd.Series()
-        for i, factors in enumerate(self.heating_network_temperature_curves['ff']):
-            df = linear_interpolation_with_bounds(
-                input_data=self.time_series_data['Tamb24mean'].iloc[i * 8760 : (i + 1) * 8760],
-                lower_bound=factors['lb'],
-                upper_bound=factors['ub'],
-                value_below_bound=factors['value_lb'],
-                value_above_bound=factors['value_ub'],
-            )
-            df_tvl = pd.concat([df_tvl, df])
-        self.time_series_data['TVL_FWN'] = df_tvl
-        self.time_series_data_internal['TVL_FWN'] = df_tvl
-
-        df_trl = pd.Series()
-        for i, factors in enumerate(self.heating_network_temperature_curves['rf']):
-            df = linear_interpolation_with_bounds(
-                input_data=self.time_series_data['Tamb24mean'].iloc[i * 8760 : (i + 1) * 8760],
-                lower_bound=factors['lb'],
-                upper_bound=factors['ub'],
-                value_below_bound=factors['value_lb'],
-                value_above_bound=factors['value_ub'],
-            )
-            df_trl = pd.concat([df_trl, df])
-        self.time_series_data['TRL_FWN'] = df_trl
-        self.time_series_data_internal['TRL_FWN'] = df_trl
-
-        if 'SinkLossHeat' not in self.time_series_data.keys():  # Berechnung der Netzverluste
-            k_loss_netz = 0.4640  # in MWh/K        # Vereinfacht, ohne Berücksichtigung einer sich ändernden Netzlänge
-            # TODO: Factor into excel
-            self.time_series_data['SinkLossHeat'] = k_loss_netz * (
-                (self.time_series_data['TVL_FWN'] + self.time_series_data['TRL_FWN']) / 2
-                - self.time_series_data['Tamb']
-            )
-            self.time_series_data_internal['SinkLossHeat'] = self.time_series_data['SinkLossHeat']
-            print('Heating losses where calculated')
-        else:
-            print('Heating losses where included in the input data set')
+    @property
+    def component_data(self):
+        combined_components_data = self.excel_data.components_data.copy()
+        for key, value in self.excel_data.flow_system_data.items():
+            if key in combined_components_data:
+                combined_components_data[key].extend(value)
+            elif key == 'Bus':
+                continue
+            else:
+                combined_components_data[key] = value
+        return combined_components_data
 
 
 def calculate_hourly_rolling_mean(series: pd.Series, window_size: int = 24) -> pd.Series:
