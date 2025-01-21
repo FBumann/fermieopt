@@ -1,81 +1,184 @@
-import os
-import re
+import pathlib
+import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator, ValidationError
+
+logger = logging.getLogger('flixOpt')
 
 
-class ExcelData:
+class MetaData(BaseModel):
     """
-    A class to handle Excel data related to energy modeling.
-
-    Attributes:
-        file_path (str): The path to the Excel file.
-        _general_infos (pd.DataFrame): A DataFrame containing general information from the Excel file.
-        results_directory (str): The directory where results are stored.
-        calc_name (str): The name of the calculation.
-        years (list): A list of years for the model.
-        co2_limits (dict): A dictionary mapping years to CO2 limits.
-        co2_factors (dict): A dictionary mapping sources to CO2 factors.
-        time_series_data (pd.DataFrame): A DataFrame containing time series data.
-        components_data (dict): A dictionary containing component data.
+    A Pydantic model to represent metadata related to Excel data.
     """
+    results_directory: pathlib.Path = Field(alias='Speicherort', description="The directory where results are stored.")
+    calc_name: str = Field(alias='Name', description="The name of the calculation.")
+    co2_factors: float = Field(alias='CO2 Faktor Erdgas [t/MWh_hu]', description="A dictionary mapping sources to CO2 factors.")
+    sheets_components: List[str] = Field(alias='Erzeuger Sheets', description="A list of sheet names for components.")
 
-    def __init__(self, file_path):
+    @classmethod
+    def from_dataframe(cls, df: pd.DataFrame) -> "MetaData":
         """
-        Initialize the ExcelData object with the given file path.
+        Extracts the metadata from a DataFrame and validates it.
 
         Args:
-            file_path (str): The path to the Excel file.
+            df (pd.DataFrame): The DataFrame the metadata.
+
+        Returns:
+            MetaData: A validated MetaData instance.
         """
-        self.file_path: str = file_path
-        meta_data_columns = ('Erzeuger Sheets', 'CO2 Faktor Erdgas [t/MWh_hu]', 'Name', 'Speicherort')
-        yearly_columns = (
-            'Jahre',
-            'Zeitreihen Sheets',
-            'Sonstige Zeitreihen Sheets',
-            'Fahrkurve Fernwärmenetz VL',
-            'Fahrkurve Fernwärmenetz RL',
-            'CO2-limit',
-            'Grüne Wärme Minimum [MWh]',
-        )
-        meta_data, yearly_data = self._process_general_infos(meta_data_columns, yearly_columns)
+        # Convert DataFrame to a dictionary with matching aliases
+        data_dict = df.to_dict(orient='list')
+        # Rename keys using Pydantic aliases
+        alias_map = {field_name: field.alias for field_name, field in cls.model_fields.items()}
+        attrs_with_single_value = {'results_directory', 'calc_name', 'co2_factors'}
+        aliases_with_single_value = {alias_map[attr] for attr in attrs_with_single_value}
 
-        # Basic Information
-        self.results_directory: str = meta_data['Speicherort'][0]
-        self.calc_name: str = str(meta_data['Name'][0])
-        self.co2_factors: dict = {'Erdgas': meta_data['CO2 Faktor Erdgas [t/MWh_hu]'][0]}
-        self._sheetnames_components: List[str] = meta_data['Erzeuger Sheets']
+        # Extract first value from each entry
+        for key in data_dict:
+            if key in aliases_with_single_value:
+                data_dict[key] = data_dict[key][0]
 
-        # Information per year of the Model
-        self.years: List[int] = yearly_data['Jahre']
-        self.co2_limits: List[Optional[int]] = yearly_data['CO2-limit']
-        self.green_heat_min: List[Optional[int]] = yearly_data['Grüne Wärme Minimum [MWh]']
-        self._heating_network_temperature_curves_ff_info: List[str] = yearly_data['Fahrkurve Fernwärmenetz VL']
-        self._heating_network_temperature_curves_rf_info: List[str] = yearly_data['Fahrkurve Fernwärmenetz RL']
-        self._sheetnames_ts_data: List[str] = yearly_data['Zeitreihen Sheets']
-        sheetnames_ts_data_extra = yearly_data['Sonstige Zeitreihen Sheets']
-        self._sheetnames_ts_data_extra: Optional[List[str]] = (
-            None if all(name is None for name in sheetnames_ts_data_extra) else sheetnames_ts_data_extra
-        )
-        self._validate_and_convert_types()
+        # Validate and create an instance of MetaData
+        try:
+            return cls(**data_dict)
+        except ValidationError as e:
+            print("Validation error:", e)
+            raise
 
-        # Extracting Information aboutHeating Network Temperature curves
-        self.heating_network_temperature_curves = {
-            'ff': self.validate_and_extract_factors(yearly_data['Fahrkurve Fernwärmenetz VL']),
-            'rf': self.validate_and_extract_factors(yearly_data['Fahrkurve Fernwärmenetz RL']),
-        }
+    @field_validator('results_directory', mode='before')
+    @classmethod
+    def validate_results_directory(cls, path):
+        path = pathlib.Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"The path '{path}' does not exist.")
+        if not path.is_dir():
+            raise NotADirectoryError(f"The path '{path}' is not a directory.")
+        return path
 
-        # Time Series Data
-        self.time_series_data: pd.DataFrame = self._read_time_series_data()
-        validate_time_series_data(df=self.time_series_data, years=self.years)
 
-        # Component Data
+class MetaDataTime(BaseModel):
+
+    sheets_time_series: List[str] = Field(alias='Zeitreihen Sheets', description="A list of sheet names for time series data.")
+    sheets_time_series_others: Optional[List[str]] = Field(alias='Sonstige Zeitreihen Sheets', description="An aditional list of sheet names for time series data.")
+    years: List[int] = Field(alias='Jahre')
+    co2_limits: List[float] = Field(alias='CO2-Limits')
+    green_heat_min: List[float] = Field(alias='Grüne Wärme Minimum [MWh]')
+
+    @classmethod
+    def from_dataframe(cls, df: pd.DataFrame) -> "MetaDataTime":
+        """
+        Extracts the time series metadata from a DataFrame and validates it.
+
+        Args:
+            df (pd.DataFrame): The DataFrame with time series metadata.
+
+        Returns:
+            MetaDataTime: A validated MetaDataTime instance.
+        """
+        # Check if 'Jahre' column exists and handle it
+        if 'Jahre' in df.columns:
+            # Remove rows where 'Jahre' has no value (NaN or None)
+            df = df.dropna(subset=['Jahre'])
+        else:
+            raise ValidationError("No 'Jahre' column found in the DataFrame.")
+
+        # Convert DataFrame to a dictionary with matching aliases
+        data_dict = df.to_dict(orient='list')
+
+        # Validate and create an instance of MetaDataTime
+        try:
+            return cls(**data_dict)
+        except ValidationError as e:
+            print("Validation error:", e)
+            raise
+
+    @model_validator(mode='after')
+    def _validate_list_lengths(self):
+        """
+        Ensures that all list attributes have the same length.
+        """
+        list_attrs = [field for field, field_info in self.__annotations__.items() if isinstance(getattr(self, field), list)]
+        lengths = {len(getattr(self, attr)) for attr in list_attrs}
+
+        if len(lengths) > 1:
+            raise ValueError(f"Not all list fields have the same length: {list_attrs}.")
+
+    @field_validator('sheets_time_series_others')
+    @classmethod
+    def _sheetnames_ts_data_extra(cls, value):
+        if all(pd.isna(x) or x is None for x in value):
+            return None
+        return value
+
+
+class ExcelData(BaseModel, arbitrary_types_allowed=True):
+    """
+    A Pydantic model to represent Excel data related to energy modeling.
+    """
+    file_path: pathlib.Path = Field(alias="File Path", description="The path to the Excel file.")
+    _valid_components: Tuple[str] = PrivateAttr(
+        default=(
+            'KWK',
+            'Kessel',
+            'Speicher',
+            'EHK',
+            'Waermepumpe',
+            'AbwaermeHT',
+            'AbwaermeWP',
+            'Rueckkuehler',
+            'KWKekt',
+            'Geothermie',
+            'LinearTransformer_1_1',
+            'Sink',
+            'Source',
+        ))
+
+    meta_data: Optional[MetaData] = Field(default=None)
+    meta_data_time: Optional[MetaDataTime] = Field(default=None)
+    time_series_data: Optional[pd.DataFrame] = Field(None, description="A DataFrame containing time series data.")
+    components_data: Optional[Dict[str, List[Dict[str, Any]]]] = Field(None, description="A dictionary containing component data.")
+    flow_system_data: Optional[Dict[str, List[Dict[str, Any]]]] = Field(None, description="A dictionary containing flow system data.")
+
+    @field_validator("file_path", mode='before')
+    @classmethod
+    def validate_results_directory(cls, path):
+        path = pathlib.Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"The path '{path}' does not exist.")
+        if not path.suffix == ".xlsx":
+            raise ValueError(f"The file '{path}' is not an Excel file (.xlsx).")
+        return path
+
+    @model_validator(mode='after')
+    def read_data(self):
+        """
+        Loads the data from an Excel file into the ExcelData model.
+        """
+
+        logger.info('Creating ExcelData object from file %s', self.file_path)
+        excel_file = pd.ExcelFile(self.file_path)
+        if 'Allgemeines' not in excel_file.sheet_names:
+            raise ValueError("The Excel file does not contain a 'Allgemeines' sheet.")
+
+        meta_data_df = pd.read_excel(excel_file, sheet_name="Allgemeines")
+
+        # Create MetaData and MetaDataTime instances
+        self.meta_data = MetaData.from_dataframe(meta_data_df)
+        self.meta_data_time = MetaDataTime.from_dataframe(meta_data_df)
+
+        # Extract time series data (assuming the second sheet contains time series data)
+        logger.info('Reading data for years %s', self.meta_data_time.years)
+        self.time_series_data = self._read_time_series_data(excel_file)
+
+        # Extract component data (assuming it's in separate sheets named by component)
         self.components_data: Dict = self._read_components(
-            sheet_names=self._sheetnames_components,
-            valid_types=(
+            excel_file,
+            self.meta_data.sheets_components,
+            valid_keys=[
                 'KWK',
                 'Kessel',
                 'Speicher',
@@ -89,151 +192,50 @@ class ExcelData:
                 'LinearTransformer_1_1',
                 'Sink',
                 'Source',
-            ),
+            ],
         )
-        self.further_components_data: Dict = self._read_components(
-            sheet_names=['System'], valid_types=('Bus', 'Sink', 'Source')
+        self.flow_system_data: Dict = self._read_components(
+            excel_file, sheets=['System'], valid_keys=['Bus', 'Sink', 'Source']
         )
 
-    def validate_and_extract_factors(self, factor_infos: List[str]) -> List[Optional[Dict[str, float]]]:
-        condition_1 = all(isinstance(info, str) for info in factor_infos)
-        condition_2 = all(isinstance(info, type(None)) for info in factor_infos)
-        if not (condition_1 or condition_2):
-            raise Exception('Either specify heating Network curves for all years or for None')
-        if condition_1:
-            for i, curve in enumerate(factor_infos):
-                factor_infos[i] = curve.replace(',', '.').replace(' ', '')
-                if not re.match(r'^-?\d+/\d+;\d+/\d+$', curve):
-                    raise Exception(
-                        'Use Text to specify the Temperature Curve of the heating network. '
-                        "Use Form: ' 'lb'/'value_lb';'ub'/'value_ub' '."
-                        "Example:    '-8/120;10/95'."
-                    )
-        factors = []
-        for infos in factor_infos:
-            if not infos:
-                factors.append(None)
-            else:
-                lower, upper = infos.split(';')
-                lower_bound, value_below_bound = lower.split('/')
-                upper_bound, value_above_bound = upper.split('/')
+        return self
 
-                factors.append(
-                    {
-                        'lb': float(lower_bound),
-                        'ub': float(upper_bound),
-                        'value_lb': float(value_below_bound),
-                        'value_ub': float(value_above_bound),
-                    }
-                )
-        return factors
-
-    def _validate_and_convert_types(self):
-        # self.years
-        for i in range(len(self.years)):
-            if isinstance(self.years[i], float) and self.years[i] % int(self.years[i]) == 0:
-                self.years[i] = int(self.years[i])
-            elif isinstance(self.years[i], int):
-                continue
-            else:
-                raise ValueError('Every year must be an Integer.')
-
-        # self.results_directory
-        if not os.path.exists(self.results_directory):
-            raise Exception(f"The path '{self.results_directory}' for saving does not exist. Please create it first.")
-        if not os.path.isdir(self.results_directory):
-            raise Exception(f"The path '{self.results_directory}' for saving is not a directory.")
-
-        # self.sheetnames_ts_data
-        if not all(isinstance(name, str) for name in self._sheetnames_ts_data):
-            raise Exception('Use Text to specify the Sheetnames of TimeSeries Data')
-        if not len(self._sheetnames_ts_data) == len(self.years):
-            raise Exception("The number of 'years' and the number of 'Zeitreihen Sheets' must match.")
-
-        # self.sheetnames_ts_data_extra
-        if self._sheetnames_ts_data_extra:
-            if not all(isinstance(name, str) for name in self._sheetnames_ts_data_extra):
-                raise Exception('Use Text to specify the Sheetnames of TimeSeries Data')
-            if len(self._sheetnames_ts_data_extra) != 0 and len(self._sheetnames_ts_data_extra) != len(self.years):
-                raise Exception(
-                    "The number of 'years' and the number of 'Sonstige Zeitreihen Sheets' must match. "
-                    "You can also not use 'Sonstige Zeitreihen Sheets' at all. Just leave the lines blank"
-                )
-
-        # self._sheetnames_components
-        if not all(isinstance(name, str) for name in self._sheetnames_components):
-            raise Exception('Use Text to specify the Sheetnames of Components')
-        if len(self._sheetnames_components) == 0:
-            raise Exception('At least One Sheet Name must be given')
-
-    def _process_general_infos(
-        self, meta_data_columns: Tuple, yearly_columns: Tuple
-    ) -> Tuple[Dict[str, List], Dict[str, List]]:
-        """
-        Gets data from sheet 'Allgemeines' and checks if all needed columns are present
-        Returns
-        -------
-
-        """
-        general_info = pd.read_excel(self.file_path, sheet_name='Allgemeines')
-        general_info = general_info.replace({np.nan: None})
-
-        for column_name in meta_data_columns + yearly_columns:
-            if column_name not in general_info:
-                raise Exception(f"Column '{column_name}' is missing in sheet 'Allgemeines'.")
-
-        meta_data = general_info[list(meta_data_columns)].to_dict(orient='list')
-        meta_data = {k: list(filter(None, v)) for k, v in meta_data.items()}  # Removing None values
-
-        yearly_data = general_info[list(yearly_columns)].copy()
-        yearly_data['Jahre'] = pd.to_numeric(yearly_data['Jahre'], errors='coerce')
-        yearly_data = yearly_data.dropna(subset=['Jahre'])
-        yearly_data = yearly_data.to_dict(orient='list')
-
-        return meta_data, yearly_data
-
-    def _read_time_series_data(self) -> pd.DataFrame:
-        li = []
-        for sheet_name in self._sheetnames_ts_data:
-            df = pd.read_excel(self.file_path, sheet_name=sheet_name, skiprows=[1, 2])
-            li.append(df)
-        time_series_data = pd.concat(li, axis=0, ignore_index=True)  # Concatenate the DataFrames of the list
-
-        if self._sheetnames_ts_data_extra:
-            li = []
-            for sheet_name in self._sheetnames_ts_data_extra:
-                df = pd.read_excel(self.file_path, sheet_name=sheet_name, skiprows=[1, 2])
-                li.append(df)
-
-            time_series_data_extra = pd.concat(li, axis=0, ignore_index=True)  # Concatenate the DataFrames in the list
+    def _read_time_series_data(self, excel_file: pd.ExcelFile) -> pd.DataFrame:
+        # Extract time series data (assuming the second sheet contains time series data)
+        time_series_data = pd.concat(
+            [pd.read_excel(excel_file, sheet_name=sheet_name, skiprows=[1, 2]) for sheet_name in
+             self.meta_data_time.sheets_time_series],
+            axis=0, ignore_index=True
+        )
+        if self.meta_data_time.sheets_time_series_others:
+            time_series_data_extra = pd.concat(
+                [pd.read_excel(excel_file, sheet_name=sheet_name, skiprows=[1, 2]) for sheet_name in
+                 self.meta_data_time.sheets_time_series_others],
+                axis=1, ignore_index=True
+            )
             time_series_data = pd.concat([time_series_data, time_series_data_extra], axis=1)
-
         # Adding the Index ain datetime format
         a_time_series = datetime(2021, 1, 1) + np.arange(8760 * len(self.years)) * timedelta(hours=1)
         a_time_series = a_time_series.astype('datetime64')
         time_series_data.index = a_time_series
-
         return time_series_data
 
-    def _read_components_from_sheet(self, sheet_name: str, valid_types: tuple) -> Dict[str, pd.DataFrame]:
-        df = pd.read_excel(self.file_path, sheet_name=sheet_name, header=None, nrows=30)
-        component_data_by_type = organize_component_data_by_type(df, valid_types)
-        print(f"Component Data of Sheet '{sheet_name}' was read sucessfully.")
-        return component_data_by_type
-
-    def _read_components(self, sheet_names: List[str], valid_types: tuple):
+    def _read_components(self,
+                         excel_file: pd.ExcelFile,
+                         sheets: List[str],
+                         valid_keys: List[str]) -> Dict[str, pd.DataFrame]:
         component_data_by_type = {}
-        for sheet_name in sheet_names:
-            component_data = self._read_components_from_sheet(sheet_name, valid_types)
-            component_data_by_type = combine_dicts_of_component_data(component_data_by_type, component_data)
-
+        for sheet_name in sheets:
+            df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, nrows=30)
+            component_data_by_type = organize_component_data_by_type(df, valid_keys)
+            logger.info(f"Component Data of Sheet '{sheet_name}' was read sucessfully.")
         component_data_converted = convert_component_data_types(component_data_by_type)
         component_data_final = seperate_component_data_into_single_dicts(component_data_converted)
-        print(f"Component Data from sheets '{sheet_names}' was read and converted")
+        logger.info('Component Data from all sheets read sucessully.')
         return component_data_final
 
 
-def organize_component_data_by_type(df: pd.DataFrame, valid_types: tuple) -> Dict[str, pd.DataFrame]:
+def organize_component_data_by_type(df: pd.DataFrame, valid_types: List[str]) -> Dict[str, pd.DataFrame]:
     """
     Processes component data from an Excel file, validating component types and organizing data into separate DataFrames.
 
