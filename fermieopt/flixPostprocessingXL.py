@@ -12,7 +12,7 @@ import pandas as pd
 logger = logging.getLogger('flixOpt')
 
 
-class flixPostXL(fx.results.CalculationResults):
+class FLixPostXL(fx.results.CalculationResults):
     """
     Extending the functionality of fx.results.CalculationResults, this class interacts with meta_data
     and other extra data stored in the results to create extra functionailty.
@@ -23,13 +23,13 @@ class flixPostXL(fx.results.CalculationResults):
     Further, some comforting attributes for grouping and invetsment results are added.
     """
 
-    def __init__(self, nameOfCalc, results_folder, outputYears):
-        super().__init__(calculation_name=nameOfCalc, folder=results_folder)
+    def __init__(self, calculation_name, results_folder, output_years):
+        super().__init__(calculation_name=calculation_name, folder=results_folder)
 
         self.name = self.calculation_infos['Calculation']['Name']
 
         self.group_map = self._add_group_mapping()
-        self.years = outputYears  # add as attribute
+        self.years = output_years  # add as attribute
         self.folder = pathlib.Path(os.path.dirname(results_folder))
 
         self.investment_effects_per_period = self._get_investment_effects_per_period()
@@ -204,14 +204,14 @@ class flixPostXL(fx.results.CalculationResults):
         self,
         effect_label: str,
         origin: Literal['operation', 'invest', 'all', 'invest_per_period'],
-        as_TS: bool = False,
+        as_time_series: bool = False,
         shares: bool = False,
     ) -> Union[float, np.ndarray, Dict[str, Union[float, np.ndarray]]]:
         """
         This functions returns the results of the chosen effect
         :param effect_label: Label of effect
         :param origin: Choose from ["operation","invest","all"]
-        :param as_TS: Wether to return the values per timestep or a sum
+        :param as_time_series: Wether to return the values per timestep or a sum
         :param shares: Wether to return the shares to the effect
         :return: np.ndarray
         """
@@ -228,7 +228,7 @@ class flixPostXL(fx.results.CalculationResults):
         elif origin == 'operation':
             if shares:
                 return results['operation']['Shares']
-            if as_TS:
+            if as_time_series:
                 return results['operation']['operation_sum_TS']
             return results['operation']['operation_sum']
 
@@ -354,25 +354,25 @@ class flixPostXL(fx.results.CalculationResults):
                 mapping[comp_label] = comp_meta_data['Gruppe']
         return mapping
 
-    def to_dataFrame(
+    def to_data_frame(
         self,
-        busOrComp: str,
+        bus_or_comp: str,
         direction: Literal['in', 'out', 'inout'],
         grouped: bool = False,
-        invert_Output: bool = True,
+        invert_output: bool = True,
     ) -> pd.DataFrame:
         """
         This Function returns a pd.dataframe containing the Flows of the Bus or Comp.
 
         Parameters
         ----------
-        busOrComp : str
+        bus_or_comp : str
             flows linked to this bus or component are chosen
         direction : str ("in","out","inout")
             Direction of the flows to look at. Choose one of "in","out","inout"
         grouped: bool
             wether the inputs and outputs should be grouped. Inputs abd Outputs are still seperate groups.
-        invert_Output : bool
+        invert_output : bool
             Wether the output flows should be inverted or not (multiplied by -1)
 
         Returns
@@ -380,10 +380,10 @@ class flixPostXL(fx.results.CalculationResults):
         pd.DataFrame
         """
         output_factor = 1 if direction in ('out', 'inout') else 0
-        if invert_Output:
+        if invert_output:
             output_factor *= -1
-        df = self.to_dataframe(
-            busOrComp, 'flow_rate', input_factor=1 if direction in ('in', 'inout') else 0, output_factor=output_factor
+        df = super().to_dataframe(
+            bus_or_comp, 'flow_rate', input_factor=1 if direction in ('in', 'inout') else 0, output_factor=output_factor
         )
 
         if grouped:
@@ -491,7 +491,7 @@ class flixPostXL(fx.results.CalculationResults):
 
         Parameters
         ----------
-        calc : flixPostXL
+        calc : FLixPostXL
             Solved calculation of type flixPostXL.
 
         Returns
@@ -513,11 +513,11 @@ class flixPostXL(fx.results.CalculationResults):
 
         return result_dataframe.head(len(self.time))
 
-    def plotOperationColorMap(
+    def plot_operation_color_map(
         self,
         flow_name: str,
-        nbPeriods=365,
-        nbTimeStepsPerPeriod=24,
+        nb_of_periods=365,
+        nb_of_time_steps_per_period=24,
         cmap='jet',
         vmin=0,
         vmax=None,
@@ -554,14 +554,14 @@ class flixPostXL(fx.results.CalculationResults):
 
         **Default arguments:**
 
-        :param nbPeriods: number of periods to be plotted
+        :param nb_of_periods: number of periods to be plotted
             |br| * the default value is 365
-        :type nbPeriods: integer
+        :type nb_of_periods: integer
 
-        :param nbTimeStepsPerPeriod: time steps per period to be plotted (nbPeriods*nbTimeStepsPerPeriod=length of time
+        :param nb_of_time_steps_per_period: time steps per period to be plotted (nb_of_periods*nb_of_time_steps_per_period=length of time
             series)
             |br| * the default value is 24
-        :type nbTimeStepsPerPeriod: integer
+        :type nb_of_time_steps_per_period: integer
 
         :param cmap: heat map (color map) (see matplotlib options)
             |br| * the default value is 'jet'
@@ -645,7 +645,7 @@ class flixPostXL(fx.results.CalculationResults):
         :type orientation: float
 
         """
-        isStorage = False
+        is_storage = False
         try:
             flow = self.flow_results()[flow_name]
         except KeyError as e:
@@ -657,16 +657,16 @@ class flixPostXL(fx.results.CalculationResults):
         unit = 'Flow Hours'
 
         try:
-            data = data.reshape(nbPeriods, nbTimeStepsPerPeriod).T
+            data = data.reshape(nb_of_periods, nb_of_time_steps_per_period).T
         except ValueError as e:
             raise ValueError(
                 'Could not reshape array. Your timeSeries has {} values and it is therefore not possible'.format(
                     len(data)
                 )
-                + ' to reshape it to ({}, {}). Please correctly specify nbPeriods'.format(
-                    nbPeriods, nbTimeStepsPerPeriod
+                + ' to reshape it to ({}, {}). Please correctly specify nb_of_periods'.format(
+                    nb_of_periods, nb_of_time_steps_per_period
                 )
-                + ' and nbTimeStepsPerPeriod The error was: {}.'.format(e)
+                + ' and nb_of_time_steps_per_period The error was: {}.'.format(e)
             ) from e
         vmax = data.max() if not vmax else vmax
 
@@ -674,15 +674,15 @@ class flixPostXL(fx.results.CalculationResults):
             fig, ax = plt.subplots(1, 1, figsize=figsize, **kwargs)
 
         ax.pcolormesh(
-            range(nbPeriods + 1),
-            range(nbTimeStepsPerPeriod + 1),
+            range(nb_of_periods + 1),
+            range(nb_of_time_steps_per_period + 1),
             data,
             cmap=cmap,
             vmin=vmin,
             vmax=vmax,
             **kwargs,
         )
-        ax.axis([0, nbPeriods, 0, nbTimeStepsPerPeriod])
+        ax.axis([0, nb_of_periods, 0, nb_of_time_steps_per_period])
         ax.set_xlabel(xlabel, fontsize=fontsize)
         ax.set_ylabel(ylabel, fontsize=fontsize)
         ax.xaxis.set_label_position('bottom'), ax.xaxis.set_ticks_position('bottom')
@@ -693,7 +693,7 @@ class flixPostXL(fx.results.CalculationResults):
         cb1.ax.tick_params(labelsize=fontsize)
         if not zlabel:
             cb1.ax.set_xlabel(zlabel, size=fontsize)
-        elif isStorage:
+        elif is_storage:
             cb1.ax.set_xlabel('Storage inventory' + ' [' + unit + ']', size=fontsize)
         else:
             cb1.ax.set_xlabel('Operation' + ' [' + unit + ']', size=fontsize)

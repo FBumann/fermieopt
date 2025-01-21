@@ -259,7 +259,7 @@ def organize_component_data_by_type(df: pd.DataFrame, valid_types: tuple) -> Dic
 
     # Iterate through unique values and create specific DataFrames for each type
     # Create a dictionary to store DataFrames for each unique value
-    Erzeugerdaten = {}
+    erzeuger_daten = {}
     for value in valid_types:
         # Select columns where the first row has the current value
         subset_df = df.loc[:, df.iloc[0] == value]
@@ -288,9 +288,9 @@ def organize_component_data_by_type(df: pd.DataFrame, valid_types: tuple) -> Dic
         subset_df.set_index('category', inplace=True)
 
         # Store the subset DataFrame in the dictionary
-        Erzeugerdaten[value] = subset_df
+        erzeuger_daten[value] = subset_df
 
-    return Erzeugerdaten
+    return erzeuger_daten
 
 
 def convert_component_data_types(component_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
@@ -371,7 +371,7 @@ def combine_dicts_of_component_data(
 
 
 def seperate_component_data_into_single_dicts(
-    Erzeugerdaten: Dict[str, pd.DataFrame],
+    erzeuger_daten: Dict[str, pd.DataFrame],
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Transforms component data into a format suitable for iterative processing.
@@ -382,7 +382,7 @@ def seperate_component_data_into_single_dicts(
 
     Parameters
     ----------
-    Erzeugerdaten : dict
+    erzeuger_daten : dict
         A dictionary mapping component types (as strings) to DataFrames containing the data for each component type.
 
     Returns
@@ -390,17 +390,17 @@ def seperate_component_data_into_single_dicts(
     dict
         A dictionary where each key is a component type, and the value is a list of dictionaries. Each dictionary within the list represents the data for a single component, with `None` values removed. This structure is optimized for iterative processing to create components.
     """
-    ErzDaten = {}
-    for typ in Erzeugerdaten:
-        ErzDaten[typ] = list()
-        for comp in Erzeugerdaten[typ].columns:
-            erzeugerdaten_as_dict = Erzeugerdaten[typ][comp].to_dict()
+    erzeuger_daten_seperated = {}
+    for typ in erzeuger_daten:
+        erzeuger_daten_seperated[typ] = list()
+        for comp in erzeuger_daten[typ].columns:
+            erzeugerdaten_as_dict = erzeuger_daten[typ][comp].to_dict()
             erzeugerdaten_as_dict_wo_none = {k: v for k, v in erzeugerdaten_as_dict.items() if v is not None}
-            ErzDaten[typ].append(erzeugerdaten_as_dict_wo_none)
-            if not ErzDaten[typ]:  # if list is empty
-                ErzDaten.pop(typ)
+            erzeuger_daten_seperated[typ].append(erzeugerdaten_as_dict_wo_none)
+            if not erzeuger_daten_seperated[typ]:  # if list is empty
+                erzeuger_daten_seperated.pop(typ)
 
-    return ErzDaten
+    return erzeuger_daten_seperated
 
 
 def validate_time_series_data(df: pd.DataFrame, years: List[int]) -> None:

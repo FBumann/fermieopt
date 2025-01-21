@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 from fermieopt.DistrictHeating import ExcelModel
-from fermieopt.excel_output import cExcelFcts, create_report_grouped, visualize_results
+from fermieopt.excel_output import ExcelFcts, create_report_grouped, visualize_results
 
 logger = logging.getLogger('flixOpt')
 
@@ -23,7 +23,7 @@ def main(solver_name: str, excel_file_path: str):
 
     calc_results = excel_model.load_results()
     logger.info('START: EXPORT OF RESULTS TO EXCEL...')
-    excel = cExcelFcts(calc_results)
+    excel = ExcelFcts(calc_results)
     excel.run_excel_graphics_main()
     excel.run_excel_graphics_years(short_version=False)
     visualize_results(calc_results=calc_results)

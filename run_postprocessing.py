@@ -1,16 +1,16 @@
 from pathlib import Path
 
-from fermieopt.excel_output import cExcelFcts, create_report_grouped, visualize_results
-from fermieopt.flixPostprocessingXL import flixPostXL
+from fermieopt.excel_output import ExcelFcts, create_report_grouped, visualize_results
+from fermieopt.flixPostprocessingXL import FLixPostXL
 
-calc_results = flixPostXL(
-    nameOfCalc='2025-01-06_Basis+TAB-2030',
+calc_results = FLixPostXL(
+    calculation_name='2025-01-06_Basis+TAB-2030',
     results_folder=r'C:\Users\FELIBUMA\Downloads\Test_new_model\2025-01-06_Basis+TAB-2030\SolveResults',
-    outputYears=[2030],
+    output_years=[2030],
 )
 
 
-# excel = cExcelFcts(calc_results)
+# excel = ExcelFcts(calc_results)
 # excel.run_excel_graphics_main()
 # excel.run_excel_graphics_years()
 

@@ -12,7 +12,7 @@ from openpyxl import load_workbook
 from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-from fermieopt.flixPostprocessingXL import flixPostXL
+from fermieopt.flixPostprocessingXL import FLixPostXL
 
 logger = logging.getLogger('flixOpt')
 
@@ -285,7 +285,7 @@ def df_to_excel_w_chart(
     wb.save(filepath)
 
 
-class cExcelFcts:
+class ExcelFcts:
     """
     This class is thightly coulpled with 2 excel templates. Originally designed for a specific use case and predefined system,
     class now accepts labels for components, that will be acessed in the visualization.
@@ -294,7 +294,7 @@ class cExcelFcts:
 
     def __init__(
         self,
-        calc: flixPostXL,
+        calc: FLixPostXL,
         costs_label: str = 'costs',
         funding_label: str = 'funding',
         co2_label_fw: str = 'CO2FW',
@@ -320,14 +320,14 @@ class cExcelFcts:
         Generate detailed annual comparison plots and save them to individual Excel workbooks for each year.
 
         Parameters:
-        - calc (flixPostXL): Solved calculation of type flixPostXL.
+        - calc (FLixPostXL): Solved calculation of type FLixPostXL.
         - short_version (bool): If True, generate a shortened version of the plots. Default is False.
         - custom_output_file_path (str): A custom output folder path for the Excel workbooks. default: Same as calc.
 
         Returns:
         None
 
-        The function generates detailed annual comparison plots based on the provided calculation results (flixPostXL)
+        The function generates detailed annual comparison plots based on the provided calculation results (FLixPostXL)
         and saves them to individual Excel workbooks. The workbooks are created using a template specified in the calculation.
 
         Plots and corresponding data are organized into different sheets within each workbook for the specified years:
@@ -358,7 +358,7 @@ class cExcelFcts:
 
         Example:
         ```
-        calc = flixPostXL(...)  # Create or obtain flixPostXL instance
+        calc = FLixPostXL(...)  # Create or obtain FLixPostXL instance
         run_excel_graphics_years(calc)  # Save the detailed workbooks in the default location
         run_excel_graphics_years(
             calc, short_version=True
@@ -378,35 +378,35 @@ class cExcelFcts:
 
         # computation for the whole calculation
 
-        df_fernwaerme_erz_nach_techn_D = self.get_fernwaerme_erz(resamply_by='d', rs_method='mean')  # Wärmeerzeugung
+        df_fernwaerme_erz_nach_techn_d = self.get_fernwaerme_erz(resamply_by='d', rs_method='mean')  # Wärmeerzeugung
 
-        df_installierte_leistung_Y = self.get_installierte_leistung_pro_jahr(grouped=True)
+        df_installierte_leistung_y = self.get_installierte_leistung_pro_jahr(grouped=True)
 
-        df_waermekosten_varCosts_D = self.get_waermekosten_operation(resamply_by='d')
+        df_waermekosten_variable_costs_d = self.get_waermekosten_operation(resamply_by='d')
 
-        df_emissions_D = self.get_emissions(resamply_by='d', rs_method='sum')
+        df_emissions_d = self.get_emissions(resamply_by='d', rs_method='sum')
 
-        df_eingesetzte_energietraeger_D = self.get_eingesetzte_energietraeger(resamply_by='d', rs_method='mean')
+        df_eingesetzte_energietraeger_d = self.get_eingesetzte_energietraeger(resamply_by='d', rs_method='mean')
 
-        df_stromerzeugung_D = self.get_stromerzeugung(resamply_by='d')
+        df_stromerzeugung_d = self.get_stromerzeugung(resamply_by='d')
 
-        df_speicher_kapazitaet_D = self.get_speicher_kapazitaet(
+        df_speicher_kapazitaet_d = self.get_speicher_kapazitaet(
             resamply_by='d', grouped=True, actual_storage_capacity=True
         )
 
-        df_speicher_fuellstand_D = self.get_speicher_fuellstand('d', 'mean', allocated=False)
+        df_speicher_fuellstand_d = self.get_speicher_fuellstand('d', 'mean', allocated=False)
 
-        df_speicher_flows_D = self.get_speicher_flows('d', 'mean', allocated=False)
+        df_speicher_flows_d = self.get_speicher_flows('d', 'mean', allocated=False)
 
-        df_fernwaerme_erz_nach_techn_H = self.get_fernwaerme_erz(resamply_by='h', rs_method='mean')
+        df_fernwaerme_erz_nach_techn_h = self.get_fernwaerme_erz(resamply_by='h', rs_method='mean')
 
-        df_speicher_fuellstand_H = self.get_speicher_fuellstand('h', 'mean', allocated=False)
-        df_speicher_fuellstand_H_alloc = self.get_speicher_fuellstand('h', 'mean', allocated=True)
+        df_speicher_fuellstand_h = self.get_speicher_fuellstand('h', 'mean', allocated=False)
+        df_speicher_fuellstand_h_alloc = self.get_speicher_fuellstand('h', 'mean', allocated=True)
 
         logger.info('......computation of data for short version finished')
         if not short_version:
             # Erzeugung ungrouped
-            df_fernwaerme_erz_H = self.get_fernwaerme_erz_individual()
+            df_fernwaerme_erz_h = self.get_fernwaerme_erz_individual()
 
         # TODO: weitere Grafiken
 
@@ -422,66 +422,66 @@ class cExcelFcts:
 
             with pd.ExcelWriter(path_excel_year, mode='a', engine='openpyxl', if_sheet_exists='overlay') as writer:
                 # Wärmeerzeugung nach Technologie
-                df = df_fernwaerme_erz_nach_techn_D[df_fernwaerme_erz_nach_techn_D.index.year == year]
+                df = df_fernwaerme_erz_nach_techn_d[df_fernwaerme_erz_nach_techn_d.index.year == year]
                 df.to_excel(writer, index=True, sheet_name='Wärmeerzeugung')
 
                 # Installierte Leistung nach Technologie
-                df = df_installierte_leistung_Y[df_installierte_leistung_Y.index == year]
+                df = df_installierte_leistung_y[df_installierte_leistung_y.index == year]
                 df.to_excel(writer, index=True, sheet_name='Installierte Leistung')
 
                 # Wärmekosten Betrieb
-                df = df_waermekosten_varCosts_D[df_waermekosten_varCosts_D.index.year == year]
+                df = df_waermekosten_variable_costs_d[df_waermekosten_variable_costs_d.index.year == year]
                 df.to_excel(writer, index=True, sheet_name='Wärmekosten Variabel')
 
                 # Emissionen
-                df = df_emissions_D[df_emissions_D.index.year == year]
+                df = df_emissions_d[df_emissions_d.index.year == year]
                 df.to_excel(writer, index=True, sheet_name='Emissionen')
 
                 # Energieträger
-                df = df_eingesetzte_energietraeger_D[df_eingesetzte_energietraeger_D.index.year == year]
+                df = df_eingesetzte_energietraeger_d[df_eingesetzte_energietraeger_d.index.year == year]
                 df.to_excel(writer, index=True, sheet_name='Energieträger')
 
                 # Stromerzeugung
-                df = df_stromerzeugung_D[df_stromerzeugung_D.index.year == year]
+                df = df_stromerzeugung_d[df_stromerzeugung_d.index.year == year]
                 df.to_excel(writer, index=True, sheet_name='Stromerzeugung')
 
                 # Speicherkapazität allokiert
-                df = df_speicher_kapazitaet_D[df_speicher_kapazitaet_D.index.year == year]
+                df = df_speicher_kapazitaet_d[df_speicher_kapazitaet_d.index.year == year]
                 df.to_excel(writer, index=True, sheet_name='Speicherkapazität')
 
                 # Speicherfüllstand nicht allokiert (Tageswerte)
-                df = df_speicher_fuellstand_D[df_speicher_fuellstand_D.index.year == year]
+                df = df_speicher_fuellstand_d[df_speicher_fuellstand_d.index.year == year]
                 df.to_excel(writer, index=True, sheet_name='Speicherfüllstand D')
 
                 # Speicherflows nicht allokiert (Tageswerte)
-                df = df_speicher_flows_D[df_speicher_flows_D.index.year == year]
+                df = df_speicher_flows_d[df_speicher_flows_d.index.year == year]
                 df.to_excel(writer, index=True, sheet_name='SpeicherFlows D')
 
                 # Wärmeerzeugung als Jahresdauerlinien (Stundenwerte)
-                df = df_fernwaerme_erz_nach_techn_H[df_fernwaerme_erz_nach_techn_H.index.year == year]
+                df = df_fernwaerme_erz_nach_techn_h[df_fernwaerme_erz_nach_techn_h.index.year == year]
                 df.reset_index(drop=True).to_excel(writer, index=True, sheet_name='Wärmeerzeugung-H')
 
                 # Wärmeerzeugung im Februar und Juli (Stundenwerte)
-                df = df_fernwaerme_erz_nach_techn_H[df_fernwaerme_erz_nach_techn_H.index.year == year]
+                df = df_fernwaerme_erz_nach_techn_h[df_fernwaerme_erz_nach_techn_h.index.year == year]
                 df.loc[df.index.month == 2].to_excel(writer, index=True, sheet_name='Wärmeerzeugung_Februar')
                 df.loc[df.index.month == 7].to_excel(writer, index=True, sheet_name='Wärmeerzeugung_Juli')
 
                 # Jahresdauerlinien der einzelnen Wärmeerzeuger (Stundenwerte)
-                df = df_fernwaerme_erz_nach_techn_H[df_fernwaerme_erz_nach_techn_H.index.year == year]
+                df = df_fernwaerme_erz_nach_techn_h[df_fernwaerme_erz_nach_techn_h.index.year == year]
                 df = pd.DataFrame(-np.sort(-df.values, axis=0), columns=df.columns)
                 df.to_excel(writer, index=True, sheet_name='Wärmeerzeugung-Sorted')
 
                 # Speicherfüllstand (Stundenwerte) allokiert
-                df = df_speicher_fuellstand_H_alloc[df_speicher_fuellstand_H_alloc.index.year == year]
+                df = df_speicher_fuellstand_h_alloc[df_speicher_fuellstand_h_alloc.index.year == year]
                 df.to_excel(writer, index=True, sheet_name='Speicher Summen')
 
                 # Speicherfüllstand (Stundenwerte) nicht allokiert
-                df = df_speicher_fuellstand_H[df_speicher_fuellstand_H.index.year == year]
+                df = df_speicher_fuellstand_h[df_speicher_fuellstand_h.index.year == year]
                 df.to_excel(writer, index=True, sheet_name='Speicherfüllstand H')
 
                 logger.info(f'......Year-{year} finished (short version)')
                 if not short_version:
-                    df = df_fernwaerme_erz_H[df_fernwaerme_erz_H.index.year == year]
+                    df = df_fernwaerme_erz_h[df_fernwaerme_erz_h.index.year == year]
                     df.reset_index(drop=True).to_excel(writer, index=True, sheet_name='Wärmeerzeugung-Einzeln')
             logger.info(f'...Year-{year} finished')
 
@@ -494,13 +494,13 @@ class cExcelFcts:
         Generate annual comparison plots and save them to an Excel workbook.
 
         Parameters:
-        - calc (flixPostXL): Solved calculation of type flixPostXL.
+        - calc (FLixPostXL): Solved calculation of type FLixPostXL.
         - custom_output_file_path (str): A custom output file path (full path) for the Excel workbook. Default: Same as calc.
 
         Returns:
         None
 
-        The function generates various annual comparison plots based on the provided calculation results (flixPostXL)
+        The function generates various annual comparison plots based on the provided calculation results (FLixPostXL)
         and saves them to an Excel workbook. The workbook is created using a template specified in the calculation.
 
         Plots and corresponding data are organized into different sheets within the workbook:
@@ -522,7 +522,7 @@ class cExcelFcts:
 
         Example:
         ```
-        calc = flixPostXL(...)  # Create or obtain flixPostXL instance
+        calc = FLixPostXL(...)  # Create or obtain FLixPostXL instance
         run_excel_graphics_main(calc)  # Save the workbook in the default location
         run_excel_graphics_main(
             calc, custom_output_file_path='path/to/save/file.xlsx'
@@ -572,15 +572,15 @@ class cExcelFcts:
             df = self.get_stromerzeugung(resamply_by='YE')
             df.to_excel(writer, index=True, sheet_name='Stromerzeugung')
 
-            df_speicher_kapazitaet_Y = self.get_speicher_kapazitaet(
+            df_speicher_kapazitaet_y = self.get_speicher_kapazitaet(
                 resamply_by='YE', grouped=True, actual_storage_capacity=False
             )
-            df_speicher_kapazitaet_Y.to_excel(writer, index=True, sheet_name='Speicherkapazität')
+            df_speicher_kapazitaet_y.to_excel(writer, index=True, sheet_name='Speicherkapazität')
 
-            df_speicher_fuellstand_sum_H = self.get_speicher_fuellstand('h', 'mean', allocated=True).reset_index(
+            df_speicher_fuellstand_sum_h = self.get_speicher_fuellstand('h', 'mean', allocated=True).reset_index(
                 drop=True
             )
-            df_speicher_fuellstand_sum_H.to_excel(writer, index=True, sheet_name='Speicher Summen')
+            df_speicher_fuellstand_sum_h.to_excel(writer, index=True, sheet_name='Speicher Summen')
 
         logger.info('...Overview Plots to Excel finished')
 
@@ -625,7 +625,7 @@ class cExcelFcts:
         -------
         pd.DataFrame
         """
-        df_fernwaerme = self.calc.to_dataFrame(self.label_main_bus, 'inout', grouped=True)
+        df_fernwaerme = self.calc.to_data_frame(self.label_main_bus, 'inout', grouped=True)
         if resamply_by == 'YE':
             df_fernwaerme.drop(
                 columns=[self.group_label_heat_demand_w_loss], inplace=True
@@ -663,7 +663,7 @@ class cExcelFcts:
                     columns_to_remove.append(col)
             return df.drop(columns=columns_to_remove)
 
-        df_fernwaerme = self.calc.to_dataFrame(self.label_main_bus, 'inout', grouped=False)
+        df_fernwaerme = self.calc.to_data_frame(self.label_main_bus, 'inout', grouped=False)
         if threshold and threshold == 'auto':
             if threshold == 'auto':
                 tolerance = 0.01 / 100 * df_fernwaerme.values.max()  # 0.01% as trheshold
@@ -711,7 +711,7 @@ class cExcelFcts:
         -------
         pd.DataFrame
         """
-        heat = self.calc.to_dataFrame(self.label_demand, 'in')
+        heat = self.calc.to_data_frame(self.label_demand, 'in')
 
         costs_total = pd.Series(
             self.calc.get_effect_results(effect_label=self.costs_label, origin='operation', as_TS=True),
@@ -734,23 +734,23 @@ class cExcelFcts:
             mean_costs_increment / mean_heat_increment, columns=['EURvarPerMWh']
         )
 
-        minY = resample_data(mean_costs_per_heat_increment, self.calc.years, resamply_by, 'min', rs_method_base)
-        maxY = resample_data(mean_costs_per_heat_increment, self.calc.years, resamply_by, 'max', rs_method_base)
+        yearly_min = resample_data(mean_costs_per_heat_increment, self.calc.years, resamply_by, 'min', rs_method_base)
+        yearly_max = resample_data(mean_costs_per_heat_increment, self.calc.years, resamply_by, 'max', rs_method_base)
         increment_sum_of_costs_total = resample_data(
             mean_costs_increment, self.calc.years, resamply_by, 'sum', rs_method_base
         ).iloc[:, 0]
         increment_sum_of_heat_total = resample_data(
             mean_heat_increment, self.calc.years, resamply_by, 'sum', rs_method_base
         ).iloc[:, 0]
-        meanY = increment_sum_of_costs_total / increment_sum_of_heat_total
+        yearly_mean = increment_sum_of_costs_total / increment_sum_of_heat_total
 
-        df = pd.concat([meanY, minY, maxY], axis=1)
+        df = pd.concat([yearly_mean, yearly_min, yearly_max], axis=1)
         df.columns = new_columns
 
         return df
 
     def get_waermekosten_per_period(self, with_fix_costs: bool):
-        heat = pd.DataFrame(self.calc.to_dataFrame(self.label_demand, 'in'))
+        heat = pd.DataFrame(self.calc.to_data_frame(self.label_demand, 'in'))
         costs_operation = self.calc.get_effect_results(effect_label=self.costs_label, origin='operation', as_TS=True)
 
         heat = resample_data(heat, self.calc.years, 'YE', 'sum')
@@ -786,17 +786,17 @@ class cExcelFcts:
         -------
         pd.DataFrame
         """
-        heat = self.calc.to_dataFrame(self.label_demand, 'in')
+        heat = self.calc.to_data_frame(self.label_demand, 'in')
 
-        CO2 = pd.DataFrame(
+        co2 = pd.DataFrame(
             self.calc.get_effect_results(effect_label=self.co2_label_fw, origin='operation', as_TS=True),
             index=self.calc.time,
         )
 
-        CO2_per_increment = resample_data(CO2, self.calc.years, resamply_by, rs_method).iloc[:, 0]
+        co2_per_increment = resample_data(co2, self.calc.years, resamply_by, rs_method).iloc[:, 0]
         heat_per_increment = resample_data(heat, self.calc.years, resamply_by, rs_method).iloc[:, 0]
-        CO2_per_heat = CO2_per_increment / heat_per_increment * 1000  # from t/MWh to kg/MWh
-        df_emissions = pd.concat([CO2_per_heat.round(1), CO2_per_increment, heat_per_increment], axis=1)
+        co2_per_heat = co2_per_increment / heat_per_increment * 1000  # from t/MWh to kg/MWh
+        df_emissions = pd.concat([co2_per_heat.round(1), co2_per_increment, heat_per_increment], axis=1)
         df_emissions.columns = ['kgCO2PerMWh', 'tCO2absolut', 'MWhabsolut']
 
         return df_emissions
@@ -845,7 +845,7 @@ class cExcelFcts:
             if resamply_by = "d": ["Tagesmittel", "Minimum (Stunde)", "Maximum (Stunde)"]
             if resamply_by = "YE": ["Jahresmittel", "Minimum (Tagesmittel)", "Maximum (Tagesmittel)"],
         """
-        df_stromerzeugung = self.calc.to_dataFrame(self.label_electr_production, 'out', invert_Output=False)
+        df_stromerzeugung = self.calc.to_data_frame(self.label_electr_production, 'out', invert_Output=False)
         df = rs_in_two_steps(df_stromerzeugung, self.calc.years, resamply_by, 'h')
 
         return df
@@ -896,24 +896,24 @@ class cExcelFcts:
         -------
         resampled DataFrame with total charge_state of all Storages
         """
-        df_speicher_chargeState = pd.DataFrame(index=self.calc.time)
-        df_speicher_nettoFlow = pd.DataFrame(index=self.calc.time)
+        df_speicher_charge_state = pd.DataFrame(index=self.calc.time)
+        df_speicher_netto_flow = pd.DataFrame(index=self.calc.time)
 
         for comp in self.calc.storages:
-            df_speicher_chargeState[comp] = self.calc.component_results[comp].all_results['charge_state'][
+            df_speicher_charge_state[comp] = self.calc.component_results[comp].all_results['charge_state'][
                 :-1
             ]  # without the last step
-            df_speicher_nettoFlow[comp] = self.calc.component_results[comp].all_results['netto_discharge']
+            df_speicher_netto_flow[comp] = self.calc.component_results[comp].all_results['netto_discharge']
 
         if allocated:
-            charge_state_sum = df_speicher_chargeState.sum(axis=1)
-            netto_flow_sum = df_speicher_nettoFlow.sum(axis=1) * -1
+            charge_state_sum = df_speicher_charge_state.sum(axis=1)
+            netto_flow_sum = df_speicher_netto_flow.sum(axis=1) * -1
 
             df = pd.concat([charge_state_sum, netto_flow_sum], axis=1)
             df.columns = ['Gesamtspeicherstand', 'Nettospeicherflow']
             df = resample_data(df, self.calc.years, resamply_by, rs_method)
         else:
-            df = resample_data(df_speicher_chargeState, self.calc.years, resamply_by, rs_method)
+            df = resample_data(df_speicher_charge_state, self.calc.years, resamply_by, rs_method)
 
         return df
 
@@ -953,17 +953,17 @@ class cExcelFcts:
         -------
         resampled DataFrame with total charge_state of all Storages
         """
-        df_speicher_nettoFlow = pd.DataFrame(index=self.calc.time)
+        df_speicher_netto_flow = pd.DataFrame(index=self.calc.time)
 
         for comp in self.calc.storages:
-            df_speicher_nettoFlow[comp] = self.calc.component_results[comp].all_results['netto_discharge'] * -1
+            df_speicher_netto_flow[comp] = self.calc.component_results[comp].all_results['netto_discharge'] * -1
 
         if allocated:
-            df = df_speicher_nettoFlow.sum(axis=1)
+            df = df_speicher_netto_flow.sum(axis=1)
             df = resample_data(df, self.calc.years, resamply_by, rs_method)
             df.columns = ['Nettospeicherflow']
         else:
-            df = resample_data(df_speicher_nettoFlow, self.calc.years, resamply_by, rs_method)
+            df = resample_data(df_speicher_netto_flow, self.calc.years, resamply_by, rs_method)
 
         return df
 
@@ -1024,14 +1024,14 @@ class cExcelFcts:
 
 
 def write_bus_results_to_excel(
-    calc: flixPostXL, resample_by: Literal['YE', 'd', 'h'] = 'd', custom_output_file_path: str = 'default'
+    calc: FLixPostXL, resample_by: Literal['YE', 'd', 'h'] = 'd', custom_output_file_path: str = 'default'
 ):
     """
     Save the in- and out-flows of every bus to an Excel file.
 
     Parameters
     ----------
-    calc : flixPostXL
+    calc : FLixPostXL
         The flixPostXL object containing the calculation results.
     resample_by : str, optional
         The time frequency for resampling data (e.g., 'd' for daily), by default "d".
@@ -1064,14 +1064,14 @@ def write_bus_results_to_excel(
 
 
 def write_component_results_to_excel(
-    calc: flixPostXL, resample_by: Literal['YE', 'd', 'h'] = 'd', custom_output_file_path: str = 'default'
+    calc: FLixPostXL, resample_by: Literal['YE', 'd', 'h'] = 'd', custom_output_file_path: str = 'default'
 ):
     """
     Save the in- and out-flows of every component to an Excel file.
 
     Parameters
     ----------
-    calc : flixPostXL
+    calc : FLixPostXL
         The flixPostXL object containing the calculation results.
     resample_by : str, optional
         The time frequency for resampling data (e.g., 'd' for daily), by default "d".
@@ -1103,7 +1103,7 @@ def write_component_results_to_excel(
     logger.info(f'......Components ({resample_by}) finished')
 
 
-def write_effects_per_comp_per_period_to_excel(calc: flixPostXL, custom_output_file_path: str = 'default'):
+def write_effects_per_comp_per_period_to_excel(calc: FLixPostXL, custom_output_file_path: str = 'default'):
     """
     Saving the effects of every component per period to excel
     """
@@ -1130,7 +1130,7 @@ def write_effects_per_comp_per_period_to_excel(calc: flixPostXL, custom_output_f
 
 
 def visualize_results(
-    calc_results: flixPostXL,
+    calc_results: FLixPostXL,
     effects_per_comp_and_year: bool = True,
     buses_yearly: bool = True,
     comps_yearly: bool = True,
@@ -1180,7 +1180,7 @@ def visualize_results(
         effects_hourly (bool): Whether to write hourly results for effects to excel. Default is False.
 
     Returns:
-        flixPostXL: The calculated results.
+        FLixPostXL: The calculated results.
     """
     logger.info('Writing Results to Excel (YE)...')
     if buses_yearly:
@@ -1207,7 +1207,7 @@ def visualize_results(
 
 
 ################## PDF - OUTPUT ####################
-def create_report(calc: flixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4):
+def create_report(calc: FLixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4):
     logger.info(f"Creating Report of Components connected to '{connected_to}'")
     res = calc.bus_results[connected_to]
     flows_to_plot = [
@@ -1224,8 +1224,8 @@ def create_report(calc: flixPostXL, path: str = 'report.pdf', connected_to: str 
                 axes = np.array([axes])
 
             for ax, flow_name in zip(axes.flatten(), chunk, strict=False):
-                fig, ax = calc.plotOperationColorMap(
-                    flow_name, nbPeriods=365 * len(calc.years), fig=fig, ax=ax, ylabel='time of day', xlabel='day'
+                fig, ax = calc.plot_operation_color_map(
+                    flow_name, nb_of_periods=365 * len(calc.years), fig=fig, ax=ax, ylabel='time of day', xlabel='day'
                 )
                 ax.set_title(flow_name)  # Set individual title for each subplot
 
@@ -1234,7 +1234,7 @@ def create_report(calc: flixPostXL, path: str = 'report.pdf', connected_to: str 
 
 
 def create_report_grouped(
-    calc: flixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4
+    calc: FLixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4
 ) -> None:
     logger.info(f"Creating Report of Components connected to '{connected_to}'")
     # Filtering and sorting
@@ -1264,8 +1264,8 @@ def create_report_grouped(
                     axes = np.array([axes])
 
                 for ax, flow_name in zip(axes.flatten(), chunk, strict=False):
-                    fig, ax = calc.plotOperationColorMap(
-                        flow_name, nbPeriods=365 * len(calc.years), fig=fig, ax=ax, ylabel='time of day', xlabel='day'
+                    fig, ax = calc.plot_operation_color_map(
+                        flow_name, nb_of_periods=365 * len(calc.years), fig=fig, ax=ax, ylabel='time of day', xlabel='day'
                     )
                     ax.set_title(flow_name)  # Set individual title for each subplot
 
@@ -1274,7 +1274,7 @@ def create_report_grouped(
                 plt.close()
 
 
-def create_report_per_comp(calc: flixPostXL, path: str = 'report.pdf') -> None:
+def create_report_per_comp(calc: FLixPostXL, path: str = 'report.pdf') -> None:
     # Filtering and sorting
     components = {
         comp_label: sorted([flow.label_full for flow in comp.inputs + comp.outputs])
@@ -1285,15 +1285,15 @@ def create_report_per_comp(calc: flixPostXL, path: str = 'report.pdf') -> None:
 
     with PdfPages(path) as pdf:
         for comp_name in components_sorted:
-            nrOfSubplots = len(components[comp_name])
+            nb_of_subplots = len(components[comp_name])
             fig, axes = plt.subplots(
-                nrOfSubplots, 1, figsize=(8.27, 11.69 / 4 * nrOfSubplots), sharex=True, sharey=True
+                nb_of_subplots, 1, figsize=(8.27, 11.69 / 4 * nb_of_subplots), sharex=True, sharey=True
             )  # A4 size
             if not isinstance(axes, np.ndarray):  # If only one item in batch, axes is not a list...
                 axes = np.array([axes])
             for ax, flow_name in zip(axes.flatten(), components[comp_name], strict=False):
-                fig, ax = calc.plotOperationColorMap(
-                    flow_name, nbPeriods=365 * len(calc.years), fig=fig, ax=ax, ylabel='time of day', xlabel='day'
+                fig, ax = calc.plot_operation_color_map(
+                    flow_name, nb_of_periods=365 * len(calc.years), fig=fig, ax=ax, ylabel='time of day', xlabel='day'
                 )
                 ax.set_title(flow_name)  # Set individual title for each subplot
             fig.text(0.5, 0.95, f'{comp_name}', ha='center', va='center', fontsize=14, weight='bold')  # Add big header

@@ -15,7 +15,7 @@ from rich.console import Console
 
 from fermieopt.DistrictHeatingComps import ElementFactory, exists, extract_data, numbers_from_str
 from fermieopt.excel_input import ExcelData
-from fermieopt.flixPostprocessingXL import flixPostXL
+from fermieopt.flixPostprocessingXL import FLixPostXL
 
 logger = logging.getLogger('flixOpt')
 
@@ -68,11 +68,11 @@ class ExcelModel:
 
             log_file.write(calc_info)
 
-    def load_results(self) -> flixPostXL:
-        return flixPostXL(
-            nameOfCalc=self.calc_name,
+    def load_results(self) -> FLixPostXL:
+        return FLixPostXL(
+            calculation_name=self.calc_name,
             results_folder=os.path.join(self.final_directory, 'SolveResults'),
-            outputYears=self.years,
+            output_years=self.years,
         )
 
     def _create_dirs_and_save_input_data(self):
@@ -270,25 +270,25 @@ class DistrictHeatingSystem:
         return busses
 
     def create_helpers(self) -> List[flixOpt.structure.Element]:
-        Pout1 = fx.Flow(
+        p_out1 = fx.Flow(
             label='Strompreis',
             bus=self.busses['StromEinspeisung'],
             size=0,
             effects_per_flow_hour=extract_data('Strom', self.time_series_data),
         )
-        Pout2 = fx.Flow(
+        p_out2 = fx.Flow(
             label='Gaspreis',
             bus=self.busses['Erdgas'],
             size=0,
             effects_per_flow_hour=extract_data('Erdgas', self.time_series_data),
         )
-        Pout3 = fx.Flow(
+        p_out3 = fx.Flow(
             label='Wasserstoffpreis',
             bus=self.busses['Wasserstoff'],
             size=0,
             effects_per_flow_hour=extract_data('Wasserstoff', self.time_series_data),
         )
-        Pout4 = fx.Flow(
+        p_out4 = fx.Flow(
             label='EBSPreis',
             bus=self.busses['EBS'],
             size=0,
@@ -299,8 +299,8 @@ class DistrictHeatingSystem:
             fx.LinearConverter(
                 label='HelperPreise',
                 inputs=[],
-                outputs=[Pout1, Pout2, Pout3, Pout4],
-                conversion_factors=[{Pout1: 1, Pout2: 1, Pout3: 1, Pout4: 1}],
+                outputs=[p_out1, p_out2, p_out3, p_out4],
+                conversion_factors=[{p_out1: 1, p_out2: 1, p_out3: 1, p_out4: 1}],
             )
         ]
 
