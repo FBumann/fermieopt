@@ -1271,12 +1271,12 @@ class ElementFactory:
 
         self.created_comps: List[Element] = []
 
-    def create_energy_object(self, obj_type: str, properties: Dict):
+    def create_energy_object(self, obj_type: str, properties: Dict) -> None:
         obj_class = self.get_class_by_type(obj_type)
         if obj_class:
             energy_obj: Element = obj_class(**properties)
             self.created_comps.append(energy_obj)
-            return energy_obj.add_to_flow_system(
+            energy_obj.add_to_flow_system(
                 flow_system=self.flow_system,
                 effects=self.effects,
                 busses=self.busses,
@@ -1284,6 +1284,7 @@ class ElementFactory:
                 co2_factors=self.co2_factors,
                 years_of_model=self.years_of_model,
             )
+            logger.info(f'Created {obj_type} "{energy_obj.name}"')
         else:
             raise ValueError(f'Unknown energy object type: {obj_type}')
 
