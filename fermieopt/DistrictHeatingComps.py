@@ -217,6 +217,7 @@ class PowerInvestElement(InvestElement):
         return float(self.power.split('-')[1]) if isinstance(self.power, str) else None
 
     @field_validator('power', mode='after')
+    @classmethod
     def validate_power(cls, value):
         return validate_invest_range(value, label='Nennleistung [MW]')
 
@@ -274,6 +275,7 @@ class ThermalInvestElement(InvestElement):
         return super().needs_investment or self.grid_fee_per_year != 0
 
     @field_validator('thermal_power', mode='after')
+    @classmethod
     def validate_thermal_power(cls, value):
         return validate_invest_range(value, label='Thermische Leistung [MW]')
 
@@ -863,6 +865,7 @@ class Speicher(ThermalInvestElement):
         return (self.temperature_upper - self.temperature_lower) / self.default_temperature_spread
 
     @field_validator('grid_fee_per_year')
+    @classmethod
     def validate_grid_fee(cls, value):
         if value is not None:
             raise ValueError(f"Netzentgelt is not supported for '{cls.__name__}")
@@ -1220,6 +1223,7 @@ class KWKekt(InvestElement):
         return comp
 
     @field_validator('electrical_power', mode='before')
+    @classmethod
     def validate_electrical_power(cls, value):
         start_end = numbers_from_str(value)
         if len(start_end) != 2:
@@ -1228,6 +1232,7 @@ class KWKekt(InvestElement):
             return start_end
 
     @field_validator('thermal_power', mode='before')
+    @classmethod
     def validate_thermal_power(cls, value):
         return numbers_from_str(value)
 
