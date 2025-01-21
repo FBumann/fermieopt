@@ -267,7 +267,7 @@ class ExcelModel:
 
     @property
     def final_directory(self) -> pathlib.Path:
-        return self.excel_data.results_directory / self.calc_name
+        return self.excel_data.meta_data.results_directory / self.calc_name
 
     @property
     def calc_name(self) -> str:
