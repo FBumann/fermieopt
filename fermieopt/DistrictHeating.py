@@ -1,7 +1,7 @@
 import datetime
-import pathlib
 import logging
 import os
+import pathlib
 import shutil
 from typing import Dict, List, Optional
 
@@ -283,8 +283,8 @@ class ExcelModel:
 
     def _create_invest_groups(self):
         effects = {}
-        for comp_type, comps in self.excel_data.components_data.items():
-            for comp in comps:
+        for comp_infos in self.excel_data.components_data.values():
+            for comp in comp_infos:
                 label = comp.get('Investgruppe')
                 if isinstance(label, str) and label not in effects.keys():
                     limits = label.split(':')[-1]

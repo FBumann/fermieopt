@@ -177,7 +177,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
         self.time_series_data = self._read_time_series_data(excel_file)
 
         # Extract component data (assuming it's in separate sheets named by component)
-        self.components_data  = self._read_components(
+        self.components_data = self._read_components(
             excel_file,
             self.meta_data.sheets_components,
             valid_keys=[
