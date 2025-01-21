@@ -442,8 +442,8 @@ class Kessel(FuelThermalInvestElement):
 
 class KWK(FuelThermalInvestElement):
     eta_el: Union[int, float, str] = Field(alias='Elektrischer Wirkungsgrad')
-    forward_flow_temperature: Union[int, float, str] = Field(alias='Vorlauftemperatur', default='TVL_FWN')
-    reverse_flow_temperature: Union[int, float, str] = Field(alias='Rücklauftemperatur', default='TRL_FWN')
+    forward_flow_temperature: Union[int, float, str] = Field(alias='Vorlauftemperatur', default='Vorlauftemperatur Fernwärme [°C]')
+    reverse_flow_temperature: Union[int, float, str] = Field(alias='Rücklauftemperatur', default='Rücklauftemperatur Fernwärme [°C]')
     ambient_temperature: Union[int, float, str] = Field(alias='Umgebungstemperatur', default='Tamb')
 
     bus_elec: str = Field(alias='Strombus', default='StromEinspeisung')
@@ -739,8 +739,8 @@ class Speicher(ThermalInvestElement):
     loss_per_hour: Union[int, float, str] = Field(alias='VerlustProStunde', default=0)
 
     depends_on_temperature: bool = Field(alias='AbhängigkeitVonDT', default=False)
-    temperature_lower: Union[int, float, str] = Field(alias='Untere Temperatur', default='TRL_FWN')
-    temperature_upper: Union[int, float, str] = Field(alias='Obere Temperatur', default='TVL_FWN')
+    temperature_lower: Union[int, float, str] = Field(alias='Untere Temperatur', default='Rücklauftemperatur Fernwärme [°C]')
+    temperature_upper: Union[int, float, str] = Field(alias='Obere Temperatur', default='Vorlauftemperatur Fernwärme [°C]')
 
     default_temperature_spread: Union[int, float] = Field(alias='Nenn-Temperaturspreizung', default=65)
 
