@@ -65,7 +65,7 @@ class MetaData(BaseModel):
     @field_validator('co2_factors', mode='before')
     @classmethod
     def convert_co2_factors(cls, co2_factor_gas):
-        return {'Gas': co2_factor_gas}
+        return {'Erdgas': co2_factor_gas}
 
     @field_validator('sheets_components', mode='before')
     @classmethod
