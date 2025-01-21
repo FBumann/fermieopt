@@ -1264,7 +1264,12 @@ def create_report_grouped(
 
                 for ax, flow_name in zip(axes.flatten(), chunk, strict=False):
                     fig, ax = calc.plot_operation_color_map(
-                        flow_name, nb_of_periods=365 * len(calc.years), fig=fig, ax=ax, ylabel='time of day', xlabel='day'
+                        flow_name,
+                        nb_of_periods=365 * len(calc.years),
+                        fig=fig,
+                        ax=ax,
+                        ylabel='time of day',
+                        xlabel='day',
                     )
                     ax.set_title(flow_name)  # Set individual title for each subplot
 

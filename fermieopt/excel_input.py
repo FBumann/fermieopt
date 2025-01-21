@@ -1,11 +1,11 @@
-import pathlib
 import logging
+import pathlib
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator, ValidationError
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
 logger = logging.getLogger('flixOpt')
 
@@ -14,13 +14,16 @@ class MetaData(BaseModel):
     """
     A Pydantic model to represent metadata related to Excel data.
     """
-    results_directory: pathlib.Path = Field(alias='Speicherort', description="The directory where results are stored.")
-    calc_name: str = Field(alias='Name', description="The name of the calculation.")
-    co2_factors: float = Field(alias='CO2 Faktor Erdgas [t/MWh_hu]', description="A dictionary mapping sources to CO2 factors.")
-    sheets_components: List[str] = Field(alias='Erzeuger Sheets', description="A list of sheet names for components.")
+
+    results_directory: pathlib.Path = Field(alias='Speicherort', description='The directory where results are stored.')
+    calc_name: str = Field(alias='Name', description='The name of the calculation.')
+    co2_factors: float = Field(
+        alias='CO2 Faktor Erdgas [t/MWh_hu]', description='A dictionary mapping sources to CO2 factors.'
+    )
+    sheets_components: List[str] = Field(alias='Erzeuger Sheets', description='A list of sheet names for components.')
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame) -> "MetaData":
+    def from_dataframe(cls, df: pd.DataFrame) -> 'MetaData':
         """
         Extracts the metadata from a DataFrame and validates it.
 
@@ -46,7 +49,7 @@ class MetaData(BaseModel):
         try:
             return cls(**data_dict)
         except ValidationError as e:
-            print("Validation error:", e)
+            print('Validation error:', e)
             raise
 
     @field_validator('results_directory', mode='before')
@@ -61,15 +64,18 @@ class MetaData(BaseModel):
 
 
 class MetaDataTime(BaseModel):
-
-    sheets_time_series: List[str] = Field(alias='Zeitreihen Sheets', description="A list of sheet names for time series data.")
-    sheets_time_series_others: Optional[List[str]] = Field(alias='Sonstige Zeitreihen Sheets', description="An aditional list of sheet names for time series data.")
+    sheets_time_series: List[str] = Field(
+        alias='Zeitreihen Sheets', description='A list of sheet names for time series data.'
+    )
+    sheets_time_series_others: Optional[List[str]] = Field(
+        alias='Sonstige Zeitreihen Sheets', description='An aditional list of sheet names for time series data.'
+    )
     years: List[int] = Field(alias='Jahre')
     co2_limits: List[float] = Field(alias='CO2-Limits')
     green_heat_min: List[float] = Field(alias='Grüne Wärme Minimum [MWh]')
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame) -> "MetaDataTime":
+    def from_dataframe(cls, df: pd.DataFrame) -> 'MetaDataTime':
         """
         Extracts the time series metadata from a DataFrame and validates it.
 
@@ -93,7 +99,7 @@ class MetaDataTime(BaseModel):
         try:
             return cls(**data_dict)
         except ValidationError as e:
-            print("Validation error:", e)
+            print('Validation error:', e)
             raise
 
     @model_validator(mode='after')
@@ -101,11 +107,13 @@ class MetaDataTime(BaseModel):
         """
         Ensures that all list attributes have the same length.
         """
-        list_attrs = [field for field, field_info in self.__annotations__.items() if isinstance(getattr(self, field), list)]
+        list_attrs = [
+            field for field, field_info in self.__annotations__.items() if isinstance(getattr(self, field), list)
+        ]
         lengths = {len(getattr(self, attr)) for attr in list_attrs}
 
         if len(lengths) > 1:
-            raise ValueError(f"Not all list fields have the same length: {list_attrs}.")
+            raise ValueError(f'Not all list fields have the same length: {list_attrs}.')
 
     @field_validator('sheets_time_series_others')
     @classmethod
@@ -119,7 +127,8 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
     """
     A Pydantic model to represent Excel data related to energy modeling.
     """
-    file_path: pathlib.Path = Field(alias="File Path", description="The path to the Excel file.")
+
+    file_path: pathlib.Path = Field(alias='File Path', description='The path to the Excel file.')
     _valid_components: Tuple[str] = PrivateAttr(
         default=(
             'KWK',
@@ -135,21 +144,26 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
             'LinearTransformer_1_1',
             'Sink',
             'Source',
-        ))
+        )
+    )
 
     meta_data: Optional[MetaData] = Field(default=None)
     meta_data_time: Optional[MetaDataTime] = Field(default=None)
-    time_series_data: Optional[pd.DataFrame] = Field(None, description="A DataFrame containing time series data.")
-    components_data: Optional[Dict[str, List[Dict[str, Any]]]] = Field(None, description="A dictionary containing component data.")
-    flow_system_data: Optional[Dict[str, List[Dict[str, Any]]]] = Field(None, description="A dictionary containing flow system data.")
+    time_series_data: Optional[pd.DataFrame] = Field(None, description='A DataFrame containing time series data.')
+    components_data: Optional[Dict[str, List[Dict[str, Any]]]] = Field(
+        None, description='A dictionary containing component data.'
+    )
+    flow_system_data: Optional[Dict[str, List[Dict[str, Any]]]] = Field(
+        None, description='A dictionary containing flow system data.'
+    )
 
-    @field_validator("file_path", mode='before')
+    @field_validator('file_path', mode='before')
     @classmethod
     def validate_results_directory(cls, path):
         path = pathlib.Path(path)
         if not path.exists():
             raise FileNotFoundError(f"The path '{path}' does not exist.")
-        if not path.suffix == ".xlsx":
+        if not path.suffix == '.xlsx':
             raise ValueError(f"The file '{path}' is not an Excel file (.xlsx).")
         return path
 
@@ -164,7 +178,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
         if 'Allgemeines' not in excel_file.sheet_names:
             raise ValueError("The Excel file does not contain a 'Allgemeines' sheet.")
 
-        meta_data_df = pd.read_excel(excel_file, sheet_name="Allgemeines")
+        meta_data_df = pd.read_excel(excel_file, sheet_name='Allgemeines')
 
         # Create MetaData and MetaDataTime instances
         self.meta_data = MetaData.from_dataframe(meta_data_df)
@@ -203,15 +217,21 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
     def _read_time_series_data(self, excel_file: pd.ExcelFile) -> pd.DataFrame:
         # Extract time series data (assuming the second sheet contains time series data)
         time_series_data = pd.concat(
-            [pd.read_excel(excel_file, sheet_name=sheet_name, skiprows=[1, 2]) for sheet_name in
-             self.meta_data_time.sheets_time_series],
-            axis=0, ignore_index=True
+            [
+                pd.read_excel(excel_file, sheet_name=sheet_name, skiprows=[1, 2])
+                for sheet_name in self.meta_data_time.sheets_time_series
+            ],
+            axis=0,
+            ignore_index=True,
         )
         if self.meta_data_time.sheets_time_series_others:
             time_series_data_extra = pd.concat(
-                [pd.read_excel(excel_file, sheet_name=sheet_name, skiprows=[1, 2]) for sheet_name in
-                 self.meta_data_time.sheets_time_series_others],
-                axis=1, ignore_index=True
+                [
+                    pd.read_excel(excel_file, sheet_name=sheet_name, skiprows=[1, 2])
+                    for sheet_name in self.meta_data_time.sheets_time_series_others
+                ],
+                axis=1,
+                ignore_index=True,
             )
             time_series_data = pd.concat([time_series_data, time_series_data_extra], axis=1)
         # Adding the Index ain datetime format
@@ -220,10 +240,9 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True):
         time_series_data.index = a_time_series
         return time_series_data
 
-    def _read_components(self,
-                         excel_file: pd.ExcelFile,
-                         sheets: List[str],
-                         valid_keys: List[str]) -> Dict[str, pd.DataFrame]:
+    def _read_components(
+        self, excel_file: pd.ExcelFile, sheets: List[str], valid_keys: List[str]
+    ) -> Dict[str, pd.DataFrame]:
         component_data_by_type = {}
         for sheet_name in sheets:
             df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, nrows=30)
