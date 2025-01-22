@@ -93,7 +93,7 @@ class FlixPostXL(fx.results.CalculationResults):
             for element, new_result in invest_effects_per_period[effect_label].items():
                 old_result = effect_results.all_results['invest']['Shares'].get(element, 0)
 
-                if sum(new_result) != old_result:
+                if not np.isclose(sum(new_result), old_result, atol=1e-5):
                     logger.critical(
                         f'Getting the investment effects per Period was not succesfull for {element=}.'
                         f'The value from the optimizer {old_result} differs from the self '
