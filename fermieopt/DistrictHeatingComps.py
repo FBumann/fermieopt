@@ -24,7 +24,6 @@ class Element(
     def add_to_flow_system(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float] = None,
@@ -32,7 +31,7 @@ class Element(
     ):
         self._insert_data(time_series_data)
         flow_system.add_elements(
-            self._convert_to_flixopt(flow_system, effects, busses, time_series_data, co2_factors, years_of_model)
+            self._convert_to_flixopt(flow_system, busses, time_series_data, co2_factors, years_of_model)
         )
 
     def _insert_data(self, data: pd.DataFrame):
@@ -42,7 +41,6 @@ class Element(
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
@@ -284,12 +282,13 @@ class Sink(PowerInvestElement):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
+
         comp = fx.Sink(
             label=self.name,
             sink=fx.Flow(
@@ -310,12 +309,12 @@ class Source(PowerInvestElement):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
         comp = fx.Source(
             label=self.name,
             source=fx.Flow(label=self.flow_label, bus=busses[self.bus], fixed_relative_profile=self.fixed_profile),
@@ -346,12 +345,12 @@ class LinearTransformer(PowerInvestElement):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
         flow_out = fx.Flow(label=self.flow_label, bus=busses[self.bus_out], fixed_relative_profile=self.fixed_profile)
 
         flow_in = fx.Flow(
@@ -369,7 +368,7 @@ class LinearTransformer(PowerInvestElement):
         self.insert_size(
             flow_out,
             self.power if self.power is not None else (self.minimum_power, self.maximum_power),
-            effects,
+            flow_system.effect_collection.effects,
             years_of_model,
         )
         self.restrict_availlability(comp, years_of_model)
@@ -396,12 +395,13 @@ class Kessel(FuelThermalInvestElement):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
+
         boiler = fx.linear_converters.Boiler(
             label=self.name,
             eta=self.eta_thermal,
@@ -455,12 +455,13 @@ class KWK(FuelThermalInvestElement):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
+
         chp = fx.linear_converters.CHP(
             label=self.name,
             eta_th=self.eta_thermal,
@@ -575,12 +576,13 @@ class Waermepumpe(ThermalInvestElement):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
+
         heat_pump = fx.linear_converters.HeatPump(
             label=self.name,
             COP=self._get_cop(time_series_data),
@@ -767,12 +769,13 @@ class Speicher(ThermalInvestElement):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
+
         storage = fx.Storage(
             label=self.name,
             capacity_in_flow_hours=0,
@@ -918,12 +921,13 @@ class EHK(ThermalInvestElement):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
+
         ehk = fx.linear_converters.Power2Heat(
             label=self.name,
             eta=self.eta_thermal,
@@ -970,12 +974,13 @@ class Rueckkuehler(ThermalInvestElement):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
+
         cool = fx.linear_converters.CoolingTower(
             label=self.name,
             specific_electricity_demand=self.specific_electricity_demand,
@@ -1005,9 +1010,9 @@ class Rueckkuehler(ThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(cool, years_of_model)
-        if cool.specificElectricityDemand != 0:
+        if cool.specific_electricity_demand != 0:
             self.insert_grid_fee(
-                self.grid_fee_per_year, cool.Q_th, 1 / cool.specificElectricityDemand, effects['costs']
+                self.grid_fee_per_year, cool.Q_th, 1 / cool.specific_electricity_demand, effects['costs']
             )
         return cool
 
@@ -1022,12 +1027,13 @@ class AbwaermeWaermepumpe(Waermepumpe):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
+
         heat_pump = fx.linear_converters.HeatPumpWithSource(
             label=self.name,
             COP=self._get_cop(time_series_data),
@@ -1087,12 +1093,13 @@ class Geothermie(Waermepumpe):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
+
         heat_pump = fx.linear_converters.HeatPumpWithSource(
             label=self.name,
             COP=self._get_cop(time_series_data),
@@ -1139,12 +1146,13 @@ class Abwaerme(ThermalInvestElement):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
+
         q_th = fx.Flow(
             label='Qth',
             bus=busses[self.bus_heat],
@@ -1195,12 +1203,13 @@ class KWKekt(InvestElement):
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
-        effects: Dict[str, fx.Effect],
         busses: Dict[str, fx.Bus],
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
     ):
+        effects = flow_system.effect_collection.effects
+
         flow_heat = fx.Flow('Qth', busses[self.bus_heat])
         flow_fuel = fx.Flow('Qfu', busses[self.fuel_type], effects_per_flow_hour={effects['costs']: self.fuel_costs})
         flow_el = fx.Flow(
@@ -1276,7 +1285,6 @@ class ElementFactory:
         self.co2_factors = co2_factors
         self.years_of_model = years_of_model
         self.flow_system = flow_system
-        self.effects = {effect.label: effect for effect in flow_system.effect_collection.effects}
         self.busses = busses
 
         self.created_comps: List[Element] = []
@@ -1288,7 +1296,6 @@ class ElementFactory:
             self.created_comps.append(energy_obj)
             energy_obj.add_to_flow_system(
                 flow_system=self.flow_system,
-                effects=self.effects,
                 busses=self.busses,
                 time_series_data=self.time_series_data,
                 co2_factors=self.co2_factors,
