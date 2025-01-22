@@ -230,7 +230,7 @@ def df_to_excel_w_chart(
     try:
         wb = load_workbook(filepath)
     except Exception:
-        template_path = Path(__file__).resolve().parent / 'resources' / 'Template_blanco.xlsx'
+        template_path = Path(__file__).parent / 'resources' / 'Template_blanco.xlsx'
 
         wb = load_workbook(template_path)
 
@@ -411,7 +411,7 @@ class ExcelFcts:
 
         logger.info('......computation of data finished')
 
-        templ_path_excel_year = Path(__file__).resolve().parent / 'resources' / 'Template_Evaluation_Year.xlsx'
+        templ_path_excel_year = Path(__file__).parent / 'resources' / 'Template_Evaluation_Year.xlsx'
 
         for year in self.calc.years:
             wb = load_workbook(templ_path_excel_year)
@@ -536,7 +536,7 @@ class ExcelFcts:
         else:
             output_file_path = custom_output_file_path
 
-        templ_path_excel_main = Path(__file__).resolve().parent / 'resources' / 'Template_Evaluation_Overview.xlsx'
+        templ_path_excel_main = Path(__file__).parent / 'resources' / 'Template_Evaluation_Overview.xlsx'
 
         wb = load_workbook(templ_path_excel_main)
         filename = f'{self.calc.name}__Jahresübersicht.xlsx'

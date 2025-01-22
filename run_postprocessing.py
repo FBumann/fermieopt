@@ -29,6 +29,6 @@ visualize_results(
 for bus in calc_results.bus_results:
     create_report_grouped(
         calc_results,
-        path=Path(calc_results.folder).resolve() / f'{calc_results.label}-report_{bus}.pdf',
+        path=Path(calc_results.folder) / f'{calc_results.label}-report_{bus}.pdf',
         connected_to=bus,
     )

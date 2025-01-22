@@ -30,7 +30,7 @@ def main(solver_name: str, excel_file_path: str):
     for bus in calc_results.bus_results:
         create_report_grouped(
             calc_results,
-            path=Path(calc_results.folder).resolve() / f'{calc_results.name}__Report_{bus}.pdf',
+            path=Path(calc_results.folder) / f'{calc_results.name}__Report_{bus}.pdf',
             connected_to=bus,
         )
     # calculation_results_for_further_inspection = excel_model.load_results()
