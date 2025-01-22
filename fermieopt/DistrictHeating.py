@@ -65,6 +65,10 @@ class ExcelModel:
         os.makedirs(self.final_directory, exist_ok=True)
         shutil.copy2(self.excel_data.file_path, self.final_directory / f'{self.calc_name}__Skript.xlsx')
 
+        with open(self.final_directory / f'{self.calc_name}__Excel_Data.json', 'w', encoding='utf-8') as log_file:
+            print(self.excel_data.model_dump_json(indent=4, by_alias=True), file=log_file)
+            logger.info('Excel Data written to file')
+
         with open(self.final_directory / f'{self.calc_name}__Component_data.txt', 'w', encoding='utf-8') as log_file:
             console = Console(file=log_file, width=10000)
             console.print(self.components_data)
