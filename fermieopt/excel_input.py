@@ -319,25 +319,44 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         if not isinstance(other, ExcelData):
             return NotImplemented
 
-        # Ignore file_path for comparison
+        def log_and_compare(attr_name, value1, value2, comparison_func=None):
+            """
+            Logs and compares two attributes.
 
-        # Compare meta_data and meta_data_time (assuming these implement __eq__)
-        if self.meta_data != other.meta_data or self.meta_data_time != other.meta_data_time:
-            return False
+            Args:
+                attr_name (str): Name of the attribute being compared.
+                value1: Value from `self`.
+                value2: Value from `other`.
+                comparison_func (callable, optional): Custom function for comparison. Defaults to equality operator.
 
-        # Compare time_series_data
-        if not self.time_series_data.equals(other.time_series_data):
-            return False
+            Returns:
+                bool: True if values are equal, False otherwise.
+            """
+            if comparison_func is None:
+                comparison_func = lambda x, y: x == y
 
-        # Compare components_data
-        if not self._compare_nested_dicts(self.components_data, other.components_data):
-            return False
+            if not comparison_func(value1, value2):
+                logger.warning(f"{attr_name} not equal")
+                return False
+            return True
 
-        # Compare flow_system_data
-        if not self._compare_nested_dicts(self.flow_system_data, other.flow_system_data):
-            return False
+        # List of comparisons
+        comparisons = [
+            ("meta_data", self.meta_data, other.meta_data),
+            ("meta_data_time", self.meta_data_time, other.meta_data_time),
+            ("time_series_data", self.time_series_data, other.time_series_data, lambda x, y: x.equals(y)),
+            ("components_data", self.components_data, other.components_data, self._compare_nested_dicts),
+            ("flow_system_data", self.flow_system_data, other.flow_system_data, self._compare_nested_dicts),
+        ]
 
-        return True
+        # Perform all comparisons
+        all_equal = True
+        for name, value1, value2, *comp_func in comparisons:
+            comparison_func = comp_func[0] if comp_func else None
+            if not log_and_compare(name, value1, value2, comparison_func):
+                all_equal = False
+
+        return all_equal
 
     @staticmethod
     def _compare_nested_dicts(dict1, dict2):
