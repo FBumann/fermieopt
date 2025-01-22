@@ -1,16 +1,16 @@
 import logging
 import pathlib
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator, field_serializer, PrivateAttr
 
 logger = logging.getLogger('flixOpt')
 
 
-class MetaData(BaseModel):
+class MetaData(BaseModel, populate_by_name=True):
     """
     A Pydantic model to represent metadata related to Excel data.
     """
@@ -52,7 +52,7 @@ class MetaData(BaseModel):
             print('Validation error:', e)
             raise
 
-    @field_validator('results_directory', mode='before')
+    @field_validator('results_directory', mode='after')
     @classmethod
     def validate_results_directory(cls, path):
         path = pathlib.Path(path)
@@ -65,7 +65,9 @@ class MetaData(BaseModel):
     @field_validator('co2_factors', mode='before')
     @classmethod
     def convert_co2_factors(cls, co2_factor_gas):
-        return {'Erdgas': co2_factor_gas}
+        if isinstance(co2_factor_gas, Union[float, int]):
+            return {'Erdgas': co2_factor_gas}
+        return co2_factor_gas
 
     @field_validator('sheets_components', mode='before')
     @classmethod
@@ -78,8 +80,12 @@ class MetaData(BaseModel):
             if value is not None and not (isinstance(value, float) and math.isnan(value))
         ]
 
+    @field_serializer('results_directory')
+    def serialize_results_directory(self, file_path: pathlib.Path):
+        return str(file_path)
 
-class MetaDataTime(BaseModel):
+
+class MetaDataTime(BaseModel, populate_by_name=True):
     sheets_time_series: List[str] = Field(
         alias='Zeitreihen Sheets', description='A list of sheet names for time series data.'
     )
@@ -155,22 +161,17 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     flow_system_data: Optional[Dict[str, List[Dict[str, Any]]]] = Field(
         None, description='A dictionary containing flow system data.'
     )
-
-    @field_validator('file_path', mode='before')
-    @classmethod
-    def validate_results_directory(cls, path):
-        path = pathlib.Path(path)
-        if not path.exists():
-            raise FileNotFoundError(f"The path '{path}' does not exist.")
-        if not path.suffix == '.xlsx':
-            raise ValueError(f"The file '{path}' is not an Excel file (.xlsx).")
-        return path
+    _skip_read_data: bool = PrivateAttr(default=False)
 
     @model_validator(mode='after')
-    def read_data(self):
+    def read_data_from_excel(self):
         """
         Loads the data from an Excel file into the ExcelData model.
         """
+
+        if self._skip_read_data:
+            # Skip reading data if flag is set
+            return self
 
         logger.info('Creating ExcelData object from file %s', self.file_path)
         excel_file = pd.ExcelFile(self.file_path)
@@ -232,7 +233,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         if len(self.time_series_data) / 8760 != len(self.meta_data_time.years):
             raise Exception(
                 f"Length of DataFrame ({len(self.time_series_data)}) and the Number of years "
-                f"({len(self.meta_data_time.years)}don't match. Expecting 8760 rows per year.")
+                f"({len(self.meta_data_time.years)} don't match. Expecting 8760 rows per year.")
 
         columns_with_nan = self.time_series_data.columns[self.time_series_data.isna().any()]
         if not columns_with_nan.empty:
@@ -247,7 +248,26 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         if 'Rücklauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
             logger.warning('Column "Rücklauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.')
         return self
-    
+
+    @field_serializer('time_series_data')
+    def serialize_time_series_data(self, value: pd.DataFrame):
+        return value.to_json(date_format='iso', orient='split')
+
+    @field_serializer('file_path')
+    def serialize_file_path(self, file_path: pathlib.Path):
+        return str(file_path)
+
+    @field_validator("file_path", mode="after")
+    @classmethod
+    def validate_file_path(cls, value):
+        return pathlib.Path(value) if isinstance(value, str) else value
+
+    # Deserialize DataFrame from JSON when loading the model
+    @field_validator("time_series_data", mode="before")
+    def deserialize_dataframe(cls, value: Optional[Union[str, pd.DataFrame]]) -> pd.DataFrame:
+        if isinstance(value, str):
+            return pd.read_json(value, orient='split')
+        return value
     def _read_time_series_data(self, excel_file: pd.ExcelFile) -> pd.DataFrame:
         # Extract time series data (assuming the second sheet contains time series data)
         time_series_data = pd.concat(
@@ -286,6 +306,42 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         component_data_converted = convert_component_data_types(component_data_by_type)
         component_data_final = seperate_component_data_into_single_dicts(component_data_converted)
         return component_data_final
+
+    def __eq__(self, other):
+        if not isinstance(other, ExcelData):
+            return NotImplemented
+
+        # Ignore file_path for comparison
+
+        # Compare meta_data and meta_data_time (assuming these implement __eq__)
+        if self.meta_data != other.meta_data or self.meta_data_time != other.meta_data_time:
+            return False
+
+        # Compare time_series_data
+        if not self.time_series_data.equals(other.time_series_data):
+            return False
+
+        # Compare components_data
+        if not self._compare_nested_dicts(self.components_data, other.components_data):
+            return False
+
+        # Compare flow_system_data
+        if not self._compare_nested_dicts(self.flow_system_data, other.flow_system_data):
+            return False
+
+        return True
+
+    @staticmethod
+    def _compare_nested_dicts(dict1, dict2):
+        if dict1.keys() != dict2.keys():
+            return False
+        for key in dict1:
+            if isinstance(dict1[key], list) and isinstance(dict2[key], list):
+                if len(dict1[key]) != len(dict2[key]) or any(d1 != d2 for d1, d2 in zip(dict1[key], dict2[key])):
+                    return False
+            elif dict1[key] != dict2[key]:
+                return False
+        return True
 
 
 def organize_component_data_by_type(df: pd.DataFrame, valid_types: List[str]) -> Dict[str, pd.DataFrame]:
