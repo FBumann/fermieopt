@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator, field_serializer, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_serializer, field_validator, model_validator
 
 logger = logging.getLogger('flixOpt')
 
@@ -93,8 +93,10 @@ class MetaDataTime(BaseModel, populate_by_name=True):
         alias='Sonstige Zeitreihen Sheets', description='An aditional list of sheet names for time series data.'
     )
     years: List[int] = Field(alias='Jahre')
-    co2_limit: List[Optional[float]] = Field(alias='CO2-limit')  #TODO: rename to CO2-Limits [t/a]
-    green_heat_min: List[Optional[float]] = Field(alias='Grüne Wärme Minimum [MWh]')  #TODO: rename to Grüne Wärme Minimum [MWh/a]
+    co2_limit: List[Optional[float]] = Field(alias='CO2-limit')  # TODO: rename to CO2-Limits [t/a]
+    green_heat_min: List[Optional[float]] = Field(
+        alias='Grüne Wärme Minimum [MWh]'
+    )  # TODO: rename to Grüne Wärme Minimum [MWh/a]
 
     @classmethod
     def from_dataframe(cls, df: pd.DataFrame) -> 'MetaDataTime':
@@ -232,8 +234,9 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     def validate_time_series_data(self):
         if len(self.time_series_data) / 8760 != len(self.meta_data_time.years):
             raise Exception(
-                f"Length of DataFrame ({len(self.time_series_data)}) and the Number of years "
-                f"({len(self.meta_data_time.years)} don't match. Expecting 8760 rows per year.")
+                f'Length of DataFrame ({len(self.time_series_data)}) and the Number of years '
+                f"({len(self.meta_data_time.years)} don't match. Expecting 8760 rows per year."
+            )
 
         columns_with_nan = self.time_series_data.columns[self.time_series_data.isna().any()]
         if not columns_with_nan.empty:
@@ -244,9 +247,13 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     @model_validator(mode='after')
     def check_used_columns(self):
         if 'Vorlauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
-            logger.warning('Column "Vorlauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.')
+            logger.warning(
+                'Column "Vorlauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.'
+            )
         if 'Rücklauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
-            logger.warning('Column "Rücklauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.')
+            logger.warning(
+                'Column "Rücklauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.'
+            )
         return self
 
     @field_serializer('time_series_data')
@@ -257,13 +264,14 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     def serialize_file_path(self, file_path: pathlib.Path):
         return str(file_path)
 
-    @field_validator("file_path", mode="after")
+    @field_validator('file_path', mode='after')
     @classmethod
     def validate_file_path(cls, value):
         return pathlib.Path(value) if isinstance(value, str) else value
 
     # Deserialize DataFrame from JSON when loading the model
-    @field_validator("time_series_data", mode="before")
+    @field_validator('time_series_data', mode='before')
+    @classmethod
     def deserialize_dataframe(cls, value: Optional[Union[str, pd.DataFrame]]) -> pd.DataFrame:
         if isinstance(value, str):
             return pd.read_json(value, orient='split')
@@ -337,7 +345,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             return False
         for key in dict1:
             if isinstance(dict1[key], list) and isinstance(dict2[key], list):
-                if len(dict1[key]) != len(dict2[key]) or any(d1 != d2 for d1, d2 in zip(dict1[key], dict2[key])):
+                if len(dict1[key]) != len(dict2[key]) or any(d1 != d2 for d1, d2 in zip(dict1[key], dict2[key], strict=False)):
                     return False
             elif dict1[key] != dict2[key]:
                 return False

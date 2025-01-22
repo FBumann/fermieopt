@@ -442,8 +442,12 @@ class Kessel(FuelThermalInvestElement):
 
 class KWK(FuelThermalInvestElement):
     eta_el: Union[int, float, str] = Field(alias='Elektrischer Wirkungsgrad')
-    forward_flow_temperature: Union[int, float, str] = Field(alias='Vorlauftemperatur', default='Vorlauftemperatur Fernwärmenetz [°C]')
-    reverse_flow_temperature: Union[int, float, str] = Field(alias='Rücklauftemperatur', default='Rücklauftemperatur Fernwärmenetz [°C]')
+    forward_flow_temperature: Union[int, float, str] = Field(
+        alias='Vorlauftemperatur', default='Vorlauftemperatur Fernwärmenetz [°C]'
+    )
+    reverse_flow_temperature: Union[int, float, str] = Field(
+        alias='Rücklauftemperatur', default='Rücklauftemperatur Fernwärmenetz [°C]'
+    )
     ambient_temperature: Union[int, float, str] = Field(alias='Umgebungstemperatur', default='Tamb')
 
     bus_elec: str = Field(alias='Strombus', default='StromEinspeisung')
@@ -557,7 +561,9 @@ class KWK(FuelThermalInvestElement):
 class Waermepumpe(ThermalInvestElement):
     cop: Optional[Union[int, float, str]] = Field(alias='COP', default=None)
     source_temperature: Union[int, float, str] = Field(alias='Quelltemperatur', default=None)
-    sink_temperature: Union[int, float, str] = Field(alias='Zieltemperatur', default='Vorlauftemperatur Fernwärmenetz [°C]')
+    sink_temperature: Union[int, float, str] = Field(
+        alias='Zieltemperatur', default='Vorlauftemperatur Fernwärmenetz [°C]'
+    )
 
     extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
 
@@ -739,8 +745,12 @@ class Speicher(ThermalInvestElement):
     loss_per_hour: Union[int, float, str] = Field(alias='VerlustProStunde', default=0)
 
     depends_on_temperature: bool = Field(alias='AbhängigkeitVonDT', default=False)
-    temperature_lower: Union[int, float, str] = Field(alias='Untere Temperatur', default='Rücklauftemperatur Fernwärmenetz [°C]')
-    temperature_upper: Union[int, float, str] = Field(alias='Obere Temperatur', default='Vorlauftemperatur Fernwärmenetz [°C]')
+    temperature_lower: Union[int, float, str] = Field(
+        alias='Untere Temperatur', default='Rücklauftemperatur Fernwärmenetz [°C]'
+    )
+    temperature_upper: Union[int, float, str] = Field(
+        alias='Obere Temperatur', default='Vorlauftemperatur Fernwärmenetz [°C]'
+    )
 
     default_temperature_spread: Union[int, float] = Field(alias='Nenn-Temperaturspreizung', default=65)
 
