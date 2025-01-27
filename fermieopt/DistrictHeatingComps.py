@@ -254,6 +254,7 @@ class ThermalInvestElement(InvestElement):
     )
     relative_maximum: Union[int, float, str] = Field(alias='Relative thermische Leistungsobergrenze', default=1)
     relative_minimum: Union[int, float, str] = Field(alias='Relative thermische Leistungsuntergrenze', default=0)
+    green_heat_factor: Union[int, float, str] = Field(alias='Grüne Wärme', default=0)
 
     def _insert_data(self, data: pd.DataFrame):
         self.costs_per_mwh_heat_extra = extract_data(self.costs_per_mwh_heat_extra, data)
