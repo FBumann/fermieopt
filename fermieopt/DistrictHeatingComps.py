@@ -199,9 +199,7 @@ class InvestElement(Element):
 
 class PowerInvestElement(InvestElement):
     power: Union[int, float] = Field(alias='Nennleistung [MW]')
-    flow_label: str = Field(alias='Flowname')
     fixed_profile: Optional[str] = Field(alias='Festes Profil', default=None)
-    bus: str = Field(alias='Bus')
 
     def _insert_data(self, data: pd.DataFrame):
         self.fixed_profile = extract_data(self.fixed_profile, data)
@@ -279,6 +277,9 @@ class ThermalInvestElement(InvestElement):
 
 
 class Sink(PowerInvestElement):
+    bus: str = Field(alias='Bus')
+    flow_label: str = Field(alias='Flowname', default='sink')
+
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
@@ -306,6 +307,9 @@ class Sink(PowerInvestElement):
 
 
 class Source(PowerInvestElement):
+    bus: str = Field(alias='Bus')
+    flow_label: str = Field(alias='Flowname', default='source')
+
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
@@ -334,7 +338,8 @@ class LinearTransformer(PowerInvestElement):
     efficiency: Union[int, float, str] = Field(alias='Wirkungsgrad')
     bus_in: str = Field(alias='Von Bus')
     bus_out: str = Field(alias='Zu Bus')
-    flow_label_in: str = Field(alias='Flowname in')
+    flow_label_in: str = Field(alias='Flowname in', default='in')
+    flow_label_out: str = Field(alias='Flowname out', default='out')
     cost_per_mwh_in: Union[int, float, str] = Field(alias='Kosten pro MWh von Bus', default=0)
 
     def _insert_data(self, data: pd.DataFrame):
@@ -561,6 +566,7 @@ class KWK(FuelThermalInvestElement):
 
 class Waermepumpe(ThermalInvestElement):
     cop: Optional[Union[int, float, str]] = Field(alias='COP', default=None)
+    carnot_efficiency: Optional[Union[int, float, str]] = Field(alias='Carnot Effizienz', default=0.5)
     source_temperature: Union[int, float, str] = Field(alias='Quelltemperatur', default=None)
     sink_temperature: Union[int, float, str] = Field(
         alias='Zieltemperatur', default='Vorlauftemperatur Fernwärmenetz [°C]'
@@ -623,7 +629,7 @@ class Waermepumpe(ThermalInvestElement):
             return self.calculate_cop(
                 source_temperature=extract_data(self.source_temperature, time_series_data),
                 target_temperature=extract_data(self.sink_temperature, time_series_data),
-                eta=0.5,
+                eta=self.carnot_efficiency,
             )
 
     def _get_electricity_costs_per_mwh(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
