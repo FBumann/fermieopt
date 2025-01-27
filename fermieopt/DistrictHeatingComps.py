@@ -382,7 +382,7 @@ class LinearTransformer(PowerInvestElement):
         years_of_model: List[int],
     ):
         effects = flow_system.effect_collection.effects
-        flow_out = fx.Flow(label=self.flow_label, bus=busses[self.bus_out], fixed_relative_profile=self.fixed_profile)
+        flow_out = fx.Flow(label=self.flow_label_out, bus=busses[self.bus_out], fixed_relative_profile=self.fixed_profile)
 
         flow_in = fx.Flow(
             label=self.flow_label_in,
