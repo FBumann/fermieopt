@@ -5,7 +5,7 @@ import flixOpt as fx
 import flixOpt.elements
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator, ValidationError
 
 from fermieopt.meta_data import MetaData, MetaDataFactory
 
@@ -51,6 +51,7 @@ class Element(
 
 class InvestElement(Element):
     start_year: Optional[int] = Field(alias='Startjahr', default=None, ge=1800)
+    amortization_time: Optional[int] = Field(alias='Abschreibungsdauer', default=None, ge=1)
     lifetime: Optional[int] = Field(alias='Lebensdauer', default=None, ge=1)
     optional: bool = Field(alias='Optional', default=False)
     invest_costs_fixed: Union[int, float] = Field(alias='Investkosten (fix) [€]', default=0)
@@ -59,31 +60,50 @@ class InvestElement(Element):
     annual_costs_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (spezifisch) [€/(MW*a)]', default=0)
     interest_rate: Union[int, float] = Field(alias='Zinssatz', default=0)
     funding_rate: Union[int, float] = Field(alias='Fördersatz', default=0)
+    invest_group: Optional[str] = Field(alias='Investgruppe', default=None)
 
     @property
     def needs_investment(self) -> bool:
         return self.invest_costs_fixed != 0 or self.invest_costs_specific != 0 or self.optional is True
+
+    @field_validator('invest_group', mode='before')
+    @classmethod
+    def validate_invest_group(cls, value) -> Optional[str]:
+        if value is None:
+            return value
+        elif isinstance(value, str):
+            value = value.replace(',', '.')  # allow , as decimal separator
+            values = value.split(':')
+            if len(values) != 2:
+                raise ValidationError(f'Invalid invest group: {value}. Must be None or of form: "xyz:0.5"')
+            name, _ = values
+            return name
+        raise ValidationError(f'Invalid invest group: {value}. Must be None or of form: "xyz:0.5"')
 
     @model_validator(mode='after')
     def validate_years(self):
         """Validates the start and lifetime of the element"""
         if not (self.start_year is None) == (self.lifetime is None):
             raise ValueError("Either set BOTH or NONE of 'Startjahr' and 'Lebensdauer'!")
+        if self.lifetime is not None and self.amortization_time is None:
+            self.amortization_time = self.lifetime
+            logger.debug(f'Amortization time of {self.name} was set to {self.lifetime} years, as no amortization time was given')
         return self
 
     @staticmethod
-    def annuity_factor(interest_rate: float, lifetime: int) -> float:
+    def annuity_factor(interest_rate: float, duration_in_years: int) -> float:
         """Get the annuity factor for a given interest rate and lifetime"""
         if interest_rate == 0:  # Preventing ZeroDivision
-            annuity_factor = 1 / lifetime
+            annuity_factor = 1 / duration_in_years
         else:
-            annuity_factor = ((1 + interest_rate) ** lifetime * interest_rate) / ((1 + interest_rate) ** lifetime - 1)
+            annuity_factor = ((1 + interest_rate) ** duration_in_years * interest_rate) / ((1 + interest_rate) ** duration_in_years - 1)
         return annuity_factor
 
     @staticmethod
     def costs_and_funding(
         interest_rate: float,
         starting_year: int,
+        amortization_time: int,
         lifetime: int,
         years_of_model: List[int],
         invest_costs: float,
@@ -103,8 +123,9 @@ class InvestElement(Element):
 
         Parameters:
         - interest_rate (float): The annual interest rate used for calculating the annuity factor.
-        - starting_year: first year of operation
-        - lifetime (int): lifetime for calculating the investment
+        - starting_year (int): first year of operation
+        - amortization_time (int): amortization time for calculating the investment
+        - lifetime (int): lifetime for calculating the fixed yearly costs
         - years_of_model (List[int]): The years used in the model
         - invest_costs (float): The total investment costs.
         - invest_costs_per_mw (float): The investment costs per megawatt (MW).
@@ -117,32 +138,34 @@ class InvestElement(Element):
             1. Fixed costs and funding, with keys being strings and values being the corresponding amounts in currency units.
             2. Specific costs and funding, similar to the fixed costs but calculated per MW.
         """
-        annuity_factor = InvestElement.annuity_factor(interest_rate=interest_rate, lifetime=lifetime)
-        accounting_years = np.array(
+        annuity_factor = InvestElement.annuity_factor(interest_rate=interest_rate, duration_in_years=amortization_time)
+
+        operation_years = np.array(
             [1 if starting_year <= year < (starting_year + lifetime) else 0 for year in years_of_model]
+        )
+        amortization_years = np.array(
+            [1 if starting_year <= year < (starting_year + amortization_time) else 0 for year in years_of_model]
         )
 
         # Calculate costs and funding
         fix_costs = {
-            'costs': ((invest_costs * annuity_factor + annual_costs) * accounting_years),
-            'funding': (invest_costs * annuity_factor * funding_rate * accounting_years),
+            'costs': invest_costs * annuity_factor * amortization_years +
+                     annual_costs * operation_years,
+            'funding': invest_costs * annuity_factor * amortization_years * funding_rate,
         }
         specific_costs = {
-            'costs': ((specific_invest_costs * annuity_factor + specific_annual_costs) * accounting_years),
-            'funding': ((specific_invest_costs * annuity_factor * funding_rate) * accounting_years),
+            'costs': specific_invest_costs * annuity_factor * amortization_years +
+                     specific_annual_costs* operation_years,
+            'funding': specific_invest_costs * annuity_factor * amortization_years * funding_rate,
         }
 
         def clean_dict(d):
-            # Remove keys with lists that are empty or contain only zeros
-            keys_to_remove = [key for key, values in d.items() if not values or all(value == 0 for value in values)]
+            # Remove keys with lists or arrays that are empty or contain only zeros
+            keys_to_remove = [key for key, values in d.items()
+                              if values is None or np.all(values == 0)]
             for key in keys_to_remove:
                 del d[key]
-            """
-            # TODO: Maybe do this later on
-            # Check if the dictionary is now empty or all remaining lists are empty or contain only zeros
-            if not d or all(not values or all(value == 0 for value in values) for values in d.values()):
-                return None
-            """
+
             return d
 
         return clean_dict(fix_costs), clean_dict(specific_costs)
@@ -160,6 +183,7 @@ class InvestElement(Element):
             fixed_effects_per_period, specific_effects_per_period = self.costs_and_funding(
                 interest_rate=self.interest_rate,
                 starting_year=self.start_year,
+                amortization_time=self.amortization_time,
                 lifetime=self.lifetime,
                 years_of_model=years_of_model,
                 invest_costs=self.invest_costs_fixed,
@@ -175,6 +199,8 @@ class InvestElement(Element):
             specific_effects_total = {
                 effects[effect]: np.sum(values) for effect, values in specific_effects_per_period.items()
             }
+            if self.invest_group is not None:
+                specific_effects_total[effects[self.invest_group]] = 1
 
             flow.size = fx.InvestParameters(
                 optional=self.optional,
