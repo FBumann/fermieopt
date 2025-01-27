@@ -224,23 +224,15 @@ class InvestElement(Element):
 
 
 class PowerInvestElement(InvestElement):
-    power: Union[int, float] = Field(alias='Nennleistung [MW]')
+    power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(alias='Nennleistung [MW]')
     fixed_profile: Optional[str] = Field(alias='Festes Profil', default=None)
 
     def _insert_data(self, data: pd.DataFrame):
         self.fixed_profile = extract_data(self.fixed_profile, data)
 
-    @property
-    def minimum_power(self) -> Optional[float]:
-        return float(self.power.split('-')[0]) if isinstance(self.power, str) else None
-
-    @property
-    def maximum_power(self):
-        return float(self.power.split('-')[1]) if isinstance(self.power, str) else None
-
-    @field_validator('power', mode='after')
+    @field_validator('power', mode='before')
     @classmethod
-    def validate_power(cls, value):
+    def validate_power(cls, value) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
         return validate_invest_range(value, label='Nennleistung [MW]')
 
 
@@ -297,20 +289,12 @@ class ThermalInvestElement(InvestElement):
             invest_flow.meta_data['highest_possible_grid_draw'] = highest_possible_grid_draw
 
     @property
-    def minimum_thermal_power(self) -> Optional[float]:
-        return float(self.thermal_power.split('-')[0]) if isinstance(self.thermal_power, str) else None
-
-    @property
-    def maximum_thermal_power(self):
-        return float(self.thermal_power.split('-')[1]) if isinstance(self.thermal_power, str) else None
-
-    @property
     def needs_investment(self) -> bool:
         return super().needs_investment or self.grid_fee_per_year != 0
 
-    @field_validator('thermal_power', mode='after')
+    @field_validator('thermal_power', mode='before')
     @classmethod
-    def validate_thermal_power(cls, value):
+    def validate_thermal_power(cls, value) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
         return validate_invest_range(value, label='Thermische Leistung [MW]')
 
 
@@ -336,7 +320,7 @@ class Sink(PowerInvestElement):
         )
         self.insert_size(
             comp.sink,
-            self.power if self.power is not None else (self.minimum_power, self.maximum_power),
+            self.power,
             effects,
             years_of_model,
         )
@@ -480,9 +464,7 @@ class Kessel(FuelThermalInvestElement):
         )
         self.insert_size(
             boiler.Q_th,
-            self.thermal_power
-            if self.thermal_power is not None
-            else (self.minimum_thermal_power, self.maximum_thermal_power),
+            self.thermal_power,
             effects,
             years_of_model,
         )
@@ -540,9 +522,7 @@ class KWK(FuelThermalInvestElement):
         )
         self.insert_size(
             chp.Q_th,
-            self.thermal_power
-            if self.thermal_power is not None
-            else (self.minimum_thermal_power, self.maximum_thermal_power),
+            self.thermal_power,
             effects,
             years_of_model,
         )
@@ -644,9 +624,7 @@ class Waermepumpe(ThermalInvestElement):
         )
         self.insert_size(
             heat_pump.Q_th,
-            self.thermal_power
-            if self.thermal_power is not None
-            else (self.minimum_thermal_power, self.maximum_thermal_power),
+            self.thermal_power,
             effects,
             years_of_model,
         )
@@ -850,9 +828,7 @@ class Speicher(ThermalInvestElement):
         )
         self.insert_size(
             storage.charging,
-            self.thermal_power
-            if self.thermal_power is not None
-            else (self.minimum_thermal_power, self.maximum_thermal_power),
+            self.thermal_power,
             effects,
             years_of_model,
         )
@@ -934,8 +910,8 @@ class Speicher(ThermalInvestElement):
         return value
 
     @property
-    def minimum_capacity(self) -> Optional[float]:
-        return float(self.capacity.split('-')[0]) if isinstance(self.capacity, str) else None
+    def minimum_capacity(self) -> float:
+        return float(self.capacity.split('-')[0]) if isinstance(self.capacity, str) else 0
 
     @property
     def maximum_capacity(self):
@@ -997,9 +973,7 @@ class EHK(ThermalInvestElement):
         )
         self.insert_size(
             ehk.Q_th,
-            self.thermal_power
-            if self.thermal_power is not None
-            else (self.minimum_thermal_power, self.maximum_thermal_power),
+            self.thermal_power,
             effects,
             years_of_model,
         )
@@ -1048,9 +1022,7 @@ class Rueckkuehler(ThermalInvestElement):
         )
         self.insert_size(
             cool.Q_th,
-            self.thermal_power
-            if self.thermal_power is not None
-            else (self.minimum_thermal_power, self.maximum_thermal_power),
+            self.thermal_power,
             effects,
             years_of_model,
         )
@@ -1102,9 +1074,7 @@ class AbwaermeWaermepumpe(Waermepumpe):
         )
         self.insert_size(
             heat_pump.Q_th,
-            self.thermal_power
-            if self.thermal_power is not None
-            else (self.minimum_thermal_power, self.maximum_thermal_power),
+            self.thermal_power,
             effects,
             years_of_model,
         )
@@ -1162,9 +1132,7 @@ class Geothermie(Waermepumpe):
         )
         self.insert_size(
             heat_pump.Q_th,
-            self.thermal_power
-            if self.thermal_power is not None
-            else (self.minimum_thermal_power, self.maximum_thermal_power),
+            self.thermal_power,
             effects,
             years_of_model,
         )
@@ -1211,9 +1179,7 @@ class Abwaerme(ThermalInvestElement):
 
         self.insert_size(
             q_th,
-            self.thermal_power
-            if self.thermal_power is not None
-            else (self.minimum_thermal_power, self.maximum_thermal_power),
+            self.thermal_power,
             effects,
             years_of_model,
         )
@@ -1526,7 +1492,10 @@ def validate_invest_meta_data(component: flixOpt.elements.Component):
                     )
 
 
-def validate_invest_range(value: Union[int, float, str], label: str) -> Union[int, float, str]:
+def validate_invest_range(
+        value: Union[int, float, str],
+        label: str
+) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
     """
     This function was written to validate the investment range of a component.
     It checks if the value is a number or a string in the format 'X-Y' and if it is positive.
@@ -1538,20 +1507,17 @@ def validate_invest_range(value: Union[int, float, str], label: str) -> Union[in
             raise ValueError(f"'{label}' must be positive.")
         return value
     elif isinstance(value, str):
-        try:  # Handle range strings of the format "X-Y"
-            parts = value.split('-')
-            if len(parts) != 2:
-                raise ValueError("Invalid range format. Expected 'X-Y'.")
-            try:
-                start, end = float(parts[0]), float(parts[1])
-            except ValueError as e:
-                raise ValueError("Invalid range format. Expected 'X-Y'.") from e
-            if start >= end:
-                raise ValueError('Range start must be less than range end.')
-            if start < 0:
-                raise ValueError('Range start must be positive.')
-            return value
+        parts = value.split('-')
+        if len(parts) != 2:
+            raise ValueError("Invalid range format. Expected 'X-Y'.")
+        try:
+            start, end = float(parts[0]), float(parts[1])
         except ValueError as e:
-            raise ValueError(f'Invalid thermal power format: {e}') from e
+            raise ValueError("Invalid range format. Expected 'X-Y'.") from e
+        if start >= end:
+            raise ValueError('Range start must be less than range end.')
+        if start < 0:
+            raise ValueError('Range start must be positive.')
+        return start, end
     else:
         raise ValueError(f"'{label}' must be a number or a string in the format 'X-Y'.")
