@@ -230,23 +230,37 @@ class ExcelModel:
         for comp_infos in self.excel_data.components_data.values():
             for comp in comp_infos:
                 label = comp.get('Investgruppe')
-                if isinstance(label, str) and label not in effects.keys():
-                    limits = label.split(':')[-1]
-                    if '-' in limits:
-                        lb, ub = limits.split('-')
-                        min_sum = float(lb)
-                        max_sum = float(ub)
-                    else:
-                        min_sum = None
-                        max_sum = float(limits)
-                    label_new = label.replace(':', '')
-                    effects[label] = fx.Effect(
-                        label=label_new,
-                        description='Limiting Investments per group',
-                        unit='Stk',
-                        minimum_total=min_sum,
-                        maximum_total=max_sum,
-                    )
+                if label is None:
+                    continue
+                if not isinstance(label, str):
+                    raise TypeError(f'Invest group must be a string, but is {label=}')
+                if label in effects.keys():
+                    raise ValueError(f'Cant create Invest Group. An Effect wit the label "{label}" already exists')
+                items = label.split(':')
+                if len(items) != 2:
+                    raise ValueError(f'Invalid invest group: {label}. Must be None or of form: "name:limit"')
+                label, limits = items
+                if '-' in limits:
+                    limits = limits.split('-')
+                    if len(limits) != 2:
+                        raise ValueError(f'Invalid invest group: {label}. If limits are given, they must be of form: "min-max"')
+                    lb, ub = limits
+                    try:
+                        lb = float(lb)
+                        ub = float(ub)
+                    except ValueError as e:
+                        raise ValueError(f'Invalid invest group: {label}. Convrsion of limits to float failed') from e
+                else:
+                    lb = None
+                    ub = float(limits)
+
+                effects[label] = fx.Effect(
+                    label=label,
+                    description='Limiting Investments per group',
+                    unit='Stk',
+                    minimum_invest=lb,
+                    maximum_invest=ub,
+                )
         return effects
 
     @property
