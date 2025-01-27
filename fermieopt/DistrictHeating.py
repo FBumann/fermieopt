@@ -131,7 +131,7 @@ class ExcelModel:
             effects['CO2FW'],
             years=self.years,
             lower_bounds=[None] * len(self.years),
-            upper_bounds=self.excel_data.meta_data_time.co2_limit,
+            upper_bounds=self.excel_data.period_data.co2_limit,
             label='CO2Limit',
             unit='t',
             description='Effect to limit the Emissions per year',
@@ -142,7 +142,7 @@ class ExcelModel:
         yearly_gw = add_yearly_effects_with_bounds(
             effects['Gruene_Waerme'],
             years=self.years,
-            lower_bounds=self.excel_data.meta_data_time.green_heat_min,
+            lower_bounds=self.excel_data.period_data.green_heat_min,
             upper_bounds=[None] * len(self.years),
             label='Gruene_Waerme_Limits',
             unit='MWh',
@@ -196,7 +196,7 @@ class ExcelModel:
             flow_system=self.final_model,
             time_series_data=self.excel_data.time_series_data,
             co2_factors=self.excel_data.meta_data.co2_factors,
-            years_of_model=self.excel_data.meta_data_time.years,
+            years_of_model=self.excel_data.period_data.years,
             busses=self._busses,
         )
 
@@ -216,7 +216,7 @@ class ExcelModel:
                         raise ValueError('"Startjahr" must be an integer or a string of format "min-max"') from e
                     first_year, last_year = int(first_year), int(last_year)
                     items_to_remove.append(component_data)
-                    for year in self.excel_data.meta_data_time.years:
+                    for year in self.excel_data.period_data.years:
                         if first_year <= year <= last_year:
                             new_comp_data = component_data.copy()
                             new_comp_data['Startjahr'] = year
@@ -251,7 +251,7 @@ class ExcelModel:
 
     @property
     def years(self) -> List[int]:
-        return self.excel_data.meta_data_time.years
+        return self.excel_data.period_data.years
 
     @property
     def components_data(self):

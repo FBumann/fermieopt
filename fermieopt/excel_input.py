@@ -85,7 +85,7 @@ class MetaData(BaseModel, populate_by_name=True):
         return str(file_path)
 
 
-class MetaDataTime(BaseModel, populate_by_name=True):
+class PeriodData(BaseModel, populate_by_name=True):
     sheets_time_series: List[str] = Field(
         alias='Zeitreihen Sheets', description='A list of sheet names for time series data.'
     )
@@ -99,7 +99,7 @@ class MetaDataTime(BaseModel, populate_by_name=True):
     )  # TODO: rename to Grüne Wärme Minimum [MWh/a]
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame) -> 'MetaDataTime':
+    def from_dataframe(cls, df: pd.DataFrame) -> 'PeriodData':
         """
         Extracts the time series metadata from a DataFrame and validates it.
 
@@ -107,7 +107,7 @@ class MetaDataTime(BaseModel, populate_by_name=True):
             df (pd.DataFrame): The DataFrame with time series metadata.
 
         Returns:
-            MetaDataTime: A validated MetaDataTime instance.
+            PeriodData: A validated MetaDataTime instance.
         """
         # Check if 'Jahre' column exists and handle it
         if 'Jahre' in df.columns:
@@ -119,7 +119,7 @@ class MetaDataTime(BaseModel, populate_by_name=True):
         # Convert DataFrame to a dictionary with matching aliases
         data_dict = df.to_dict(orient='list')
 
-        # Validate and create an instance of MetaDataTime
+        # Validate and create an instance of PeriodData
         try:
             return cls(**data_dict)
         except ValidationError as e:
@@ -155,7 +155,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     file_path: pathlib.Path = Field(alias='File Path', description='The path to the Excel file.')
 
     meta_data: Optional[MetaData] = Field(default=None)
-    meta_data_time: Optional[MetaDataTime] = Field(default=None)
+    period_data: Optional[PeriodData] = Field(default=None)
     time_series_data: Optional[pd.DataFrame] = Field(None, description='A DataFrame containing time series data.')
     components_data: Optional[Dict[str, List[Dict[str, Any]]]] = Field(
         None, description='A dictionary containing component data.'
@@ -197,12 +197,12 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             }
         )
 
-        # Create MetaData and MetaDataTime instances
+        # Create MetaData and PeriodData instances
         self.meta_data = MetaData.from_dataframe(meta_data_df)
-        self.meta_data_time = MetaDataTime.from_dataframe(meta_data_df)
+        self.period_data = PeriodData.from_dataframe(meta_data_df)
 
         # Extract time series data (assuming the second sheet contains time series data)
-        logger.info('Reading data for years %s', self.meta_data_time.years)
+        logger.info('Reading data for years %s', self.period_data.years)
         self.time_series_data = self._read_time_series_data(excel_file)
 
         # Extract component data (assuming it's in separate sheets named by component)
@@ -232,10 +232,10 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
 
     @model_validator(mode='after')
     def validate_time_series_data(self):
-        if len(self.time_series_data) / 8760 != len(self.meta_data_time.years):
+        if len(self.time_series_data) / 8760 != len(self.period_data.years):
             raise Exception(
                 f'Length of DataFrame ({len(self.time_series_data)}) and the Number of years '
-                f"({len(self.meta_data_time.years)} don't match. Expecting 8760 rows per year."
+                f"({len(self.period_data.years)} don't match. Expecting 8760 rows per year."
             )
 
         columns_with_nan = self.time_series_data.columns[self.time_series_data.isna().any()]
@@ -281,23 +281,23 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         time_series_data = pd.concat(
             [
                 pd.read_excel(excel_file, sheet_name=sheet_name, skiprows=[1, 2])
-                for sheet_name in self.meta_data_time.sheets_time_series
+                for sheet_name in self.period_data.sheets_time_series
             ],
             axis=0,
             ignore_index=True,
         )
-        if self.meta_data_time.sheets_time_series_others:
+        if self.period_data.sheets_time_series_others:
             time_series_data_extra = pd.concat(
                 [
                     pd.read_excel(excel_file, sheet_name=sheet_name, skiprows=[1, 2])
-                    for sheet_name in self.meta_data_time.sheets_time_series_others
+                    for sheet_name in self.period_data.sheets_time_series_others
                 ],
                 axis=0,
                 ignore_index=True,
             )
             time_series_data = pd.concat([time_series_data, time_series_data_extra], axis=1)
         # Adding the Index ain datetime format
-        a_time_series = datetime(2021, 1, 1) + np.arange(8760 * len(self.meta_data_time.years)) * timedelta(hours=1)
+        a_time_series = datetime(2021, 1, 1) + np.arange(8760 * len(self.period_data.years)) * timedelta(hours=1)
         a_time_series = a_time_series.astype('datetime64')
         time_series_data.index = a_time_series
         return time_series_data
@@ -343,7 +343,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         # List of comparisons
         comparisons = [
             ("meta_data", self.meta_data, other.meta_data),
-            ("meta_data_time", self.meta_data_time, other.meta_data_time),
+            ("period_data", self.period_data, other.period_data),
             ("time_series_data", self.time_series_data, other.time_series_data, lambda x, y: x.equals(y)),
             ("components_data", self.components_data, other.components_data, self._compare_nested_dicts),
             ("flow_system_data", self.flow_system_data, other.flow_system_data, self._compare_nested_dicts),
