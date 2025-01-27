@@ -259,6 +259,15 @@ class ThermalInvestElement(InvestElement):
         self.costs_per_mwh_heat_extra = extract_data(self.costs_per_mwh_heat_extra, data)
         self.relative_maximum = extract_data(self.relative_maximum, data)
         self.relative_minimum = extract_data(self.relative_minimum, data)
+        self.green_heat_factor = extract_data(self.green_heat_factor, data)
+
+    def thermal_effects_per_flow_hour(self,
+                                      effects: Dict[str, fx.Effect],
+                                      ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
+        """Calculates the thermal_effects per flow_hour."""
+        data = {effects['Gruene_Waerme']: self.green_heat_factor,
+                effects['costs']: self.costs_per_mwh_heat_extra}
+        return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
 
     @staticmethod
     def insert_grid_fee(
@@ -421,6 +430,23 @@ class FuelThermalInvestElement(ThermalInvestElement):
     def co2_factor(self, time_series_data: pd.DataFrame, co2_factors: Dict[str, float]) -> float:
         return extract_data(co2_factors.get(self.fuel_type, 0), time_series_data)
 
+    def fuel_effects_per_flow_hour(self,
+                                      effects: Dict[str, fx.Effect],
+                                      time_series_data: pd.DataFrame,
+                                      co2_factors: Dict[str, float]
+                                      ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
+        """Calculates the thermal_effects per flow_hour."""
+        data = {effects['costs']: (
+                        self._fuel_costs
+                        + self.fuel_cost_extra
+                        + (self.co2_factor(time_series_data, co2_factors) * extract_data('CO2', time_series_data))
+                ),
+                effects['CO2']: self.co2_factor(time_series_data, co2_factors),
+                effects['Gruene_Waerme']: self.green_heat_factor
+        }
+
+        return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
+
 
 class Kessel(FuelThermalInvestElement):
     def _convert_to_flixopt(
@@ -439,23 +465,14 @@ class Kessel(FuelThermalInvestElement):
             Q_fu=fx.Flow(
                 label='Qfu',
                 bus=busses[self.fuel_type],
-                effects_per_flow_hour={
-                    effects['costs']: (
-                        self._fuel_costs
-                        + self.fuel_cost_extra
-                        + (self.co2_factor(time_series_data, co2_factors) * extract_data('CO2', time_series_data))
-                    ),
-                    effects['CO2']: self.co2_factor(time_series_data, co2_factors),
-                },
+                effects_per_flow_hour=self.fuel_effects_per_flow_hour(effects, time_series_data, co2_factors),
             ),
             Q_th=fx.Flow(
                 label='Qth',
                 bus=busses[self.bus_heat],
                 relative_maximum=self.relative_maximum,
                 relative_minimum=self.relative_minimum,
-                effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra}
-                if self.costs_per_mwh_heat_extra is not None
-                else None,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
             ),
         )
         self.insert_size(
@@ -502,9 +519,7 @@ class KWK(FuelThermalInvestElement):
                 bus=busses[self.bus_heat],
                 relative_minimum=self.relative_minimum,
                 relative_maximum=self.relative_maximum,
-                effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra}
-                if self.costs_per_mwh_heat_extra is not None
-                else None,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
             ),
             P_el=fx.Flow(
                 label='Pel',
@@ -517,14 +532,7 @@ class KWK(FuelThermalInvestElement):
             Q_fu=fx.Flow(
                 label='Qfu',
                 bus=busses[self.fuel_type],
-                effects_per_flow_hour={
-                    effects['costs']: (
-                        self._fuel_costs
-                        + self.fuel_cost_extra
-                        + (self.co2_factor(time_series_data, co2_factors) * extract_data('CO2', time_series_data))
-                    ),
-                    effects['CO2']: self.co2_factor(time_series_data, co2_factors),
-                },
+                effects_per_flow_hour=self.fuel_effects_per_flow_hour(effects, time_series_data, co2_factors),
             ),
         )
         self.insert_size(
@@ -623,17 +631,12 @@ class Waermepumpe(ThermalInvestElement):
                 bus=busses[self.bus_heat],
                 relative_maximum=self.relative_maximum,
                 relative_minimum=self.relative_minimum,
-                effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra}
-                if self.costs_per_mwh_heat_extra is not None
-                else None,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
             ),
             P_el=fx.Flow(
                 label='Pel',
                 bus=busses[self.bus_elec],
-                effects_per_flow_hour={
-                    effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
-                    effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model),
-                },
+                effects_per_flow_hour=self._electricity_effects_per_flow_hour(effects, time_series_data, years_of_model),
             ),
         )
         self.insert_size(
@@ -677,6 +680,18 @@ class Waermepumpe(ThermalInvestElement):
         )
         # Begrenzung auf 10 Jahre
         return fund_per_mw_el * exists(self.start_year, 10, years_of_model)
+
+    def _electricity_effects_per_flow_hour(self,
+                                      effects: Dict[str, fx.Effect],
+                                      time_series_data: pd.DataFrame,
+                                      years_of_model: List[int]
+                                      ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
+        """Calculates the electricity_effects per flow_hour."""
+
+        data = {effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
+                effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model),
+                }
+        return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
 
     @staticmethod
     def bew_operation_funding_from_scop(
@@ -820,9 +835,7 @@ class Speicher(ThermalInvestElement):
                 bus=busses[self.bus_heat],
                 relative_maximum=self.relative_maximum,
                 relative_minimum=self.relative_minimum,
-                effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra}
-                if self.costs_per_mwh_heat_extra is not None
-                else None,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
             ),
             discharging=fx.Flow(
                 label='discharging',
@@ -975,9 +988,7 @@ class EHK(ThermalInvestElement):
                 bus=busses[self.bus_heat],
                 relative_maximum=self.relative_maximum,
                 relative_minimum=self.relative_minimum,
-                effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra}
-                if self.costs_per_mwh_heat_extra is not None
-                else None,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
             ),
         )
         self.insert_size(
@@ -1028,9 +1039,7 @@ class Rueckkuehler(ThermalInvestElement):
                 bus=busses[self.bus_heat],
                 relative_maximum=self.relative_maximum,
                 relative_minimum=self.relative_minimum,
-                effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra}
-                if self.costs_per_mwh_heat_extra is not None
-                else None,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
             ),
         )
         self.insert_size(
@@ -1072,16 +1081,14 @@ class AbwaermeWaermepumpe(Waermepumpe):
             Q_th=fx.Flow(
                 label='Qth',
                 bus=busses[self.bus_heat],
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
                 relative_maximum=self.relative_maximum,
                 relative_minimum=self.relative_minimum,
             ),
             P_el=fx.Flow(
                 label='Pel',
                 bus=busses[self.bus_elec],
-                effects_per_flow_hour={
-                    effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
-                    effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model),
-                },
+                effects_per_flow_hour=self._electricity_effects_per_flow_hour(effects, time_series_data, years_of_model),
             ),
             Q_ab=fx.Flow(
                 label='Qab',
@@ -1140,17 +1147,12 @@ class Geothermie(Waermepumpe):
                 bus=busses[self.bus_heat],
                 relative_maximum=self.relative_maximum,
                 relative_minimum=self.relative_minimum,
-                effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra}
-                if self.costs_per_mwh_heat_extra is not None
-                else None,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
             ),
             P_el=fx.Flow(
                 label='Pel',
                 bus=busses[self.bus_elec],
-                effects_per_flow_hour={
-                    effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
-                    effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model),
-                },
+                effects_per_flow_hour=self._electricity_effects_per_flow_hour(effects, time_series_data, years_of_model),
             ),
             Q_ab=fx.Flow(label='Qab', bus=busses[self.bus_waste_heat]),
         )
@@ -1190,9 +1192,7 @@ class Abwaerme(ThermalInvestElement):
             bus=busses[self.bus_heat],
             relative_minimum=self.relative_minimum,
             relative_maximum=self.relative_maximum,
-            effects_per_flow_hour={effects['costs']: self.costs_per_mwh_heat_extra}
-            if self.costs_per_mwh_heat_extra is not None
-            else None,
+            effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
         )
 
         q_abw = fx.Flow(
