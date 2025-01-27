@@ -167,6 +167,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
 
     _component_data_keys_mapping: Dict[str, str] = PrivateAttr(default={
         'Thermische Leistung': 'Thermische Leistung [MW]',
+        'Nennleistung': 'Nennleistung [MW]',
 
         'Investkosten [€]': 'Investkosten (fix) [€]',
         'Sonstige Fixkosten [€/a]': 'Sonstige Fixkosten (fix) [€/a]',
