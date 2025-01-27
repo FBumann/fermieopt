@@ -191,6 +191,11 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         'relative_minimum': 'Relative thermische Leistungsuntergrenze',
     })
 
+    _time_series_data_mapping: Dict[str, str] = PrivateAttr(default={
+        'TVL_FWN': 'Vorlauftemperatur Fernwärmenetz [°C]',
+        'TRL_FWN': 'Rücklauftemperatur Fernwärmenetz [°C]',
+    })
+
     @model_validator(mode='after')
     def read_data_from_excel(self):
         """
@@ -271,6 +276,27 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         return self
 
     @model_validator(mode='after')
+    def rename_legacy_columns_and_keys(self):
+        old_columns = self.time_series_data.columns
+        new_columns = []
+        for col in old_columns:
+            if col in self._time_series_data_mapping:
+                new_columns_name = self._time_series_data_mapping[col]
+                new_columns.append(new_columns_name)
+                logger.warning(f'Column "{col}" was automatically renamed to "{new_columns_name}"')
+            else:
+                new_columns.append(col)
+        self.time_series_data.columns = new_columns
+
+        # Replace deprecated keys with new ones
+        for comp_type in self.components_data:
+            self.components_data[comp_type] = self._insert_old_keys(self.components_data[comp_type])
+        for comp_type in self.flow_system_data:
+            self.flow_system_data[comp_type] = self._insert_old_keys(self.flow_system_data[comp_type])
+
+        return self
+
+    @model_validator(mode='after')
     def check_used_columns(self):
         if 'Vorlauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
             logger.warning(
@@ -341,9 +367,6 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         component_data_converted = convert_component_data_types(component_data_by_type)
         component_data_final = seperate_component_data_into_single_dicts(component_data_converted)
 
-        # Replace deprecated keys with new ones
-        for comp_type in component_data_final:
-            component_data_final[comp_type] = self._insert_old_keys(component_data_final[comp_type])
         return component_data_final
 
     def __eq__(self, other):
