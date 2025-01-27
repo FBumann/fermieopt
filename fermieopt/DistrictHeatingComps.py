@@ -205,7 +205,7 @@ class InvestElement(Element):
             flow.size = fx.InvestParameters(
                 optional=self.optional,
                 fixed_size=size if isinstance(size, (int, float)) else None,
-                minimum_size=None if isinstance(size, (int, float)) else size[0],
+                minimum_size=0 if isinstance(size, (int, float)) else size[0],
                 maximum_size=None if isinstance(size, (int, float)) else size[1],
                 fix_effects=fixed_effects_total,
                 specific_effects=specific_effects_total,
@@ -275,7 +275,9 @@ class ThermalInvestElement(InvestElement):
         grid_fee: Union[int, float], invest_flow: fx.Flow, efficiency: Union[int, float, np.ndarray], effect: fx.Effect
     ) -> None:
         """Adds the grid fee to the investment parameters of the invest_flow and it's meta_data."""
-        if not isinstance(invest_flow.size, fx.InvestParameters) and not grid_fee == 0:
+        if grid_fee == 0:
+            return None
+        if grid_fee != 0 and not isinstance(invest_flow.size, fx.InvestParameters):
             raise Exception('There are no InvestParameters to add the grid_fee to')
         else:
             highest_possible_grid_draw = np.max(invest_flow.relative_maximum / efficiency)
@@ -894,6 +896,7 @@ class Speicher(ThermalInvestElement):
             _, specific_effects_per_period = self.costs_and_funding(
                 interest_rate=self.interest_rate,
                 starting_year=self.start_year,
+                amortization_time=self.amortization_time,
                 lifetime=self.lifetime,
                 years_of_model=years_of_model,
                 invest_costs=0,
@@ -1060,7 +1063,7 @@ class Rueckkuehler(ThermalInvestElement):
 
 
 class AbwaermeWaermepumpe(Waermepumpe):
-    heat_source_costs: Union[int, float, str] = Field('Abwärmekosten')
+    heat_source_costs: Union[int, float, str] = Field(alias='Abwärmekosten', default=0)
     bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
 
     def _insert_data(self, data: pd.DataFrame):
@@ -1230,8 +1233,15 @@ class KWKekt(InvestElement):
     bus_elec: str = Field(alias='Strombus', default='StromEinspeisung')
     bus_heat: str = Field(alias='Wärmebus', default='Fernwärme')
 
+    relative_maximum: Union[int, float, str] = Field(alias='Relative Brennstoff Leistungsobergrenze', default=1)
+    relative_minimum: Union[int, float, str] = Field(alias='Relative Brennstoff Leistungsuntergrenze', default=0)
+    green_heat_factor: Union[int, float, str] = Field(alias='Grüne Wärme', default=0)
+
     def _insert_data(self, data: pd.DataFrame):
         self.fuel_costs = extract_data(self.fuel_costs, data)
+        self.relative_maximum = extract_data(self.relative_maximum, data)
+        self.relative_minimum = extract_data(self.relative_minimum, data)
+        self.green_heat_factor = extract_data(self.green_heat_factor, data)
 
     def _convert_to_flixopt(
         self,
@@ -1243,8 +1253,11 @@ class KWKekt(InvestElement):
     ):
         effects = flow_system.effect_collection.effects
 
-        flow_heat = fx.Flow('Qth', busses[self.bus_heat])
-        flow_fuel = fx.Flow('Qfu', busses[self.fuel_type], effects_per_flow_hour={effects['costs']: self.fuel_costs})
+        flow_heat = fx.Flow('Qth', busses[self.bus_heat],
+                            effects_per_flow_hour={effects['Gruene_Waerme']: self.green_heat_factor})
+        flow_fuel = fx.Flow('Qfu', busses[self.fuel_type], effects_per_flow_hour={effects['costs']: self.fuel_costs},
+                            relative_minimum=self.relative_maximum,
+                            relative_maximum=self.relative_maximum)
         flow_el = fx.Flow(
             'Pel',
             busses[self.bus_elec],
