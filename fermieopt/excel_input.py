@@ -165,6 +165,31 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     )
     _skip_read_data: bool = PrivateAttr(default=False)
 
+    _component_data_keys_mapping: Dict[str, str] = PrivateAttr(default={
+        'Thermische Leistung': 'Thermische Leistung [MW]',
+
+        'Investkosten [€]': 'Investkosten (fix) [€]',
+        'Sonstige Fixkosten [€/a]': 'Sonstige Fixkosten (fix) [€/a]',
+        'Investkosten [€/MW]': 'Investkosten (spezifisch) [€/MW]',
+        'Sonstige Fixkosten [€/(MW*a)]': 'Sonstige Fixkosten (spezifisch) [€/(MW*a)]',
+
+        'eta_th': 'Thermischer Wirkungsgrad',
+        'eta_el': 'Elektrischer Wirkungsgrad',
+
+        'Zusatzkosten pro MWh Brennstoff': 'Brennstoffkosten Zusatz [€/MWh_hu]',
+        'Zusatzkosten pro MWh Strom': 'Stromkosten Zusatz [€/MWh]',
+        'effects_per_flow_hour': 'Zusätzliche Wärmeerzeugungskosten [€/MWh]',
+
+        'SCOP für BEW': 'SCOP für BEW',
+        'Maximale Stromkostenförderung BEW': 'Maximale Stromkostenförderung BEW',
+
+        'Investkosten [€/MWh]': 'Investkosten [€/MWh]',
+        'Sonstige Fixkosten [€/(MWh*a)]': 'Sonstige Fixkosten (fix) [€/(MWh*a)]',
+        'Carnot Effizienz': 'Carnot Effizienz',
+        'relative_maximum': 'Relative thermische Leistungsobergrenze',
+        'relative_minimum': 'Relative thermische Leistungsuntergrenze',
+    })
+
     @model_validator(mode='after')
     def read_data_from_excel(self):
         """
@@ -276,6 +301,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         if isinstance(value, str):
             return pd.read_json(value, orient='split')
         return value
+
     def _read_time_series_data(self, excel_file: pd.ExcelFile) -> pd.DataFrame:
         # Extract time series data (assuming the second sheet contains time series data)
         time_series_data = pd.concat(
@@ -313,6 +339,10 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             logger.info(f"Component Data of Sheet '{sheet_name}' was read sucessfully.")
         component_data_converted = convert_component_data_types(component_data_by_type)
         component_data_final = seperate_component_data_into_single_dicts(component_data_converted)
+
+        # Replace deprecated keys with new ones
+        for comp_type in component_data_final:
+            component_data_final[comp_type] = self._insert_old_keys(component_data_final[comp_type])
         return component_data_final
 
     def __eq__(self, other):
@@ -369,6 +399,23 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             elif dict1[key] != dict2[key]:
                 return False
         return True
+
+    def _insert_old_keys(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Inserts new keys into a data dictionary that used deprecated keys.
+        """
+        new_data = []
+        for item in data:
+            new_data_single = {}
+            for key, value in item.items():
+                if key in self._component_data_keys_mapping:
+                    new_data_single[self._component_data_keys_mapping[key]] = value
+                    logger.warning(f'Key "{key}" is deprecated and was automatically renamed to {self._component_data_keys_mapping[key]}')
+                else:
+                    new_data_single[key] = value
+            new_data.append(new_data_single)
+        return new_data
+
 
 
 def organize_component_data_by_type(df: pd.DataFrame, valid_types: List[str]) -> Dict[str, pd.DataFrame]:
