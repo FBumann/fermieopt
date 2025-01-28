@@ -918,7 +918,7 @@ class Speicher(ThermalInvestElement):
 
     @field_validator('capacity', mode='before')
     @classmethod
-    def validate_thermal_power(cls, value) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
+    def validate_capacity(cls, value) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
         return validate_invest_range(value, label='Kapazität [MWh]')
 
     @property
