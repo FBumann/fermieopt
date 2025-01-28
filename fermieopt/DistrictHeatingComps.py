@@ -429,7 +429,6 @@ class FuelThermalInvestElement(ThermalInvestElement):
                         + (self.co2_factor(time_series_data, co2_factors) * extract_data('CO2', time_series_data))
                 ),
                 effects['CO2']: self.co2_factor(time_series_data, co2_factors),
-                effects['Gruene_Waerme']: self.green_heat_factor
         }
 
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
