@@ -262,9 +262,13 @@ class ThermalInvestElement(InvestElement):
                 effects['costs']: self.costs_per_mwh_heat_extra}
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
 
-    @staticmethod
     def insert_grid_fee(
-        grid_fee: Union[int, float], invest_flow: fx.Flow, efficiency: Union[int, float, np.ndarray], effect: fx.Effect
+            self,
+            grid_fee: Union[int, float],
+            invest_flow: fx.Flow,
+            efficiency: Union[int, float, np.ndarray],
+            effect: fx.Effect,
+            years_of_model: List[int]
     ) -> None:
         """Adds the grid fee to the investment parameters of the invest_flow and it's meta_data."""
         if grid_fee == 0:
@@ -274,18 +278,22 @@ class ThermalInvestElement(InvestElement):
         else:
             highest_possible_grid_draw = np.max(invest_flow.relative_maximum / efficiency)
             yearly_grid_fee = grid_fee * highest_possible_grid_draw
+            operation_years = np.array(
+                [1 if self.start_year <= year < (self.start_year + self.lifetime) else 0 for year in years_of_model]
+            )
+            grid_fee_costs: np.ndarray = operation_years * yearly_grid_fee
             if invest_flow.size.specific_effects is None:
-                invest_flow.size.specific_effects = {effect: yearly_grid_fee}
+                invest_flow.size.specific_effects = {effect: np.sum(grid_fee_costs)}
             else:
-                invest_flow.size.specific_effects[effect] = yearly_grid_fee + invest_flow.size.specific_effects.get(
-                    effect, 0
+                invest_flow.size.specific_effects[effect] = (
+                        np.sum(grid_fee_costs) + invest_flow.size.specific_effects.get(effect, 0)
                 )
 
             assert effect.label == 'costs', f"Effect {effect.label} is not 'costs', which is expected in this function"
             if not invest_flow.meta_data:
                 invest_flow.meta_data = MetaDataFactory.create()
-            invest_flow.meta_data['invest']['costs']['specific_effects'] += yearly_grid_fee
-            invest_flow.meta_data['yearly_grid_fee_per_thermal_power'] = yearly_grid_fee
+            invest_flow.meta_data['invest']['costs']['specific_effects'] += grid_fee_costs
+            invest_flow.meta_data['yearly_grid_fee_per_thermal_power'] = grid_fee_costs
             invest_flow.meta_data['highest_possible_grid_draw'] = highest_possible_grid_draw
 
     @property
@@ -468,7 +476,7 @@ class Kessel(FuelThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(boiler, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, boiler.Q_th, boiler.eta, effects['costs'])
+        self.insert_grid_fee(self.grid_fee_per_year, boiler.Q_th, boiler.eta, effects['costs'], years_of_model)
         return boiler
 
 
@@ -526,7 +534,7 @@ class KWK(FuelThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(chp, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, chp.Q_th, chp.eta_th, effects['costs'])
+        self.insert_grid_fee(self.grid_fee_per_year, chp.Q_th, chp.eta_th, effects['costs'], years_of_model)
         return chp
 
     def _insert_data(self, time_series_data: pd.DataFrame):
@@ -628,7 +636,7 @@ class Waermepumpe(ThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'])
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
         return heat_pump
 
     def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
@@ -975,7 +983,7 @@ class EHK(ThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(ehk, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, ehk.Q_th, ehk.eta, effects['costs'])
+        self.insert_grid_fee(self.grid_fee_per_year, ehk.Q_th, ehk.eta, effects['costs'], years_of_model)
         return ehk
 
 
@@ -1026,7 +1034,8 @@ class Rueckkuehler(ThermalInvestElement):
         self.restrict_availlability(cool, years_of_model)
         if cool.specific_electricity_demand != 0:
             self.insert_grid_fee(
-                self.grid_fee_per_year, cool.Q_th, 1 / cool.specific_electricity_demand, effects['costs']
+                self.grid_fee_per_year, cool.Q_th, 1 / cool.specific_electricity_demand, effects['costs'],
+                years_of_model
             )
         return cool
 
@@ -1076,7 +1085,7 @@ class AbwaermeWaermepumpe(Waermepumpe):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'])
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
         return heat_pump
 
 
@@ -1134,7 +1143,7 @@ class Geothermie(Waermepumpe):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'])
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
         return heat_pump
 
 

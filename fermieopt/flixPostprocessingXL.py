@@ -290,9 +290,14 @@ class FlixPostXL(fx.results.CalculationResults):
                 )
 
             total = np.sum(self.effect_results[effect].all_results['invest']['invest_per_period'])
-            individual = [np.sum(list(self.effect_results[effect].all_results['invest']['Shares_per_period'].values()))]
-            computed_total = sum(individual)
-            if abs(abs(computed_total) - abs(total)) > 1e-5:
+            computed_total = np.sum(
+                np.sum(
+                    list(
+                        self.effect_results[effect].all_results['invest']['Shares_per_period'].values()
+                    )
+                )
+            )
+            if not np.isclose(total, computed_total, rtol=0, atol=1e-5):
                 logger.critical(
                     f'Total of individual results for {effect=:>25} {"invest_per_period":<10} doesnt match computation after '
                     f'solve: {computed_total=:>20.5f}     {total=:>20.5f}'
@@ -334,7 +339,7 @@ class FlixPostXL(fx.results.CalculationResults):
             factors = {key[0]: value for key, value in self.shares_between_effects_invest.items() if key[1] == effect}
             for origin, factor in factors.items():
                 additional_shares[effect] = (
-                    additional_shares.get(effect, 0)
+                    additional_shares.get(effect, np.array([0] * len(self.years)))
                     + self.effect_results[origin].all_results['invest']['invest_per_period'] * factor
                 )
         for effect, value in additional_shares.items():
