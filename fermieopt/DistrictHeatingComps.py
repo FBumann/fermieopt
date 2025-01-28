@@ -227,6 +227,12 @@ class InvestElement(Element):
         existance = exists(self.start_year, self.lifetime, years_in_model)
         restrict_availlability(component, existance)
 
+    @model_validator(mode='after')
+    def check_amortization(self):
+        if self.amortization_time is None and self.lifetime is not None:
+            self.amortization_time = self.lifetime
+        return self
+
 
 class PowerInvestElement(InvestElement):
     power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(alias='Nennleistung [MW]')
