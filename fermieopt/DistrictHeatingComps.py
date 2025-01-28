@@ -64,7 +64,11 @@ class InvestElement(Element):
 
     @property
     def needs_investment(self) -> bool:
-        return self.invest_costs_fixed != 0 or self.invest_costs_specific != 0 or self.optional is True
+        return (self.invest_costs_fixed != 0 or
+                self.invest_costs_specific != 0 or
+                self.annual_costs_fixed != 0 or
+                self.annual_costs_specific != 0 or
+                self.optional is True)
 
     @field_validator('invest_group', mode='before')
     @classmethod
@@ -234,6 +238,10 @@ class PowerInvestElement(InvestElement):
     @classmethod
     def validate_power(cls, value) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
         return validate_invest_range(value, label='Nennleistung [MW]')
+
+    @property
+    def needs_investment(self) -> bool:
+        return super().needs_investment or isinstance(self.power, tuple)
 
 
 class ThermalInvestElement(InvestElement):
