@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import flixOpt as fx
 import flixOpt.elements
+import flixOpt.components
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator, ValidationError
@@ -944,6 +945,11 @@ class Speicher(ThermalInvestElement):
             or self.optional is True
             or isinstance(self.capacity, tuple)
         )
+
+    def restrict_availlability(self, component: flixOpt.components.Storage, years_in_model: List[int]) -> None:
+        existance = exists(self.start_year, self.lifetime, years_in_model)
+        restrict_availlability(component, existance)
+        component.relative_loss_per_hour = component.relative_loss_per_hour * existance
 
 
 class EHK(ThermalInvestElement):
