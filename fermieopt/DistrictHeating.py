@@ -12,6 +12,7 @@ from rich.console import Console
 from fermieopt.DistrictHeatingComps import ElementFactory, exists, extract_data, numbers_from_str
 from fermieopt.excel_input import ExcelData
 from fermieopt.flixPostprocessingXL import FlixPostXL
+from fermieopt.meta_data import MetaDataFactory
 
 logger = logging.getLogger('flixOpt')
 
@@ -24,6 +25,7 @@ class ExcelModel:
 
     def __init__(self, excel_file_path: str):
         self.excel_data = ExcelData(file_path=pathlib.Path(excel_file_path))
+        MetaDataFactory.length = len(self.excel_data.period_data.years)
         self.final_model = fx.FlowSystem(time_series=self.excel_data.time_series_data.index)
         self._busses = self._create_busses()
         self._effects = self._create_effects()

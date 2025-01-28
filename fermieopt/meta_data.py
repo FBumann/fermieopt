@@ -4,8 +4,8 @@ import numpy as np
 
 
 class EffectMetaData(TypedDict):
-    fixed_effects: Union[int, float, np.ndarray[Union[int, float]]]
-    specific_effects: Union[int, float, np.ndarray[Union[int, float]]]
+    fixed_effects: np.ndarray[Union[int, float]]
+    specific_effects: np.ndarray[Union[int, float]]
 
 
 class InvestMetaData(TypedDict):
@@ -18,17 +18,18 @@ class MetaData(TypedDict):
 
 
 class MetaDataFactory:
-    @staticmethod
-    def create() -> MetaData:
+    length = 1
+    @classmethod
+    def create(cls) -> MetaData:
         return {
             'invest': {
                 'costs': {
-                    'fixed_effects': 0,
-                    'specific_effects': 0,
+                    'fixed_effects': np.array([0] * cls.length, dtype=float),
+                    'specific_effects': np.array([0] * cls.length, dtype=float),
                 },
                 'funding': {
-                    'fixed_effects': 0,
-                    'specific_effects': 0,
+                    'fixed_effects': np.array([0] * cls.length, dtype=float),
+                    'specific_effects': np.array([0] * cls.length, dtype=float),
                 },
             },
         }
