@@ -237,7 +237,7 @@ class PowerInvestElement(InvestElement):
 
 
 class ThermalInvestElement(InvestElement):
-    thermal_power: Union[int, float, str] = Field(alias='Thermische Leistung [MW]')
+    thermal_power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(alias='Thermische Leistung [MW]')
     grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0)
     bus_heat: str = Field(alias='Wärmebus', default='Fernwärme')
 
@@ -290,7 +290,7 @@ class ThermalInvestElement(InvestElement):
 
     @property
     def needs_investment(self) -> bool:
-        return super().needs_investment or self.grid_fee_per_year != 0
+        return super().needs_investment or self.grid_fee_per_year != 0 or isinstance(self.thermal_power, tuple)
 
     @field_validator('thermal_power', mode='before')
     @classmethod
@@ -766,7 +766,7 @@ class Waermepumpe(ThermalInvestElement):
 
 
 class Speicher(ThermalInvestElement):
-    capacity: Union[int, float, str] = Field(alias='Kapazität [MWh]')
+    capacity: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(alias='Kapazität [MWh]')
     invest_costs_capacity_specific: Union[int, float] = Field(alias='Investkosten [€/MWh]', default=0)
     annual_costs_capacity_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/(MWh*a)]', default=0)
 
@@ -889,8 +889,8 @@ class Speicher(ThermalInvestElement):
             storage.capacity_in_flow_hours = fx.InvestParameters(
                 optional=self.optional,
                 fixed_size=self.capacity if isinstance(self.capacity, (int, float)) else None,
-                minimum_size=self.minimum_capacity,
-                maximum_size=self.maximum_capacity,
+                minimum_size=0 if isinstance(self.capacity, (int, float)) else self.capacity[0],
+                maximum_size=None if isinstance(self.capacity, (int, float)) else self.capacity[1],
                 specific_effects=specific_effects_total,
             )
             if not storage.meta_data:
@@ -902,20 +902,17 @@ class Speicher(ThermalInvestElement):
     def _get_normalized_temperature_spread(self) -> Union[float, np.ndarray]:
         return (self.temperature_upper - self.temperature_lower) / self.default_temperature_spread
 
-    @field_validator('grid_fee_per_year')
+    @field_validator('grid_fee_per_year', mode='before')
     @classmethod
     def validate_grid_fee(cls, value):
         if value is not None:
             raise ValueError(f"Netzentgelt is not supported for '{cls.__name__}")
         return value
 
-    @property
-    def minimum_capacity(self) -> float:
-        return float(self.capacity.split('-')[0]) if isinstance(self.capacity, str) else 0
-
-    @property
-    def maximum_capacity(self):
-        return float(self.capacity.split('-')[1]) if isinstance(self.capacity, str) else None
+    @field_validator('capacity', mode='before')
+    @classmethod
+    def validate_thermal_power(cls, value) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
+        return validate_invest_range(value, label='Kapazität [MWh]')
 
     @property
     def relative_maximum_capacity(self) -> Union[float, np.ndarray]:
@@ -930,6 +927,7 @@ class Speicher(ThermalInvestElement):
             self.invest_costs_capacity_specific != 0
             or self.annual_costs_capacity_specific != 0
             or self.optional is True
+            or isinstance(self.capacity, tuple)
         )
 
 
@@ -1504,7 +1502,7 @@ def validate_invest_range(
     """
     if isinstance(value, (int, float)):
         if value < 0:
-            raise ValueError(f"'{label}' must be positive.")
+            raise ValueError(f"'{label}' must be a positive number.")
         return value
     elif isinstance(value, str):
         parts = value.split('-')
