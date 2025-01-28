@@ -204,9 +204,9 @@ class InvestElement(Element):
 
             flow.size = fx.InvestParameters(
                 optional=self.optional,
-                fixed_size=size if isinstance(size, (int, float)) else None,
-                minimum_size=0 if isinstance(size, (int, float)) else size[0],
-                maximum_size=None if isinstance(size, (int, float)) else size[1],
+                fixed_size=None if isinstance(size, tuple) else size,
+                minimum_size=size[0] if isinstance(size, tuple) else 0,
+                maximum_size=size[1] if isinstance(size, tuple) else None,
                 fix_effects=fixed_effects_total,
                 specific_effects=specific_effects_total,
             )
@@ -895,9 +895,9 @@ class Speicher(ThermalInvestElement):
 
             storage.capacity_in_flow_hours = fx.InvestParameters(
                 optional=self.optional,
-                fixed_size=self.capacity if isinstance(self.capacity, (int, float)) else None,
-                minimum_size=0 if isinstance(self.capacity, (int, float)) else self.capacity[0],
-                maximum_size=None if isinstance(self.capacity, (int, float)) else self.capacity[1],
+                fixed_size=None if isinstance(self.capacity, tuple) else self.capacity,
+                minimum_size=self.capacity[0] if isinstance(self.capacity, tuple) else 0,
+                maximum_size=self.capacity[1] if isinstance(self.capacity, tuple) else None,
                 specific_effects=specific_effects_total,
             )
             if not storage.meta_data:
