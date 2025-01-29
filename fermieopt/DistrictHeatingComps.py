@@ -1,1723 +1,1443 @@
-# -*- coding: utf-8 -*-
-import re
 import logging
-import textwrap
-from typing import Union, List, Dict, Optional, Literal, Any, Tuple
-
-import pandas as pd
-import numpy as np
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import flixOpt as fx
+import flixOpt.components
 import flixOpt.elements
-from flixOpt.structure import Element
+import numpy as np
+import pandas as pd
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
-NO_DEFAULT = object()  # Unique object as signal that no default value exists
+from fermieopt.meta_data import MetaData, MetaDataFactory
 
 logger = logging.getLogger('flixOpt')
 
-class Validator:
-    """
-    This class is Used to provide a general structure and functionality to reliably create Objects from kwargs.
-    It provides type validation and properties to distinguish between optional and mandatory kwargs
 
-    Attributes:
-        props (dict): A dictionary holding the properties of the object, initialized from keyword arguments.
-        kwargs (dict): Additional keyword arguments not directly assigned to properties.
-        computed_props (dict): Computed properties derived from the object's attributes.
-        flix_comps (List[Element]): A list of components associated with the object, where Element is a custom type
-                                 representing a component in the energy system.
+class Element(
+    BaseModel,
+    populate_by_name=True,  # Enables using both field names and aliases
+    extra='forbid',
+):  # Forbids unexpected keys in input data
+    name: str = Field(alias='Name')
+    group: Optional[str] = Field(alias='Gruppe', default=None)
+    _meta_data: MetaData = PrivateAttr(default_factory=MetaDataFactory.create)
 
-    Methods:
-        __init__(**props): Initializes an instance of Validator with properties passed as keyword arguments.
-        __str__(): Provides a string representation of the Validator instance.
-        _property_defaults(): Returns a dictionary of all properties which have a default value.
-        _property_types(): Returns a dictionary mapping property names to their allowed types.
-        _mandatory_properties(): Identifies and returns a list of required props for the Validator.
-        _kwargs(): Extracts and validates additional keyword arguments not directly assigned to properties.
-        validate_properties(): Validates the properties against the definitions and types specified in _property_definitions and _allowed_kwargs.
-        setup_default_properties(): Sets up default values for properties that have them defined in _property_definitions.
-        finalize_kwargs(time_series_data: pd.DataFrame) -> Dict[str, Any]: Finalizes kwargs and saves them in Dictionaries, Overwriting the placeholder in self.kwargs.
-        computation(years_of_model: List[int], co2_factors: Dict[str, float], time_series_data: pd.DataFrame) -> None: Placeholder for computation logic.
-        connect_to_system(time_series_data: pd.DataFrame, co2_factors: Dict[str, float], years_of_model: List[int], effects: Dict[str, fx.Effect], busses: Dict[str, fx.Bus]) -> List[Element]: Initializes a flixOpt Component from the computed data.
-    """
+    def add_to_flow_system(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float] = None,
+        years_of_model: List[int] = None,
+    ):
+        self._insert_data(time_series_data)
+        flow_system.add_elements(
+            self._convert_to_flixopt(flow_system, busses, time_series_data, co2_factors, years_of_model)
+        )
 
-    # Defining allowed properties, default values and allowed types. Needs to be extended by Child class
-    _property_definitions = {
-    }
-    # Defining allowed kwargs and types. Needs to be extended by Child class
-    _allowed_kwargs = {
-    }
+    def _insert_data(self, data: pd.DataFrame):
+        """Inserts data into the model. This method is supposed to be called right after creating an instance."""
+        raise NotImplementedError
 
-    def __init__(self, **props):
-        """
-          Initializes an instance of EnergySystemObject with properties passed as keyword arguments.
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        raise NotImplementedError
 
-          Args:
-              props (dict): Keyword arguments representing the properties of the object.
-          """
-        self.props: Dict[str, Any] = props
-        self.kwargs = None  #Placeholder and Validation that the function finalize kwargs is called
-        self.computed_props = {}
-        self.meta_data = {}
-        self.flix_comps: List[Element] = []
 
-        self.setup_default_properties()
-        self.validate_properties()
-
-    def __str__(self):
-        props_str = f"props=\n{textwrap.indent(print_dict(self.props), ' ' * 3)}"
-        computed_props_str = f"computed_props=\n{textwrap.indent(print_dict(self.computed_props), ' ' * 3)}"
-        kwargs_str = f"kwargs=\n{textwrap.indent(print_dict(self.kwargs), ' ' * 3)}"
-
-        return (f"<{self.__class__.__name__}> {self.props['Name']}:\n"
-                    f"{textwrap.indent(props_str, ' ' * 3)}\n"
-                    f"{textwrap.indent(computed_props_str, ' ' * 3)}\n"
-                    f"{textwrap.indent(kwargs_str, ' ' * 3)}\n"
-                    )
+class InvestElement(Element):
+    start_year: Optional[int] = Field(alias='Startjahr', default=None, ge=1800)
+    amortization_time: Optional[int] = Field(alias='Abschreibungsdauer', default=None, ge=1)
+    lifetime: Optional[int] = Field(alias='Lebensdauer', default=None, ge=1)
+    optional: bool = Field(alias='Optional', default=False)
+    invest_costs_fixed: Union[int, float] = Field(alias='Investkosten (fix) [€]', default=0)
+    invest_costs_specific: Union[int, float] = Field(alias='Investkosten (spezifisch) [€/MW]', default=0)
+    annual_costs_fixed: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/a]', default=0)
+    annual_costs_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (spezifisch) [€/(MW*a)]', default=0)
+    interest_rate: Union[int, float] = Field(alias='Zinssatz', default=0)
+    funding_rate: Union[int, float] = Field(alias='Fördersatz', default=0)
+    invest_group: Optional[str] = Field(alias='Investgruppe', default=None)
 
     @property
-    def _property_defaults(self) -> Dict[str, Any]:
-        """
-        Returns a dictionary of all properties which have a default value
+    def needs_investment(self) -> bool:
+        return (
+            self.invest_costs_fixed != 0
+            or self.invest_costs_specific != 0
+            or self.annual_costs_fixed != 0
+            or self.annual_costs_specific != 0
+            or self.optional is True
+        )
 
-        Returns:
-            dict: A dictionary mapping property names to their default values.
-        """
-        return {k: default for k, (default, types) in self._property_definitions.items() if default is not NO_DEFAULT}
+    @field_validator('invest_group', mode='before')
+    @classmethod
+    def validate_invest_group(cls, value) -> Optional[str]:
+        if value is None:
+            return value
+        elif isinstance(value, str):
+            value = value.replace(',', '.')  # allow , as decimal separator
+            values = value.split(':')
+            if len(values) != 2:
+                raise ValidationError(f'Invalid invest group: {value}. Must be None or of form: "xyz:0.5"')
+            name, _ = values
+            return name
+        raise ValidationError(f'Invalid invest group: {value}. Must be None or of form: "xyz:0.5"')
 
-    @property
-    def _property_types(self) -> Dict[str, Tuple[type, type]]:
-        """
-        Returns a dictionary mapping property names to their allowed types.
-
-        Returns:
-            dict: A dictionary mapping property names to their allowed types.
-        """
-        return {k: types for k, (defaults, types) in self._property_definitions.items()}
-
-    @property
-    def _mandatory_properties(self) -> List[str]:
-        """
-        Identifies and returns a list of required props for the EnergySystemObject.
-
-        Returns:
-            list: A list of properties which are mandatory
-        """
-        return [prop for prop, (default, prop_type) in self._property_definitions.items()
-                if default is NO_DEFAULT]
-
-    @property
-    def _kwargs(self) -> dict:
-        """
-        Extracts and validates additional keyword arguments not directly assigned to properties.
-
-        Returns:
-            dict: A dictionary of validated additional keyword arguments.
-        """
-        kwargs = {}
-        for key, allowed_types in self._allowed_kwargs.items():
-            if key in self.props:
-                kwargs[key] = self.props[key]
-
-        return kwargs
-
-    def validate_properties(self):
-        """
-        Validates the properties against the definitions and types specified in _property_definitions and _allowed_kwargs.
-
-        Raises:
-            ValueError: If a mandatory property is missing or an invalid property is provided.
-            TypeError: If a property has an incorrect type.
-        """
-
-        # Check for mandatory properties
-        for prop in self._mandatory_properties:
-            if prop not in self.props.keys():
-                raise ValueError(f"{prop} is required for {self.__class__.__name__}")
-
-        allowed_properties = {**self._property_types, **self._allowed_kwargs}
-        for prop, prop_type in self.props.items():
-            # Check or excess properties
-            if prop not in allowed_properties.keys():
-                raise ValueError(f"{prop} is not a valid parameter for {self.__class__.__name__}")
-
-            # Check for invalid types
-            if not isinstance(prop_type, allowed_properties[prop]):
-                raise TypeError(f"{prop} must be {allowed_properties[prop]}, got {prop_type} instead")
-
-    def setup_default_properties(self):
-        """
-        Sets up default values for properties that have them defined in _property_definitions.
-
-        """
-        # Set up default values or perform transformations
-        for key, value in self._property_defaults.items():
-            self.props.setdefault(key, value)
-
-    def finalize_kwargs(self, time_series_data: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Finalizes kwargs and saves them in self.kwargs, overwriting the placeholder.
-        Converts certain kwargs into time series data based on the provided DataFrame.
-
-        Args:
-            time_series_data (pd.DataFrame): The DataFrame containing the time series data.
-        """
-        self.kwargs = {
-            k: (as_time_series(v, time_series_data) if
-                k in ["relative_minimum", "relative_maximum", "effects_per_running_hour", "effects_per_flow_hour",
-                      "effects_per_switch_on"]
-                else v)
-            for k, v in self._kwargs.items()}
-        return self.kwargs
-
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-
-        raise Exception(f"Not implemented for class 'Validator'. "
-                        f"Needs to be implemented in class {self.__class__.__name__} itself")
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        """
-        Needs to be implemented by Child class
-        Connects the energy system object to the overall system, creating a component representation and integrating it into the system model.
-
-        Args:
-            time_series_data (pd.DataFrame): A DataFrame containing the time series data for the computation.
-            co2_factors (Dict[str, float]): A dictionary mapping CO2 factors to their values.
-            years_of_model (List[int]): A list of years considered existing in the model.
-            effects (Dict[str, fx.Effect]): A dictionary mapping effect type labels to effect type objects.
-            busses (Dict[str, fx.Bus]): A dictionary mapping bus labels to their bus objects.
-
-        Returns:
-            List[Element]: A list of components to be added to the flixOpt Model.
-        """
-        raise Exception(f"Not implemented for class 'Validator'. "
-                        f"Needs to be implemented in class {self.__class__.__name__} itself")
-
-class EnergySystemObject(Validator):
-    """
-    Represents an object within an energy system.
-    Introduced Concepts:
-    Basics (Name, Gruppe):
-        - The name of the Component and a group the Component belongs to (for. ex. a technology, a location,...)
-    Existence (Startjahr, Lebensdauer):
-        - Limiting the existance of the Component in the Model
-    Investment:
-        - Investment into Components specified by several costs.
-        - Funding a part of the Investment
-        - Limiting Investments across multiple Components
-    Kwargs:
-        - Several optional attributes, which are directly passed to fx.Flow of flixOpt.flixStructure
-
-    Attributes:
-        props (dict): A dictionary holding the properties of the object, initialized from keyword arguments.
-        kwargs (dict): Additional keyword arguments not directly assigned to properties.
-        computed_props (dict): Computed properties derived from the object's attributes.
-        flix_comps (List[Element]): A list of components associated with the object, where Element is a custom type representing a component in the energy system.
-
-    """
-
-    # Defining allowed properties, default values and allowed types
-    _property_definitions = {
-        # Basics
-        "Name": (NO_DEFAULT, str),
-        "Gruppe": (None, Optional[str]),
-        # Existance (& Investment)
-        "Startjahr": (None, Optional[int]),
-        "Lebensdauer": (None, Optional[int]),
-        #Investment
-        "Optional": (False, bool),
-        "Investkosten [€]": (0, Union[int, float]),
-        "Investkosten [€/MW]": (0, Union[int, float]),
-        "Zinssatz": (0, Union[int, float]),
-        "Sonstige Fixkosten [€/a]": (0, Union[int, float]),
-        "Sonstige Fixkosten [€/(MW*a)]": (0, Union[int, float]),
-        "Fördersatz": (0, Union[int, float]),
-        "Investgruppe": (None, Optional[str]),
-    }
-    # Defining allowed kwargs, and types
-    _allowed_kwargs = {
-        "relative_minimum": Union[int, float, str],
-        "relative_maximum": Union[int, float, str],
-        "flow_hours_total_min": int,
-        "flow_hours_total_max": int,
-        "load_factor_min": Union[int, float],
-        "load_factor_max": Union[int, float],
-        "effects_per_flow_hour": Union[int, float, str],
-
-        "effects_per_running_hour": Union[int, float, str],
-        "effects_per_switch_on": Union[int, float, str],
-        "on_hours_total_min": int,
-        "on_hours_total_max": int,
-        "consecutive_on_hours_min": int,
-        "consecutive_on_hours_max": int,
-        "switch_on_total_max": int,
-    }
-
-    _flow_kwargs = ["relative_minimum", "relative_maximum", "flow_hours_total_min", "flow_hours_total_max",
-                    "load_factor_min", "load_factor_max", "effects_per_flow_hour"]
-
-    _on_kwargs = ["effects_per_running_hour", "effects_per_switch_on", "on_hours_total_min", "on_hours_total_max",
-                    "consecutive_on_hours_min", "consecutive_on_hours_max", "switch_on_total_max"]
-
-    _invest_prop = None
-
-    def validate_properties(self):
-        """
-        Validates the properties against the definitions and types specified in _property_definitions and _allowed_kwargs.
-
-        Raises:
-            ValueError: If a mandatory property is missing or an invalid property is provided.
-            TypeError: If a property has an incorrect type.
-        """
-        super().validate_properties()
-
-        # Logical Check
-        if not (self.props["Startjahr"] is None) == (self.props["Lebensdauer"] is None):
-            raise ValueError(f"Either set BOTH or NONE of 'Startjahr' and 'Lebensdauer'!")
-
-        # Check for not computable investement props
-        if not self.invest_args_viable:
-            for prop in ['Investkosten [€]',
-                         'Investkosten [€/MW]',
-                         'Zinssatz', 'Sonstige Fixkosten [€/a]',
-                         'Sonstige Fixkosten [€/(MW*a)]',
-                         'Fördersatz',
-                         'Investgruppe']:
-                if self.props[prop] != self._property_defaults[prop]:
-                    raise ValueError(f"If {prop} is used, 'Startjahr' and 'Lebensdauer' must be set!")
-
-    def years_in_model(self, years: List[int]) -> int:
-        """
-        Computes the total number of years the object will be present in the model.
-
-        Args:
-            years (list): A list of years representing the years of the model
-
-        Returns:
-            int: The total number of years the object will be present in the model.
-        """
-        if "Jahre im Modell" not in self.computed_props:
-            self.computed_props["Jahre im Modell"] = sum(
-                index_per_year_in_model(first_year=self.props["Startjahr"],
-                                        lifetime=self.props["Lebensdauer"],
-                                        years_of_model=years)
+    @model_validator(mode='after')
+    def validate_years(self):
+        """Validates the start and lifetime of the element"""
+        if not (self.start_year is None) == (self.lifetime is None):
+            raise ValueError("Either set BOTH or NONE of 'Startjahr' and 'Lebensdauer'!")
+        if self.lifetime is not None and self.amortization_time is None:
+            self.amortization_time = self.lifetime
+            logger.debug(
+                f'Amortization time of {self.name} was set to {self.lifetime} years, as no amortization time was given'
             )
-        return self.computed_props["Jahre im Modell"]
+        return self
 
-    def compute_investment(self, years_of_model: List[int]):
-        self.computed_props["exists"] = exists(self.props["Startjahr"], self.props["Lebensdauer"], years_of_model)
-        self.computed_props[self._invest_prop], min_invest, max_invest = (
-            handle_invest_parameter(self.props[self._invest_prop]))
-
-        self.computed_props[f"Investment {self._invest_prop}"] = None
-
-        if self.invest_args_viable:
-            self.meta_data["fixed_effects"], self.meta_data["specific_effects"] = costs_and_funding(
-                interest_rate=self.props["Zinssatz"],
-                starting_year=self.props["Startjahr"],
-                lifetime=self.props["Lebensdauer"],
-                specific_invest_costs=self.props["Investkosten [€/MW]"],
-                specific_annual_costs=self.props["Sonstige Fixkosten [€/(MW*a)]"],
-                invest_costs=self.props["Investkosten [€]"],
-                annual_costs=self.props["Sonstige Fixkosten [€/a]"],
-                funding_rate=self.props["Fördersatz"],
-                years_of_model=years_of_model
+    @staticmethod
+    def annuity_factor(interest_rate: float, duration_in_years: int) -> float:
+        """Get the annuity factor for a given interest rate and lifetime"""
+        if interest_rate == 0:  # Preventing ZeroDivision
+            annuity_factor = 1 / duration_in_years
+        else:
+            annuity_factor = ((1 + interest_rate) ** duration_in_years * interest_rate) / (
+                (1 + interest_rate) ** duration_in_years - 1
             )
-            self.computed_props["fixed_effects"] = {key: sum(value) for key, value in
-                                                    self.meta_data["fixed_effects"].items()}
-            self.computed_props["specific_effects"] = {key: sum(value) for key, value in
-                                                       self.meta_data["specific_effects"].items()}
+        return annuity_factor
 
-            if self.props["Investgruppe"]:
-                self.computed_props["specific_effects"][self.props["Investgruppe"]] = 1
+    @classmethod
+    def costs_and_funding(
+        cls,
+        interest_rate: float,
+        start_year: int,
+        amortization_time: int,
+        lifetime: int,
+        years_of_model: List[int],
+        invest_costs: float,
+        specific_invest_costs: float,
+        annual_costs: float,
+        specific_annual_costs: float,
+        funding_rate: float,
+    ) -> Tuple[Dict[str, np.ndarray[float]], Dict[str, np.ndarray[float]]]:
+        """
+        Calculates the annual costs and funding for an investment based on various financial parameters.
 
-            size = self.computed_props[self._invest_prop]
-            self.computed_props[f"Investment {self._invest_prop}"] = fx.InvestParameters(
-                fix_effects={key: value for key, value in self.computed_props["fixed_effects"].items() if value},
-                specific_effects={key: value for key, value in self.computed_props["specific_effects"].items() if
-                               value},
-                fixed_size=size if isinstance(size, (int, float)) else None,
-                optional=self.props["Optional"],
-                minimum_size=min_invest,
-                maximum_size=max_invest)
+        This function computes the fixed and specific costs and funding for an investment, considering the
+        interest rate, lifetime of the investment, investment costs (both per MW and per year), other costs (both per MW
+        and per year), funding rate, and grid fee per MW per year. The costs and funding are calculated using the annuity
+        method, which spreads out the initial investment costs over the lifetime of the investment, adjusted for the
+        interest rate.
 
-    def insert_effects_into_investargs(self, effects: Dict[str, fx.Effect]) -> None:
-        # Inserting effects as keys
-        invest_key = f"Investment {self._invest_prop}"
-        if self.computed_props[invest_key]:
-            insert_effects(self.computed_props[invest_key].fix_effects, effects)
-            insert_effects(self.computed_props[invest_key].specific_effects, effects)
+        Parameters:
+        - interest_rate (float): The annual interest rate used for calculating the annuity factor.
+        - start_year (int): first year of operation
+        - amortization_time (int): amortization time for calculating the investment
+        - lifetime (int): lifetime for calculating the fixed yearly costs
+        - years_of_model (List[int]): The years used in the model
+        - invest_costs (float): The total investment costs.
+        - invest_costs_per_mw (float): The investment costs per megawatt (MW).
+        - other_annual_costs (float): Other annual costs not included in the investment costs.
+        - other_annual_costs_per_mw (float): Other costs per megawatt (MW) not included in the investment costs.
+        - funding_rate (float): The rate at which the investment is funded.
 
-    @property
-    def invest_args_viable(self):
-        "Checks if the computation of Investment paramns is possible"
-        return self.props["Startjahr"] is not None and self.props["Lebensdauer"] is not None
+        Returns:
+        - Tuple[Dict[str, float], Dict[str, float]]: A tuple containing two dictionaries:
+            1. Fixed costs and funding, with keys being strings and values being the corresponding amounts in currency units.
+            2. Specific costs and funding, similar to the fixed costs but calculated per MW.
+        """
+        annuity_factor = InvestElement.annuity_factor(interest_rate=interest_rate, duration_in_years=amortization_time)
 
-    def accounting_years(self, years_of_model: List[int]) -> np.ndarray:
-        lifetime, start_year = self.props["Lebensdauer"], self.props["Startjahr"]
+        operation_years = cls.operation_years(start_year, lifetime, years_of_model)
+        amortization_years = cls.amortization_years(start_year, amortization_time, years_of_model)
+
+        # Calculate costs and funding
+        fix_costs = {
+            'costs': invest_costs * annuity_factor * amortization_years + annual_costs * operation_years,
+            'funding': invest_costs * annuity_factor * amortization_years * funding_rate,
+        }
+        specific_costs = {
+            'costs': specific_invest_costs * annuity_factor * amortization_years
+            + specific_annual_costs * operation_years,
+            'funding': specific_invest_costs * annuity_factor * amortization_years * funding_rate,
+        }
+
+        def clean_dict(d):
+            # Remove keys with lists or arrays that are empty or contain only zeros
+            keys_to_remove = [key for key, values in d.items() if values is None or np.all(values == 0)]
+            for key in keys_to_remove:
+                del d[key]
+
+            return d
+
+        return clean_dict(fix_costs), clean_dict(specific_costs)
+
+    def insert_size(
+        self,
+        flow: fx.Flow,
+        size: Union[int, float, Tuple[Union[int, float], Union[int, float]]],
+        effects: Dict[str, fx.Effect],
+        years_of_model: List[int],
+    ) -> None:
+        if not self.needs_investment:
+            flow.size = size
+        else:
+            fixed_effects_per_period, specific_effects_per_period = self.costs_and_funding(
+                interest_rate=self.interest_rate,
+                start_year=self.start_year,
+                amortization_time=self.amortization_time,
+                lifetime=self.lifetime,
+                years_of_model=years_of_model,
+                invest_costs=self.invest_costs_fixed,
+                specific_invest_costs=self.invest_costs_specific,
+                annual_costs=self.annual_costs_fixed,
+                specific_annual_costs=self.annual_costs_specific,
+                funding_rate=self.funding_rate,
+            )
+
+            fixed_effects_total = {
+                effects[effect]: np.sum(values) for effect, values in fixed_effects_per_period.items()
+            }
+            specific_effects_total = {
+                effects[effect]: np.sum(values) for effect, values in specific_effects_per_period.items()
+            }
+            if self.invest_group is not None:
+                specific_effects_total[effects[self.invest_group]] = 1
+
+            flow.size = fx.InvestParameters(
+                optional=self.optional,
+                fixed_size=None if isinstance(size, tuple) else size,
+                minimum_size=size[0] if isinstance(size, tuple) else 0,
+                maximum_size=size[1] if isinstance(size, tuple) else None,
+                fix_effects=fixed_effects_total,
+                specific_effects=specific_effects_total,
+            )
+            if not flow.meta_data:
+                flow.meta_data = MetaDataFactory.create()
+
+            flow.meta_data['invest']['costs']['fixed_effects'] += fixed_effects_per_period.get('costs', 0)
+            flow.meta_data['invest']['costs']['specific_effects'] += specific_effects_per_period.get('costs', 0)
+            flow.meta_data['invest']['funding']['fixed_effects'] += fixed_effects_per_period.get('funding', 0)
+            flow.meta_data['invest']['funding']['specific_effects'] += specific_effects_per_period.get('funding', 0)
+
+    def restrict_availlability(self, component: flixOpt.elements.Component, years_in_model: List[int]) -> None:
+        existance = exists(self.start_year, self.lifetime, years_in_model)
+        restrict_availlability(component, existance)
+
+    def add_to_flow_system(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float] = None,
+        years_of_model: List[int] = None,
+    ):
+        if self.start_year is not None and np.all(
+            self.operation_years(self.start_year, self.lifetime, years_of_model) == 0
+        ):
+            logger.warning(
+                f'The Element "{self.name}" is not present in the modeled years and is not added to the model.'
+            )
+        else:
+            self._insert_data(time_series_data)
+            flow_system.add_elements(
+                self._convert_to_flixopt(flow_system, busses, time_series_data, co2_factors, years_of_model)
+            )
+
+    @staticmethod
+    def operation_years(start_year: int, lifetime: int, years_of_model: List[int]) -> np.ndarray[int]:
         return np.array([1 if start_year <= year < (start_year + lifetime) else 0 for year in years_of_model])
 
-    @property
-    def flow_kwargs(self) -> Dict[str, Any]:
-        return {key: value for key, value in self.kwargs.items() if key in self._flow_kwargs}
+    @staticmethod
+    def amortization_years(start_year: int, amortization_time: int, years_of_model: List[int]) -> np.ndarray[int]:
+        return np.array([1 if start_year <= year < (start_year + amortization_time) else 0 for year in years_of_model])
+
+    @model_validator(mode='after')
+    def check_amortization(self):
+        if self.amortization_time is None and self.lifetime is not None:
+            self.amortization_time = self.lifetime
+        return self
+
+
+class PowerInvestElement(InvestElement):
+    power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(alias='Nennleistung [MW]')
+    fixed_profile: Optional[str] = Field(alias='Festes Profil', default=None)
+
+    def _insert_data(self, data: pd.DataFrame):
+        self.fixed_profile = extract_data(self.fixed_profile, data)
+
+    @field_validator('power', mode='before')
+    @classmethod
+    def validate_power(cls, value) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
+        return validate_invest_range(value, label='Nennleistung [MW]')
 
     @property
-    def on_kwargs(self) -> Dict[str, Any]:
-        return {key: value for key, value in self.kwargs.items() if key in self._on_kwargs}
+    def needs_investment(self) -> bool:
+        return super().needs_investment or isinstance(self.power, tuple)
+
+
+class ThermalInvestElement(InvestElement):
+    thermal_power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(
+        alias='Thermische Leistung [MW]'
+    )
+    grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0)
+    bus_heat: str = Field(alias='Wärmebus', default='Fernwärme')
+
+    costs_per_mwh_heat_extra: Union[int, float, str] = Field(
+        alias='Zusätzliche Wärmeerzeugungskosten [€/MWh]', default=0
+    )
+    relative_maximum: Union[int, float, str] = Field(alias='Relative thermische Leistungsobergrenze', default=1)
+    relative_minimum: Union[int, float, str] = Field(alias='Relative thermische Leistungsuntergrenze', default=0)
+    green_heat_factor: Union[int, float, str] = Field(alias='Grüne Wärme', default=0)
+
+    def _insert_data(self, data: pd.DataFrame):
+        self.costs_per_mwh_heat_extra = extract_data(self.costs_per_mwh_heat_extra, data)
+        self.relative_maximum = extract_data(self.relative_maximum, data)
+        self.relative_minimum = extract_data(self.relative_minimum, data)
+        self.green_heat_factor = extract_data(self.green_heat_factor, data)
+
+    def thermal_effects_per_flow_hour(
+        self,
+        effects: Dict[str, fx.Effect],
+    ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
+        """Calculates the thermal_effects per flow_hour."""
+        data = {effects['Gruene_Waerme']: self.green_heat_factor, effects['costs']: self.costs_per_mwh_heat_extra}
+        return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
+
+    def insert_grid_fee(
+        self,
+        grid_fee: Union[int, float],
+        invest_flow: fx.Flow,
+        efficiency: Union[int, float, np.ndarray],
+        effect: fx.Effect,
+        years_of_model: List[int],
+    ) -> None:
+        """Adds the grid fee to the investment parameters of the invest_flow and it's meta_data."""
+        if grid_fee == 0:
+            return None
+        if grid_fee != 0 and not isinstance(invest_flow.size, fx.InvestParameters):
+            raise Exception('There are no InvestParameters to add the grid_fee to')
+        else:
+            highest_possible_grid_draw = np.max(invest_flow.relative_maximum / efficiency)
+            yearly_grid_fee = grid_fee * highest_possible_grid_draw
+            operation_years = self.operation_years(self.start_year, self.lifetime, years_of_model)
+            grid_fee_costs: np.ndarray = operation_years * yearly_grid_fee
+            if invest_flow.size.specific_effects is None:
+                invest_flow.size.specific_effects = {effect: np.sum(grid_fee_costs)}
+            else:
+                invest_flow.size.specific_effects[effect] = np.sum(
+                    grid_fee_costs
+                ) + invest_flow.size.specific_effects.get(effect, 0)
+
+            assert effect.label == 'costs', f"Effect {effect.label} is not 'costs', which is expected in this function"
+            if not invest_flow.meta_data:
+                invest_flow.meta_data = MetaDataFactory.create()
+            invest_flow.meta_data['invest']['costs']['specific_effects'] += grid_fee_costs
+            invest_flow.meta_data['yearly_grid_fee_per_thermal_power'] = grid_fee_costs
+            invest_flow.meta_data['highest_possible_grid_draw'] = highest_possible_grid_draw
 
     @property
-    def on_parameters(self) -> Optional[fx.OnOffParameters]:
-        return fx.OnOffParameters(self.on_kwargs) if self.on_kwargs else None
+    def needs_investment(self) -> bool:
+        return super().needs_investment or self.grid_fee_per_year != 0 or isinstance(self.thermal_power, tuple)
+
+    @field_validator('thermal_power', mode='before')
+    @classmethod
+    def validate_thermal_power(cls, value) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
+        return validate_invest_range(value, label='Thermische Leistung [MW]')
 
 
-class GridFee(EnergySystemObject):
-    """
-    Represents an object within an energy system With a Grid Connection.
-    Newly introduced Concepts:
-    Grid Connection:
-        - Yearly Costs for Connecting to a Grid
+class Sink(PowerInvestElement):
+    bus: str = Field(alias='Bus')
+    flow_label: str = Field(alias='Flowname', default='sink')
 
-    Attributes:
-        props (dict): A dictionary holding the properties of the object, initialized from keyword arguments.
-        kwargs (dict): Additional keyword arguments not directly assigned to properties.
-        computed_props (dict): Computed properties derived from the object's attributes.
-        flix_comps (List[Element]): A list of components associated with the object, where Element is a custom type representing a component in the energy system.
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
 
-    """
+        comp = fx.Sink(
+            label=self.name,
+            sink=fx.Flow(
+                label=self.flow_label, size=1, bus=busses[self.bus], fixed_relative_profile=self.fixed_profile
+            ),
+        )
+        self.insert_size(
+            comp.sink,
+            self.power,
+            effects,
+            years_of_model,
+        )
+        self.restrict_availlability(comp, years_of_model)
+        return comp
 
-    # Defining allowed properties, default values and allowed types
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Netzentgelt [€/(MW*a)]": (0, Union[int, float]),
-    }
 
-    def validate_properties(self):
+class Source(PowerInvestElement):
+    bus: str = Field(alias='Bus')
+    flow_label: str = Field(alias='Flowname', default='source')
+
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
+        comp = fx.Source(
+            label=self.name,
+            source=fx.Flow(label=self.flow_label, bus=busses[self.bus], fixed_relative_profile=self.fixed_profile),
+        )
+
+        self.insert_size(
+            comp.source,
+            self.power if self.power is not None else (self.minimum_power, self.maximum_power),
+            effects,
+            years_of_model,
+        )
+        self.restrict_availlability(comp, years_of_model)
+        return comp
+
+
+class LinearTransformer(PowerInvestElement):
+    efficiency: Union[int, float, str] = Field(alias='Wirkungsgrad')
+    bus_in: str = Field(alias='Von Bus')
+    bus_out: str = Field(alias='Zu Bus')
+    flow_label_in: str = Field(alias='Flowname in', default='in')
+    flow_label_out: str = Field(alias='Flowname out', default='out')
+    cost_per_mwh_in: Union[int, float, str] = Field(alias='Kosten pro MWh von Bus', default=0)
+
+    def _insert_data(self, data: pd.DataFrame):
+        super()._insert_data(data)
+        self.efficiency = extract_data(self.efficiency, data)
+        self.cost_per_mwh_in = extract_data(self.cost_per_mwh_in, data)
+
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
+        flow_out = fx.Flow(
+            label=self.flow_label_out, bus=busses[self.bus_out], fixed_relative_profile=self.fixed_profile
+        )
+
+        flow_in = fx.Flow(
+            label=self.flow_label_in,
+            bus=busses[self.bus_in],
+            effects_per_flow_hour={effects['costs']: self.cost_per_mwh_in},
+        )
+
+        comp = fx.LinearConverter(
+            label=self.name,
+            inputs=[flow_in],
+            outputs=[flow_out],
+            conversion_factors=[{flow_in: self.efficiency, flow_out: 1}],
+        )
+        self.insert_size(
+            flow_out,
+            self.power if self.power is not None else (self.minimum_power, self.maximum_power),
+            flow_system.effect_collection.effects,
+            years_of_model,
+        )
+        self.restrict_availlability(comp, years_of_model)
+        return comp
+
+
+class FuelThermalInvestElement(ThermalInvestElement):
+    eta_thermal: Union[float, str] = Field(alias='Thermischer Wirkungsgrad')
+    fuel_type: str = Field(alias='Brennstoff')
+    fuel_cost_extra: Union[float, str] = Field(alias='Brennstoffkosten Zusatz [€/MWh_hu]', default=0)
+    _fuel_costs: Union[float, np.ndarray] = 0
+
+    def _insert_data(self, data: pd.DataFrame):
+        super()._insert_data(data)
+        self.eta_thermal = extract_data(self.eta_thermal, data)
+        self.fuel_cost_extra = extract_data(self.fuel_cost_extra, data)
+        self._fuel_costs = extract_data(self.fuel_type, data)
+
+    def co2_factor(self, time_series_data: pd.DataFrame, co2_factors: Dict[str, float]) -> float:
+        return extract_data(co2_factors.get(self.fuel_type, 0), time_series_data)
+
+    def fuel_effects_per_flow_hour(
+        self, effects: Dict[str, fx.Effect], time_series_data: pd.DataFrame, co2_factors: Dict[str, float]
+    ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
+        """Calculates the thermal_effects per flow_hour."""
+        data = {
+            effects['costs']: (
+                self._fuel_costs
+                + self.fuel_cost_extra
+                + (self.co2_factor(time_series_data, co2_factors) * extract_data('CO2', time_series_data))
+            ),
+            effects['CO2']: self.co2_factor(time_series_data, co2_factors),
+        }
+
+        return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
+
+
+class Kessel(FuelThermalInvestElement):
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
+
+        boiler = fx.linear_converters.Boiler(
+            label=self.name,
+            eta=self.eta_thermal,
+            Q_fu=fx.Flow(
+                label='Qfu',
+                bus=busses[self.fuel_type],
+                effects_per_flow_hour=self.fuel_effects_per_flow_hour(effects, time_series_data, co2_factors),
+            ),
+            Q_th=fx.Flow(
+                label='Qth',
+                bus=busses[self.bus_heat],
+                relative_maximum=self.relative_maximum,
+                relative_minimum=self.relative_minimum,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
+            ),
+        )
+        self.insert_size(
+            boiler.Q_th,
+            self.thermal_power,
+            effects,
+            years_of_model,
+        )
+        self.restrict_availlability(boiler, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, boiler.Q_th, boiler.eta, effects['costs'], years_of_model)
+        return boiler
+
+
+class KWK(FuelThermalInvestElement):
+    eta_el: Union[int, float, str] = Field(alias='Elektrischer Wirkungsgrad')
+    forward_flow_temperature: Union[int, float, str] = Field(
+        alias='Vorlauftemperatur', default='Vorlauftemperatur Fernwärmenetz [°C]'
+    )
+    reverse_flow_temperature: Union[int, float, str] = Field(
+        alias='Rücklauftemperatur', default='Rücklauftemperatur Fernwärmenetz [°C]'
+    )
+    ambient_temperature: Union[int, float, str] = Field(alias='Umgebungstemperatur', default='Tamb')
+
+    bus_elec: str = Field(alias='Strombus', default='StromEinspeisung')
+
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
+
+        chp = fx.linear_converters.CHP(
+            label=self.name,
+            eta_th=self.eta_thermal,
+            eta_el=self.eta_el,
+            Q_th=fx.Flow(
+                label='Qth',
+                bus=busses[self.bus_heat],
+                relative_minimum=self.relative_minimum,
+                relative_maximum=self.relative_maximum,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
+            ),
+            P_el=fx.Flow(
+                label='Pel',
+                bus=busses[self.bus_elec],
+                effects_per_flow_hour={
+                    effects['costs']: -1 * extract_data('Strom', time_series_data),
+                    effects['CO2FW']: -1 * self.co2_emissions_electricity(time_series_data, co2_factors),
+                },
+            ),
+            Q_fu=fx.Flow(
+                label='Qfu',
+                bus=busses[self.fuel_type],
+                effects_per_flow_hour=self.fuel_effects_per_flow_hour(effects, time_series_data, co2_factors),
+            ),
+        )
+        self.insert_size(
+            chp.Q_th,
+            self.thermal_power,
+            effects,
+            years_of_model,
+        )
+        self.restrict_availlability(chp, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, chp.Q_th, chp.eta_th, effects['costs'], years_of_model)
+        return chp
+
+    def _insert_data(self, time_series_data: pd.DataFrame):
+        super()._insert_data(time_series_data)
+        self.eta_el = extract_data(self.eta_el, time_series_data)
+        self.forward_flow_temperature = extract_data(self.forward_flow_temperature, time_series_data)
+        self.reverse_flow_temperature = extract_data(self.reverse_flow_temperature, time_series_data)
+        self.ambient_temperature = extract_data(self.ambient_temperature, time_series_data)
+
+    def co2_emissions_electricity(self, time_series_data: pd.DataFrame, co2_factors: Dict[str, float]) -> np.ndarray:
+        try:
+            fuel_factor_electricity = self.fuel_factor_for_electrical_energy(
+                electrical_efficiency=self.eta_el,
+                thermal_efficiency=self.eta_thermal,
+                inferior_temperature=self.ambient_temperature,
+                forward_flow_temperature=self.forward_flow_temperature,
+                reverse_flow_temperature=self.reverse_flow_temperature,
+            )
+        except KeyError:
+            logger.warning(
+                'Computation of CO2 Reward did not work properly. Using default values instead. '
+                'Optimization itself is not affected. Only take care interpreting CO2 Emissions'
+            )
+            fuel_factor_electricity = self.fuel_factor_for_electrical_energy(
+                electrical_efficiency=self.eta_el,
+                thermal_efficiency=self.eta_thermal,
+            )
+        return fuel_factor_electricity * self.co2_factor(time_series_data, co2_factors)
+
+    @staticmethod
+    def fuel_factor_for_electrical_energy(
+        electrical_efficiency: Union[int, float, np.ndarray],
+        thermal_efficiency: Union[int, float, np.ndarray],
+        inferior_temperature: Union[int, float, np.ndarray] = 20,
+        forward_flow_temperature: Union[int, float, np.ndarray] = 120,
+        reverse_flow_temperature: Union[int, float, np.ndarray] = 60,
+    ) -> np.ndarray:
         """
-        Validates the properties against the definitions and types specified in _property_definitions and _allowed_kwargs.
-
-        Raises:
-            ValueError: If a mandatory property is missing or an invalid property is provided.
-            TypeError: If a property has an incorrect type.
+        Using the carnot mehtod, the fuel factor for electrical energy in a heating network is calculated
+        https://en.wikipedia.org/wiki/Carnot_method
         """
-        super().validate_properties()
+        inferior_temperature = inferior_temperature + 273.15
+        forward_flow_temperature = forward_flow_temperature + 273.15
+        reverse_flow_temperature = reverse_flow_temperature + 273.15
+        superior_temperature = (forward_flow_temperature - reverse_flow_temperature) / np.log(
+            (forward_flow_temperature / reverse_flow_temperature)
+        )
+        n_carnot = 1 - (inferior_temperature / superior_temperature)
 
-        if not self.invest_args_viable and self.props['Netzentgelt [€/(MW*a)]'] != 0:
-            raise ValueError(f"If 'Netzentgelt [€/(MW*a)]' is used, 'Startjahr' and 'Lebensdauer' must be set!")
+        a_el = (1 * electrical_efficiency) / (electrical_efficiency + n_carnot * thermal_efficiency)
+        return a_el / electrical_efficiency
 
-    def compute_investment(self, years_of_model: List[int]):
-        '''
-        Extends the funcitonality of compute_investments to include Netzentgelte into the investment
+
+class Waermepumpe(ThermalInvestElement):
+    cop: Optional[Union[int, float, str]] = Field(alias='COP', default=None)
+    carnot_efficiency: Optional[Union[int, float, str]] = Field(alias='Carnot Effizienz', default=0.5)
+    source_temperature: Union[int, float, str] = Field(alias='Quelltemperatur', default=None)
+    sink_temperature: Union[int, float, str] = Field(
+        alias='Zieltemperatur', default='Vorlauftemperatur Fernwärmenetz [°C]'
+    )
+
+    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
+
+    scop_bew: Optional[Union[int, float]] = Field(alias='SCOP für BEW', default=None)
+    max_bew_elec_funding: Optional[Union[int, float]] = Field(alias='Maximale Stromkostenförderung BEW', default=None)
+
+    bus_elec: str = Field(alias='Strombus', default='StromBezug')
+
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
+
+        heat_pump = fx.linear_converters.HeatPump(
+            label=self.name,
+            COP=self._get_cop(time_series_data),
+            Q_th=fx.Flow(
+                label='Qth',
+                bus=busses[self.bus_heat],
+                relative_maximum=self.relative_maximum,
+                relative_minimum=self.relative_minimum,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
+            ),
+            P_el=fx.Flow(
+                label='Pel',
+                bus=busses[self.bus_elec],
+                effects_per_flow_hour=self._electricity_effects_per_flow_hour(
+                    effects, time_series_data, years_of_model
+                ),
+            ),
+        )
+        self.insert_size(
+            heat_pump.Q_th,
+            self.thermal_power,
+            effects,
+            years_of_model,
+        )
+        self.restrict_availlability(heat_pump, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
+        return heat_pump
+
+    def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
+        if self.cop is not None:
+            return extract_data(self.cop, time_series_data)
+        else:
+            return self.calculate_cop(
+                source_temperature=extract_data(self.source_temperature, time_series_data),
+                target_temperature=extract_data(self.sink_temperature, time_series_data),
+                eta=self.carnot_efficiency,
+            )
+
+    def _get_electricity_costs_per_mwh(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
+        return extract_data('Strom', time_series_data) + extract_data(self.extra_costs_per_mwh_elec, time_series_data)
+
+    def _get_operation_funding_bew(
+        self, time_series_data: pd.DataFrame, years_of_model: List[int]
+    ) -> Union[float, np.ndarray]:
+        if self.scop_bew is None:
+            return 0
+        fund_per_mw_el = self.bew_operation_funding_from_scop(self.scop_bew, 'MWh_el')
+
+        electricity_costs_per_flow_hour = self._get_electricity_costs_per_mwh(time_series_data)
+        # Begrenzung der Förderung auf x% der Stromkosten
+        fund_per_mw_el = np.where(
+            fund_per_mw_el < electricity_costs_per_flow_hour * self.max_bew_elec_funding,
+            fund_per_mw_el,
+            electricity_costs_per_flow_hour * self.max_bew_elec_funding,
+        )
+        # Begrenzung auf 10 Jahre
+        return fund_per_mw_el * exists(self.start_year, 10, years_of_model)
+
+    def _electricity_effects_per_flow_hour(
+        self, effects: Dict[str, fx.Effect], time_series_data: pd.DataFrame, years_of_model: List[int]
+    ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
+        """Calculates the electricity_effects per flow_hour."""
+
+        data = {
+            effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
+            effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model),
+        }
+        return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
+
+    @staticmethod
+    def bew_operation_funding_from_scop(
+        scop: Union[int, float], unit: Literal['MWh_amb', 'MWh_th', 'MWh_el'] = 'MWh_amb'
+    ) -> Union[int, float]:
+        """
+        Calclulated the maximum funding according to the BEW.
         Parameters
         ----------
-        years_of_model
+        scop: assumed scop (seasonal coefficent of Performance) or cop
 
         Returns
         -------
-
-        '''
-        super().compute_investment(years_of_model)
-
-        if self.computed_props[f"Investment {self._invest_prop}"]:
-            current = self.computed_props[f"Investment {self._invest_prop}"].specific_effects.get("costs", 0)
-            self.computed_props[f"Investment {self._invest_prop}"].specific_effects["costs"] = (
-                    current + self.grid_fee_per_invest_per_a * self.years_in_model(years_of_model))
-
-            self.meta_data["specific_effects"]['costs'] = (
-                    self.meta_data["specific_effects"].get('costs', np.array([0])) +
-                    self.grid_fee_per_invest_per_a * self.accounting_years(years_of_model)
-            )
-
-        elif self.grid_fee_per_invest_per_a != 0:
-            raise Exception("'Netzentgelt [€/(MW*a)]' couldnt get applied. No valid Investment found")
-
-    @property
-    def factor_grid_to_invest(self) -> float:
-        '''
-        Calculates the least advantageous efficiency between grid and investment power
-        Typically:
-        np.max(self.computed_props["exists"] / self.efficiency_from_grid))
-        '''
-        raise Exception("Not Implemented in Child class")
-
-    @property
-    def grid_fee_per_invest_per_a(self) -> float:
-        '''
-        Calculated the 'Netzentgelt [€/(MW_th*a)]' from given 'Netzentgelt [€/(MW*a)]' and efficiency
-        '''
-        if "Netzentgelt [€/(MW_th*a)]" not in self.computed_props:
-            self.computed_props["Netzentgelt [€/(MW_th*a)]"] = (
-                    self.props["Netzentgelt [€/(MW*a)]"] * self.factor_grid_to_invest)
-        return self.computed_props["Netzentgelt [€/(MW_th*a)]"]
-
-
-class Sink(EnergySystemObject):
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Nennleistung": (None, Optional[Union[int, float, str]]),
-        "Flowname": (NO_DEFAULT, str),
-        "Festes Profil": (None, Optional[str]),
-        # Connections
-        "Bus": (NO_DEFAULT, str),
-    }
-
-    _invest_prop = "Nennleistung"
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Festes Profil"] = None
-        if self.props["Festes Profil"]:
-            self.computed_props["Festes Profil"] = as_time_series(self.props["Festes Profil"], time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        # Inserting effects as keys
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.Sink(
-            label=self.props["Name"],
-            sink=fx.Flow(
-                meta_data=self.meta_data,
-                label=self.props["Flowname"],
-                bus=busses[self.props["Bus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Nennleistung"] ,
-                fixed_relative_profile=self.computed_props["Festes Profil"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            )
-        )
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
-
-
-class Source(EnergySystemObject):
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Nennleistung": (None, Optional[Union[int, float, str]]),
-        "Flowname": (NO_DEFAULT, str),
-        "Festes Profil": (None, Optional[str]),
-        # Connections
-        "Bus": (NO_DEFAULT, str),
-    }
-
-    _invest_prop = "Nennleistung"
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-
-        # Direct links to time_series_data
-        self.computed_props["Festes Profil"] = None
-        if self.props["Festes Profil"]:
-            self.computed_props["Festes Profil"] = as_time_series(self.props["Festes Profil"], time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.Source(
-            label=self.props["Name"],
-            source=fx.Flow(
-                label=self.props["Flowname"],
-                meta_data=self.meta_data,
-                bus=busses[self.props["Bus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Nennleistung"],
-                fixed_relative_profile=self.computed_props["Festes Profil"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            )
-        )
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
-
-
-class LinearTransformer_1_1(GridFee):
-    _property_definitions = {
-        **GridFee._property_definitions,
-        "Nennleistung": (None, Optional[Union[int, float, str]]),
-        "Nennleistung In": (1e9, Union[int, float]),
-        "Wirkungsgrad": (NO_DEFAULT, Union[int, float, str]),
-        "Kosten pro MWh von Bus": (0, Union[int, float, str]),
-        # Connections
-        "Zu Bus": (NO_DEFAULT, str),
-        "Von Bus": (NO_DEFAULT, str),
-        # Labels
-        "Flowname in": ("in", str),
-        "Flowname out": ("out", str),
-    }
-
-    _invest_prop = "Nennleistung"
-
-    @property
-    def factor_grid_to_invest(self) -> float:
-        value = np.max(self.kwargs.get("relative_maximum", 1) * self.computed_props["exists"] / self.computed_props["Wirkungsgrad"])
-        self.computed_props["Faktor für Netzentgeltumrechnung"] = value
-        return value
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Wirkungsgrad"] = as_time_series(self.props["Wirkungsgrad"], time_series_data)
-        self.computed_props["Kosten pro MWh von Bus"] = as_time_series(
-            self.props["Kosten pro MWh von Bus"], time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        flow_out = fx.Flow(label=self.props["Flowname out"],
-                           meta_data=self.meta_data,
-                           bus=busses[self.props["Zu Bus"]],
-                           size=self.computed_props["Investment Nennleistung"] or self.computed_props["Nennleistung"],
-                           can_be_off=self.on_parameters,
-                           **self.flow_kwargs
-                         )
-
-        flow_in = fx.Flow(label=self.props["Flowname in"],
-                        bus=busses[self.props["Von Bus"]],
-                        effects_per_flow_hour={effects["costs"]: self.computed_props["Kosten pro MWh von Bus"]}
-                        )
-
-        comp = fx.LinearConverter(
-            label=self.props["Name"],
-            inputs=[flow_in],
-            outputs=[flow_out],
-            conversion_factors=[{flow_in: self.computed_props["Wirkungsgrad"], flow_out: 1}]
-        )
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
-
-
-class Kessel(GridFee):
-    _property_definitions = {
-        **GridFee._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "eta_th": (NO_DEFAULT, Union[int, float, str]),
-        "Brennstoff": (NO_DEFAULT, str),
-        "Zusatzkosten pro MWh Brennstoff": (0, Union[int, float, str]),
-        "Grüne Wärme": (0, Union[int, float, str]),
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-    }
-
-    _invest_prop = "Thermische Leistung"
-
-    @property
-    def factor_grid_to_invest(self) -> float:
-        value = np.max(self.kwargs.get("relative_maximum", 1) * self.computed_props["exists"] / self.computed_props["eta_th"])
-        self.computed_props["Faktor für Netzentgeltumrechnung"] = value
-        return value
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["eta_th"] = as_time_series(self.props["eta_th"], time_series_data)
-        self.computed_props["Zusatzkosten pro MWh Brennstoff"] = as_time_series(
-            self.props["Zusatzkosten pro MWh Brennstoff"], time_series_data)
-
-        # Brennstoff
-        self.computed_props["Brennstoffkosten"] = as_time_series(self.props["Brennstoff"], time_series_data)
-        self.computed_props["CO2 Faktor"] = as_time_series(co2_factors.get(self.props["Brennstoff"], 0),
-                                                               time_series_data)
-        self.computed_props["CO2 Kosten"] = self.computed_props["CO2 Faktor"] * time_series_data["CO2"].to_numpy()
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        # Inserting effects as keys
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.Boiler(
-            label=self.props["Name"],
-            eta=self.computed_props["eta_th"],
-            Q_th=fx.Flow(
-                label='Qth',
-                meta_data=self.meta_data,
-                bus=busses[self.props["Wärmebus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            ),
-            Q_fu=fx.Flow(
-                label='Qfu',
-                bus=busses[self.props["Brennstoff"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Brennstoffkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Brennstoff"] +
-                        self.computed_props["CO2 Kosten"],
-                    effects["CO2"]: self.computed_props["CO2 Faktor"]
-                }
-            )
-        )
-
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(comp.Q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
-
-
-class EHK(GridFee):
-    _property_definitions = {
-        **GridFee._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "eta_th": (NO_DEFAULT, Union[int, float, str]),
-        "Zusatzkosten pro MWh Strom": (0, Union[int, float, str]),
-        "Grüne Wärme": (0, Union[int, float, str]),
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-        "Strombus": ("StromBezug", str)
-    }
-
-    _invest_prop = "Thermische Leistung"
-
-    @property
-    def factor_grid_to_invest(self) -> float:
-        value = np.max(self.kwargs.get("relative_maximum", 1) * self.computed_props["exists"] / self.computed_props["eta_th"])
-        self.computed_props["Faktor für Netzentgeltumrechnung"] = value
-        return value
-
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["eta_th"] = as_time_series(self.props["eta_th"], time_series_data)
-        self.computed_props["Zusatzkosten pro MWh Strom"] = as_time_series(
-            self.props["Zusatzkosten pro MWh Strom"], time_series_data)
-        self.computed_props["Stromkosten"] = as_time_series("Strom", time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.Power2Heat(
-            label=self.props["Name"],
-            eta=self.computed_props["eta_th"],
-            Q_th=fx.Flow(
-                label='Qth',
-                meta_data=self.meta_data,
-                bus=busses[self.props["Wärmebus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            ),
-            P_el=fx.Flow(
-                label='Pel',
-                bus=busses[self.props["Strombus"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Stromkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Strom"]}
-            )
-        )
-
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(comp.Q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
-
-
-class Rueckkuehler(GridFee):
-    _property_definitions = {
-        **GridFee._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "Strombedarf": (0, Union[int, float]),
-        "Zusatzkosten pro MWh Strom": (0, Union[int, float, str]),
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-        "Strombus": ("StromBezug", str)
-    }
-
-    _invest_prop = "Thermische Leistung"
-
-    @property
-    def factor_grid_to_invest(self) -> float:
-        value = np.max(self.kwargs.get("relative_maximum", 1) * self.computed_props["exists"] * self.props["Strombedarf"])
-        self.computed_props["Faktor für Netzentgeltumrechnung"] = value
-        return value
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Zusatzkosten pro MWh Strom"] = as_time_series(
-            self.props["Zusatzkosten pro MWh Strom"], time_series_data)
-        self.computed_props["Stromkosten"] = as_time_series("Strom", time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.CoolingTower(
-            label=self.props["Name"],
-            specific_electricity_demand=self.props["Strombedarf"],
-            Q_th=fx.Flow(
-                label='Qth',
-                meta_data=self.meta_data,
-                bus=busses[self.props["Wärmebus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            ),
-            P_el=fx.Flow(
-                label='Pel',
-                bus=busses[self.props["Strombus"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Stromkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Strom"]}
-            )
-        )
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
-
-
-class KWK(GridFee):
-    _property_definitions = {
-        **GridFee._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "eta_th": (NO_DEFAULT, Union[int, float, str]),
-        "eta_el": (NO_DEFAULT, Union[int, float, str]),
-        "Brennstoff": (NO_DEFAULT, str),
-        "Zusatzkosten pro MWh Brennstoff": (0, Union[int, float, str]),
-        # Stromvergütung CO2
-        "Vorlauftemperatur": ("TVL_FWN", Union[int, float, str]),
-        "Rücklauftemperatur": ("TRL_FWN", Union[int, float, str]),
-        "Umgebungstemperatur": ("Tamb", Union[int, float, str]),
-
-        "Grüne Wärme": (0, Union[int, float, str]),
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-        "Strombus": ("StromEinspeisung", str),
-    }
-
-    _invest_prop = "Thermische Leistung"
-
-    @property
-    def factor_grid_to_invest(self) -> float:
-        value = np.max(self.kwargs.get("relative_maximum", 1) * self.computed_props["exists"] / self.computed_props["eta_th"])
-        self.computed_props["Faktor für Netzentgeltumrechnung"] = value
-        return value
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["eta_th"] = as_time_series(self.props["eta_th"], time_series_data)
-        self.computed_props["eta_el"] = as_time_series(self.props["eta_el"], time_series_data)
-        self.computed_props["Brennstoffkosten"] = as_time_series(self.props["Brennstoff"], time_series_data)
-        self.computed_props["Zusatzkosten pro MWh Brennstoff"] = as_time_series(
-            self.props["Zusatzkosten pro MWh Brennstoff"], time_series_data)
-
-        self.computed_props["CO2 Faktor"] = as_time_series(co2_factors.get(self.props["Brennstoff"], 0),
-                                                               time_series_data)
-        self.computed_props["CO2 Kosten"] = self.computed_props["CO2 Faktor"] * time_series_data["CO2"].to_numpy()
-        self.computed_props["Stromerlöse"] = as_time_series("Strom", time_series_data)
-        # CO2 Vergütung Strom (Ohne Kosten)
-        try:
-            self.computed_props["CO2 Reward Strom"] = fuel_factor_for_electrical_energy(
-                electrical_efficiency=self.computed_props["eta_el"],
-                thermal_efficiency=self.computed_props["eta_th"],
-                inferior_temperature=as_time_series(self.props["Umgebungstemperatur"], time_series_data),
-                forward_flow_temperature=as_time_series(self.props["Vorlauftemperatur"], time_series_data),
-                reverse_flow_temperature=as_time_series(self.props["Rücklauftemperatur"], time_series_data)
-            ) * self.computed_props["CO2 Faktor"]
-        except KeyError:
-            print(
-                f"Computation of CO2 Reward did not work properly. Using default values instedOptimization itself isnot affected. "
-                f"Only take care interpreting CO2 Emissions")
-            self.computed_props["CO2 Reward Strom"] = fuel_factor_for_electrical_energy(
-                electrical_efficiency=self.computed_props["eta_el"],
-                thermal_efficiency=self.computed_props["eta_th"],
-            ) * self.computed_props["CO2 Faktor"]
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.CHP(
-            label=self.props["Name"],
-            eta_el=self.computed_props["eta_el"],
-            eta_th=self.computed_props["eta_th"],
-            Q_th=fx.Flow(
-                label='Qth',
-                meta_data=self.meta_data,
-                bus=busses[self.props["Wärmebus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            ),
-            P_el=fx.Flow(
-                label="Pel",
-                bus=busses[self.props["Strombus"]],
-                effects_per_flow_hour={
-                    effects["costs"]: -self.computed_props["Stromerlöse"],
-                    effects["CO2FW"]: -self.computed_props["CO2 Reward Strom"]},
-            ),
-            Q_fu=fx.Flow(
-                label='Qfu',
-                bus=busses[self.props["Brennstoff"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Brennstoffkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Brennstoff"] +
-                        self.computed_props["CO2 Kosten"],
-                    effects["CO2"]: self.computed_props["CO2 Faktor"]
-                }
-            )
-        )
-
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(comp.Q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
-
-
-class KWKekt(EnergySystemObject):
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Brennstoff Leistung": (NO_DEFAULT, Union[int, float]),
-        "Elektrische Leistung (Stützpunkte)": (NO_DEFAULT, str),
-        "Thermische Leistung (Stützpunkte)": (NO_DEFAULT, str),
-        "Brennstoff": (NO_DEFAULT, str),
-        "Zusatzkosten pro MWh Brennstoff": (0, Union[int, float, str]),
-        "Ausschaltbar": (True, bool),
-        "Grüne Wärme": (0, Union[int, float, str]),
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-        "Strombus": ("StromEinspeisung", str)
-    }
-
-    _invest_prop = "Brennstoff Leistung"
-
-    def validate_properties(self):
-        super().validate_properties()
-        # Validate Power Points
-        electric_power_points = tuple_of_numbers_from_str(
-            self.props["Elektrische Leistung (Stützpunkte)"], delimiter='-')
-        thermal_power_points = tuple_of_numbers_from_str(
-            self.props["Thermische Leistung (Stützpunkte)"], delimiter='-')
-        if len(electric_power_points) != len(thermal_power_points):
-            raise ValueError("The number of electricity and thermal power points must be equal")
-        for epp, tpp in zip(electric_power_points, thermal_power_points):
-            if epp / self.props["Brennstoff Leistung"] > 1:
-                raise ValueError(f"The electric efficiency of {self.props['Name']} exceeds 100%.")
-            if tpp / self.props["Brennstoff Leistung"] > 1:
-                raise ValueError(f"The thermal efficiency of {self.props['Name']} exceeds 100%.")
-            if (epp + tpp) / self.props["Brennstoff Leistung"] > 1:
-                raise ValueError(f"The total efficiency of {self.props['Name']} exceeds 100%.")
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Brennstoffkosten"] = as_time_series(self.props["Brennstoff"], time_series_data)
-        self.computed_props["Zusatzkosten pro MWh Brennstoff"] = as_time_series(
-            self.props["Zusatzkosten pro MWh Brennstoff"], time_series_data)
-
-        self.computed_props["CO2 Faktor"] = as_time_series(co2_factors.get(self.props["Brennstoff"], 0),
-                                                               time_series_data)
-
-        self.computed_props["Elektrische Leistung (Stützpunkte)"] = tuple_of_numbers_from_str(
-            self.props["Elektrische Leistung (Stützpunkte)"], delimiter='-')
-        self.computed_props["Thermische Leistung (Stützpunkte)"] = tuple_of_numbers_from_str(
-            self.props["Thermische Leistung (Stützpunkte)"], delimiter='-')
-
-        self.computed_props["Stromerlöse"] = as_time_series("Strom", time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        flow_heat = fx.Flow('Qth', busses[self.props["Wärmebus"]])
-        flow_fuel = fx.Flow('Qfu', busses[self.props["Brennstoff"]],
-                            meta_data=self.meta_data,
-                            size=self.computed_props[f"Investment {self._invest_prop}"],
-                            effects_per_flow_hour={effects["costs"]:
-                                                       self.computed_props["Brennstoffkosten"] +
-                                                       self.computed_props["Zusatzkosten pro MWh Brennstoff"]},
-                            **self.flow_kwargs)
-        flow_el = fx.Flow('Pel', busses[self.props["Strombus"]],
-                          effects_per_flow_hour={effects["costs"]: -self.computed_props["Stromerlöse"]})
-
-        if self.props["Ausschaltbar"]:
-            segmented_conversion_factors = {
-                flow_fuel: [(0, 1e-5), (self.computed_props["Brennstoff Leistung"], self.computed_props["Brennstoff Leistung"])],
-                flow_el: [(0, 1e-5), self.computed_props["Elektrische Leistung (Stützpunkte)"]],
-                flow_heat: [(0, 1e-5), self.computed_props["Thermische Leistung (Stützpunkte)"]]
-            }
+        Funding in euro per MWh_amb
+
+        """
+        if unit not in ['MWh_amb', 'MWh_th', 'MWh_el']:
+            raise Exception(f'Not a valid unit. Choose from: {["MWh_amb", "MWh_th", "MWh_el"]}')
+
+        value = (5.5 - (6.8 - 17 / scop) * 0.75) * (scop / (scop - 1))  # ct/kWh
+        fund_amb = value * 10  # €/MWh_amb
+        if fund_amb >= 92:  # Funding is limited to 92 €/MWh_amb
+            fund_amb = 92
+
+        if unit == 'MWh_amb':
+            return fund_amb
+        elif unit == 'MWh_th':
+            return fund_amb * ((scop - 1) / scop)
         else:
-            segmented_conversion_factors = {
-                flow_fuel: [(self.computed_props["Brennstoff Leistung"], self.computed_props["Brennstoff Leistung"])],
-                flow_el: [self.computed_props["Elektrische Leistung (Stützpunkte)"]],
-                flow_heat: [self.computed_props["Thermische Leistung (Stützpunkte)"]]
+            return fund_amb * (scop - 1)
+
+    @staticmethod
+    def calculate_cop(source_temperature: np.ndarray, target_temperature: np.ndarray, eta: float = 0.5) -> np.ndarray:
+        """
+        Calculates the COP of a heatpump per Timestep from the Temperature of Heat sink and Heat source in Kelvin
+        Parameters
+        ----------
+        source_temperature : np.array, float, pd.Dataframe
+            Temperature of the Heat Source in Degrees Celcius
+        target_temperature : np.array, float, pd.Dataframe
+            Temperature of the Heat Sink in Degrees Celcius
+        eta : float
+            Relation to the thermodynamicaly ideal COP
+
+        Returns
+        -------
+        np.ndarray
+
+        """
+        # Celsius zu Kelvin
+        source_temperature = source_temperature + 273.15
+        target_temperature = target_temperature + 273.15
+        return (target_temperature / (target_temperature - source_temperature)) * eta
+
+    def _insert_data(self, data: pd.DataFrame):
+        super()._insert_data(data)
+        self.cop = extract_data(self.cop, data)
+        self.source_temperature = extract_data(self.source_temperature, data)
+        self.sink_temperature = extract_data(self.sink_temperature, data)
+
+        self.extra_costs_per_mwh_elec = extract_data(self.extra_costs_per_mwh_elec, data)
+
+    @model_validator(mode='after')
+    def validate_cop(self):
+        if not self.cop and (not self.source_temperature or not self.sink_temperature):
+            raise Exception(
+                f"Need to specify a 'COP' for {self.name} or "
+                f"use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally."
+            )
+        if self.cop and (self.source_temperature and self.sink_temperature):
+            raise Exception(
+                f"Either specify a 'COP' for {self.name} "
+                f"OR use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally."
+            )
+        return self
+
+    @model_validator(mode='after')
+    def validate_bew(self):
+        if self.scop_bew:
+            if not self.start_year:
+                raise Exception(
+                    f'Need to specify a Year of Operation start for {self.name} to use HeatPump '
+                    f'operation funding, because its limited to 10 years.'
+                )
+            if not self.max_bew_elec_funding:
+                raise Exception(
+                    f"Need to specify 'Maximale Stromkostenförderung BEW' for {self.name} to use HeatPump "
+                    f'operation funding.'
+                )
+        return self
+
+
+class Speicher(ThermalInvestElement):
+    capacity: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(alias='Kapazität [MWh]')
+    invest_costs_capacity_specific: Union[int, float] = Field(alias='Investkosten [€/MWh]', default=0)
+    annual_costs_capacity_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/(MWh*a)]', default=0)
+
+    eta_load: Union[int, float, str] = Field(alias='eta_load')
+    eta_unload: Union[int, float, str] = Field(alias='eta_unload')
+    loss_per_hour: Union[int, float, str] = Field(alias='VerlustProStunde', default=0)
+
+    depends_on_temperature: bool = Field(alias='AbhängigkeitVonDT', default=False)
+    temperature_lower: Union[int, float, str] = Field(
+        alias='Untere Temperatur', default='Rücklauftemperatur Fernwärmenetz [°C]'
+    )
+    temperature_upper: Union[int, float, str] = Field(
+        alias='Obere Temperatur', default='Vorlauftemperatur Fernwärmenetz [°C]'
+    )
+
+    default_temperature_spread: Union[int, float] = Field(alias='Nenn-Temperaturspreizung', default=65)
+
+    def _insert_data(self, time_series_data: pd.DataFrame):
+        super()._insert_data(time_series_data)
+        self.eta_load = extract_data(self.eta_load, time_series_data)
+        self.eta_unload = extract_data(self.eta_unload, time_series_data)
+        self.loss_per_hour = extract_data(self.loss_per_hour, time_series_data)
+        self.temperature_lower = extract_data(self.temperature_lower, time_series_data)
+        self.temperature_upper = extract_data(self.temperature_upper, time_series_data)
+
+        self.relative_maximum = self.relative_maximum * self._get_normalized_temperature_spread()
+
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
+
+        storage = fx.Storage(
+            label=self.name,
+            capacity_in_flow_hours=0,
+            eta_charge=self.eta_load,
+            eta_discharge=self.eta_unload,
+            relative_loss_per_hour=self.loss_per_hour,
+            relative_maximum_charge_state=self.relative_maximum_capacity,
+            charging=fx.Flow(
+                label='charging',
+                bus=busses[self.bus_heat],
+                relative_maximum=self.relative_maximum,
+                relative_minimum=self.relative_minimum,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
+            ),
+            discharging=fx.Flow(
+                label='discharging',
+                bus=busses[self.bus_heat],
+                relative_maximum=self.relative_maximum,
+                relative_minimum=self.relative_minimum,
+            ),
+            prevent_simultaneous_charge_and_discharge=True,
+        )
+        self.insert_size(
+            storage.charging,
+            self.thermal_power,
+            effects,
+            years_of_model,
+        )
+        self.restrict_availlability(storage, years_of_model)
+        self.link_second_flow_size(storage.charging, storage.discharging, flow_system)
+        self.insert_capacity(storage, effects, years_of_model)
+        return storage
+
+    def link_second_flow_size(self, flow_with_size: fx.Flow, flow_to_link: fx.Flow, flow_system: fx.FlowSystem) -> None:
+        """
+        Links the size of the second flow to the size of the first flow. If needed, a new Effect is added to the FlowSystem
+        """
+        if isinstance(flow_with_size.size, (int, float)):
+            flow_to_link.size = flow_with_size.size
+            return None
+        elif isinstance(flow_with_size.size, fx.InvestParameters):
+            flow_to_link.size = fx.InvestParameters(
+                optional=flow_with_size.size.optional,
+                fixed_size=flow_with_size.size.fixed_size,
+                minimum_size=flow_with_size.size.minimum_size,
+                maximum_size=flow_with_size.size.maximum_size,
+            )
+
+            if flow_with_size.size.fixed_size is None:
+                effect = fx.Effect(
+                    label=f'{self.name}_link_thermal_power',
+                    unit='',
+                    description=f'Links the charge and discharge investment value of storage {self.name}',
+                    minimum_invest=0,
+                    maximum_invest=0,
+                )
+                flow_system.add_effects(effect)
+
+                flow_with_size.size.specific_effects[effect] = 1
+                flow_to_link.size.specific_effects = {effect: -1}
+
+    def insert_capacity(self, storage: fx.Storage, effects: [str, fx.Effect], years_of_model: List[int]) -> None:
+        if not self.needs_investment_capacity:
+            storage.capacity_in_flow_hours = self.capacity
+        else:
+            _, specific_effects_per_period = self.costs_and_funding(
+                interest_rate=self.interest_rate,
+                start_year=self.start_year,
+                amortization_time=self.amortization_time,
+                lifetime=self.lifetime,
+                years_of_model=years_of_model,
+                invest_costs=0,
+                annual_costs=0,
+                specific_invest_costs=self.invest_costs_capacity_specific,
+                specific_annual_costs=self.annual_costs_capacity_specific,
+                funding_rate=self.funding_rate,
+            )
+
+            specific_effects_total = {
+                effects[effect]: np.sum(values) for effect, values in specific_effects_per_period.items()
             }
 
+            storage.capacity_in_flow_hours = fx.InvestParameters(
+                optional=self.optional,
+                fixed_size=None if isinstance(self.capacity, tuple) else self.capacity,
+                minimum_size=self.capacity[0] if isinstance(self.capacity, tuple) else 0,
+                maximum_size=self.capacity[1] if isinstance(self.capacity, tuple) else None,
+                specific_effects=specific_effects_total,
+            )
+            if not storage.meta_data:
+                storage.meta_data = MetaDataFactory.create()
 
-        comp = fx.LinearConverter(
-            label=self.props["Name"],
-            inputs=[flow_fuel],
-            outputs=[flow_heat, flow_el], segmented_conversion_factors=segmented_conversion_factors)
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(flow_heat, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
+            storage.meta_data['invest']['costs']['specific_effects'] += specific_effects_per_period.get('costs', 0)
+            storage.meta_data['invest']['funding']['specific_effects'] += specific_effects_per_period.get('funding', 0)
 
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+    def _get_normalized_temperature_spread(self) -> Union[float, np.ndarray]:
+        return (self.temperature_upper - self.temperature_lower) / self.default_temperature_spread
 
-
-class Waermepumpe(GridFee):
-    _property_definitions = {
-        **GridFee._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "Zusatzkosten pro MWh Strom": (0, Union[int, float, str]),
-        "COP": (None, Optional[Union[int, float, str]]),
-        # COP computation
-        "Carnot Effizienz": (0.5, Union[float, str]),
-        "Quelltemperatur": (None, Optional[Union[int, float, str]]),
-        "Zieltemperatur": ("TVL_FWN", Optional[Union[int, float, str]]),
-        # BEW Operation Funding
-        "SCOP für BEW": (None, Optional[Union[int, float]]),
-        "Maximale Stromkostenförderung BEW": (None, Optional[float]),
-        # Einsatzbeschränkung
-        "Untergrenze für Einsatz": (None, Optional[Union[int, float]]),
-        "Zeitreihe für Einsatzbeschränkung": (None, Optional[str]),
-
-        "Grüne Wärme": (0, Union[int, float, str]),
-
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-        "Strombus": ("StromBezug", str)
-    }
-
-    _invest_prop = "Thermische Leistung"
-
-    def validate_properties(self):
-        super().validate_properties()
-
-        # Check for valid COP computation
-        if not self.props["COP"]:
-            if not self.props["Quelltemperatur"] or not self.props["Zieltemperatur"]:
-                raise Exception(f"Need to specify a 'COP' for {self.props['Name']} or "
-                                f"use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally.")
-        if self.props["COP"]:
-            if self.props["Quelltemperatur"]:  #or self.props["Zieltemperatur"]: # TODO: Make Zieltemperatur defualt= None
-                raise Exception(f"Either specify a 'COP' for {self.props['Name']} "
-                                f"OR use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally.")
-
-        # BEW Operation Funding
-        if self.props["SCOP für BEW"]:
-            if not self.props["Startjahr"]:
-                raise Exception(f"Need to specify a Year of Operation start for {self.props['Name']} to use HP "
-                                f"operation funding, because its limited to 10 years.")
-            if not self.props["Maximale Stromkostenförderung BEW"]:
-                raise Exception(f"Need to specify 'Maximale Stromkostenförderung BEW' for {self.props['Name']} to use HP "
-                                f"operation funding.")
-
-        # Einsatzbeschränkung
-        if not ((self.props["Untergrenze für Einsatz"] is None) ==
-                (self.props["Zeitreihe für Einsatzbeschränkung"] is None)):
-            raise Exception(f"Need to specify either both or none of 'Zeitreihe für Einsatzbeschränkung' and "
-                            f"'Untergrenze für Einsatz' for {self.props['Name']}.")
-
-    @property
-    def factor_grid_to_invest(self) -> float:
-        value = np.max(self.computed_props["Einsatzbeschränkung"] * self.computed_props["exists"] /
-                       self.computed_props["COP"])
-        self.computed_props["Faktor für Netzentgeltumrechnung"] = value
+    @field_validator('grid_fee_per_year', mode='before')
+    @classmethod
+    def validate_grid_fee(cls, value):
+        if value is not None:
+            raise ValueError(f"Netzentgelt is not supported for '{cls.__name__}")
         return value
 
-    def compute_cop(self, time_series_data) -> Union[float, np.ndarray]:
-        if self.props["COP"]:
-            self.computed_props["COP"] = as_time_series(self.props["COP"], time_series_data)
-        else:
-            self.computed_props["COP"] = calculate_cop(
-                source_temperature=as_time_series(self.props["Quelltemperatur"], time_series_data),
-                target_temperature=as_time_series(self.props["Zieltemperatur"], time_series_data),
-                eta=as_time_series(self.props["Carnot Effizienz"], time_series_data))
-        return self.computed_props["COP"]
+    @field_validator('capacity', mode='before')
+    @classmethod
+    def validate_capacity(cls, value) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
+        return validate_invest_range(value, label='Kapazität [MWh]')
 
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Zusatzkosten pro MWh Strom"] = as_time_series(
-            self.props["Zusatzkosten pro MWh Strom"], time_series_data)
-        self.computed_props["Stromkosten"] = as_time_series("Strom", time_series_data)
+    @property
+    def relative_maximum_capacity(self) -> Union[float, np.ndarray]:
+        if isinstance(self.relative_maximum, (int, float)):
+            return self.relative_maximum
+        else:  # Append the last value to the array
+            return np.concatenate((self.relative_maximum, np.array([self.relative_maximum[-1]])))
 
-        # COP berechnen
-        self.compute_cop(time_series_data)
-
-        # BEW Operation Funding
-        self.computed_props["BEW Förderung Strom"] = 0
-        if self.props["SCOP für BEW"]:
-            fund_per_mw_el = bew_operation_funding_from_scop(self.props["SCOP für BEW"], "MWh_el")
-
-            electricity_costs_per_flow_hour = (self.computed_props["Stromkosten"] +
-                                               self.computed_props["Zusatzkosten pro MWh Strom"])
-            # Begrenzung der Förderung auf x% der Stromkosten
-            max_fund = self.props["Maximale Stromkostenförderung BEW"]
-            fund_per_mw_el = np.where(
-                fund_per_mw_el < electricity_costs_per_flow_hour * max_fund,
-                fund_per_mw_el, electricity_costs_per_flow_hour * max_fund)
-            # Begrenzung auf 10 Jahre
-            self.computed_props["BEW Förderung Strom"] = fund_per_mw_el * exists(self.props["Startjahr"], 10,
-                                                                                 years_of_model)
-
-        # Einsatzbeschränkung
-        self.computed_props["Einsatzbeschränkung"] = self.kwargs.pop("relative_maximum", 1)
-        if self.props["Zeitreihe für Einsatzbeschränkung"]:
-            self.computed_props["Einsatzbeschränkung"] = np.where(
-                as_time_series(self.props["Zeitreihe für Einsatzbeschränkung"], time_series_data)
-                <= self.props["Untergrenze für Einsatz"],
-                0, self.computed_props["Einsatzbeschränkung"])
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.HeatPump(
-            label=self.props["Name"],
-            COP=self.computed_props["COP"],
-            Q_th=fx.Flow(
-                label='Qth',
-                bus=busses[self.props["Wärmebus"]],
-                meta_data=self.meta_data,
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                relative_maximum=self.computed_props["Einsatzbeschränkung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
-            ),
-            P_el=fx.Flow(
-                label='Pel',
-                bus=busses[self.props["Strombus"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Stromkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Strom"],
-                    effects["funding"]: self.computed_props["BEW Förderung Strom"]
-                }
-            )
+    @property
+    def needs_investment_capacity(self) -> bool:
+        return (
+            self.invest_costs_capacity_specific != 0
+            or self.annual_costs_capacity_specific != 0
+            or self.optional is True
+            or isinstance(self.capacity, tuple)
         )
 
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(comp.Q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
+    def restrict_availlability(self, component: flixOpt.components.Storage, years_in_model: List[int]) -> None:
+        existance = exists(self.start_year, self.lifetime, years_in_model)
+        restrict_availlability(component, existance)
+        component.relative_loss_per_hour = component.relative_loss_per_hour * existance
 
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+
+class EHK(ThermalInvestElement):
+    eta_thermal: Union[float, str] = Field(alias='Thermischer Wirkungsgrad')
+    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
+    bus_elec: str = Field(alias='Strombus', default='StromBezug')
+
+    def _insert_data(self, data: pd.DataFrame):
+        super()._insert_data(data)
+        self.eta_thermal = extract_data(self.eta_thermal, data)
+        self.extra_costs_per_mwh_elec = extract_data(self.extra_costs_per_mwh_elec, data)
+
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
+
+        ehk = fx.linear_converters.Power2Heat(
+            label=self.name,
+            eta=self.eta_thermal,
+            P_el=fx.Flow(
+                label='Pel',
+                bus=busses[self.bus_elec],
+                effects_per_flow_hour={
+                    effects['costs']: (extract_data('Strom', time_series_data) + self.extra_costs_per_mwh_elec)
+                },
+            ),
+            Q_th=fx.Flow(
+                label='Qth',
+                bus=busses[self.bus_heat],
+                relative_maximum=self.relative_maximum,
+                relative_minimum=self.relative_minimum,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
+            ),
+        )
+        self.insert_size(
+            ehk.Q_th,
+            self.thermal_power,
+            effects,
+            years_of_model,
+        )
+        self.restrict_availlability(ehk, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, ehk.Q_th, ehk.eta, effects['costs'], years_of_model)
+        return ehk
+
+
+class Rueckkuehler(ThermalInvestElement):
+    specific_electricity_demand: Union[int, float, str] = Field(alias='Strombedarf', default=0)
+    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
+
+    bus_elec: str = Field(alias='Strombus', default='StromBezug')
+
+    def _insert_data(self, data: pd.DataFrame):
+        super()._insert_data(data)
+        self.specific_electricity_demand = extract_data(self.specific_electricity_demand, data)
+
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
+
+        cool = fx.linear_converters.CoolingTower(
+            label=self.name,
+            specific_electricity_demand=self.specific_electricity_demand,
+            P_el=fx.Flow(
+                label='Pel',
+                bus=busses[self.bus_elec],
+                effects_per_flow_hour={
+                    effects['costs']: extract_data('Strom', time_series_data) + self.extra_costs_per_mwh_elec
+                },
+            ),
+            Q_th=fx.Flow(
+                label='Qth',
+                bus=busses[self.bus_heat],
+                relative_maximum=self.relative_maximum,
+                relative_minimum=self.relative_minimum,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
+            ),
+        )
+        self.insert_size(
+            cool.Q_th,
+            self.thermal_power,
+            effects,
+            years_of_model,
+        )
+        self.restrict_availlability(cool, years_of_model)
+        if cool.specific_electricity_demand != 0:
+            self.insert_grid_fee(
+                self.grid_fee_per_year,
+                cool.Q_th,
+                1 / cool.specific_electricity_demand,
+                effects['costs'],
+                years_of_model,
+            )
+        return cool
 
 
 class AbwaermeWaermepumpe(Waermepumpe):
-    _property_definitions = {
-        **Waermepumpe._property_definitions,
-        "Abwärmekosten": (NO_DEFAULT, Union[int, float, str]),
-        # Connections
-        "Abwärmebus": ("Abwaerme", str)
-    }
+    heat_source_costs: Union[int, float, str] = Field(alias='Abwärmekosten', default=0)
+    bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
 
-    _invest_prop = "Thermische Leistung"
+    def _insert_data(self, data: pd.DataFrame):
+        self.heat_source_costs = extract_data(self.heat_source_costs, data)
 
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        super().computation(years_of_model, co2_factors, time_series_data)
-        self.computed_props["Abwärmekosten"] = as_time_series(self.props["Abwärmekosten"], time_series_data)
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
 
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.HeatPumpWithSource(
-            label=self.props["Name"],
-            COP=self.computed_props["COP"],
+        heat_pump = fx.linear_converters.HeatPumpWithSource(
+            label=self.name,
+            COP=self._get_cop(time_series_data),
             Q_th=fx.Flow(
                 label='Qth',
-                meta_data=self.meta_data,
-                bus=busses[self.props["Wärmebus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                relative_maximum=self.computed_props["Einsatzbeschränkung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
+                bus=busses[self.bus_heat],
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
+                relative_maximum=self.relative_maximum,
+                relative_minimum=self.relative_minimum,
             ),
             P_el=fx.Flow(
                 label='Pel',
-                bus=busses[self.props["Strombus"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Stromkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Strom"],
-                    effects["funding"]: self.computed_props["BEW Förderung Strom"]
-                },
+                bus=busses[self.bus_elec],
+                effects_per_flow_hour=self._electricity_effects_per_flow_hour(effects, time_series_data, years_of_model),
             ),
             Q_ab=fx.Flow(
                 label='Qab',
-                bus=busses[self.props["Abwärmebus"]],
-                effects_per_flow_hour={effects["costs"]: self.computed_props["Abwärmekosten"]}
-            )
+                bus=busses[self.bus_waste_heat],
+                effects_per_flow_hour={effects['costs']: self.heat_source_costs},
+            ),
         )
-
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(comp.Q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+        self.insert_size(
+            heat_pump.Q_th,
+            self.thermal_power,
+            effects,
+            years_of_model,
+        )
+        self.restrict_availlability(heat_pump, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
+        return heat_pump
 
 
 class Geothermie(Waermepumpe):
-    _property_definitions = {
-        **Waermepumpe._property_definitions,
-        "Anteil Pumpstrom pro MW_geo": (NO_DEFAULT, Union[int, float]),
-        # Connections
-        "Abwärmebus": ("Abwaerme", str)
-    }
+    amount_of_pump_electricity: Union[int, float, str] = Field(alias='Anteil Pumpstrom pro MW_geo')
+    bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
 
-    _invest_prop = "Thermische Leistung"
+    def _insert_data(self, data: pd.DataFrame):
+        super()._insert_data(data)
+        self.amount_of_pump_electricity = extract_data(self.amount_of_pump_electricity, data)
 
-    def compute_cop(self, time_series_data) -> Union[float, np.ndarray]:
-        super().compute_cop(time_series_data)
-        self.computed_props["COP ohne Pumpstrom"] = self.computed_props["COP"]
-        self.computed_props["COP"] = self.computed_props["COP ohne Pumpstrom"] / (
-                1 + self.props["Anteil Pumpstrom pro MW_geo"])
-        return self.computed_props["COP"]
+    def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
+        if self.cop:
+            return extract_data(self.cop, time_series_data)
+        else:
+            cop_wo_pump = self.calculate_cop(
+                source_temperature=extract_data(self.source_temperature, time_series_data),
+                target_temperature=extract_data(self.sink_temperature, time_series_data),
+                eta=0.5,
+            )
 
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
+            return cop_wo_pump / (1 + self.amount_of_pump_electricity)
 
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
 
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.linear_converters.HeatPumpWithSource(
-            label=self.props["Name"],
-            COP=self.computed_props["COP"],
+        heat_pump = fx.linear_converters.HeatPumpWithSource(
+            label=self.name,
+            COP=self._get_cop(time_series_data),
             Q_th=fx.Flow(
                 label='Qth',
-                meta_data=self.meta_data,
-                bus=busses[self.props["Wärmebus"]],
-                size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                relative_maximum=self.computed_props["Einsatzbeschränkung"],
-                can_be_off=self.on_parameters,
-                **self.flow_kwargs
+                bus=busses[self.bus_heat],
+                relative_maximum=self.relative_maximum,
+                relative_minimum=self.relative_minimum,
+                effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
             ),
             P_el=fx.Flow(
                 label='Pel',
-                bus=busses[self.props["Strombus"]],
-                effects_per_flow_hour={
-                    effects["costs"]:
-                        self.computed_props["Stromkosten"] +
-                        self.computed_props["Zusatzkosten pro MWh Strom"],
-                    effects["funding"]: self.computed_props["BEW Förderung Strom"]
-                },
+                bus=busses[self.bus_elec],
+                effects_per_flow_hour=self._electricity_effects_per_flow_hour(effects, time_series_data, years_of_model),
             ),
-            Q_ab=fx.Flow(
-                label='Qab',
-                bus=busses[self.props["Abwärmebus"]],
-            )
+            Q_ab=fx.Flow(label='Qab', bus=busses[self.bus_waste_heat]),
+        )
+        self.insert_size(
+            heat_pump.Q_th,
+            self.thermal_power,
+            effects,
+            years_of_model,
+        )
+        self.restrict_availlability(heat_pump, years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
+        return heat_pump
+
+
+class Abwaerme(ThermalInvestElement):
+    waste_heat_costs: Union[int, float, str] = Field(alias='Abwärmekosten')
+    bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
+
+    def _insert_data(self, data: pd.DataFrame):
+        super()._insert_data(data)
+        self.waste_heat_costs = extract_data(self.waste_heat_costs, data)
+
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
+
+        q_th = fx.Flow(
+            label='Qth',
+            bus=busses[self.bus_heat],
+            relative_minimum=self.relative_minimum,
+            relative_maximum=self.relative_maximum,
+            effects_per_flow_hour=self.thermal_effects_per_flow_hour(effects),
         )
 
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(comp.Q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
-
-
-class Abwaerme(EnergySystemObject):
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "Abwärmekosten": (NO_DEFAULT, Union[int, float, str]),
-
-        "Grüne Wärme": (0, Union[int, float, str]),
-        # Connections
-        "Wärmebus": ("Fernwaerme", str),
-        "Abwärmebus": ("Abwaerme", str)
-    }
-
-    _invest_prop = "Thermische Leistung"
-
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Direct links to time_series_data
-        self.computed_props["Abwärmekosten"] = as_time_series(self.props["Abwärmekosten"], time_series_data)
-
-        self.compute_investment(years_of_model)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        q_th = fx.Flow(label='Qth',
-                       meta_data=self.meta_data,
-                     bus=busses[self.props["Wärmebus"]],
-                     size=self.computed_props[f"Investment {self._invest_prop}"] or self.computed_props["Thermische Leistung"],
-                     can_be_off=self.on_parameters,
-                **self.flow_kwargs
-                     )
-
-        q_abw = fx.Flow(label='Qabw',
-                      bus=busses[self.props["Abwärmebus"]],
-                      effects_per_flow_hour={effects["costs"]: self.computed_props["Abwärmekosten"]}
-                      )
+        q_abw = fx.Flow(
+            label='Qabw',
+            bus=busses[self.bus_waste_heat],
+            effects_per_flow_hour={effects['costs']: self.waste_heat_costs},
+        )
 
         comp = fx.LinearConverter(
-            label=self.props["Name"],
-            inputs=[q_abw],
-            outputs=[q_th],
-            conversion_factors=[{q_abw: 1, q_th: 1}]
+            label=self.name, inputs=[q_abw], outputs=[q_th], conversion_factors=[{q_abw: 1, q_th: 1}]
         )
 
-        # Allocate Green Heat
-        if self.props['Grüne Wärme'] != 0:
-            self.computed_props['Grüne Wärme'] = as_time_series(self.props['Grüne Wärme'], time_series_data)
-            add_effect_per_flow_hour(q_th, effects["Gruene_Waerme"], effects['costs'], self.computed_props['Grüne Wärme'])
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
+        self.insert_size(
+            q_th,
+            self.thermal_power,
+            effects,
+            years_of_model,
+        )
+        self.restrict_availlability(comp, years_of_model)
+        # No Grid Connection!
+        return comp
 
 
-class Speicher(EnergySystemObject):
-    _property_definitions = {
-        **EnergySystemObject._property_definitions,
-        "Thermische Leistung": (None, Optional[Union[int, float, str]]),
-        "Kapazität [MWh]": (None, Optional[Union[int, float, str]]),
-        # Investment Kapazität
-        "Investkosten [€/MWh]": (0, Union[int, float]),
-        "Sonstige Fixkosten [€/(MWh*a)]": (0, Union[int, float]),
-        "Investgruppe Kapazität": (None, Optional[str]),
+class KWKekt(InvestElement):
+    fuel_power: Union[int, float] = Field(alias='Brennstoff Leistung')
+    electrical_power: Tuple[float, float] = Field(alias='Elektrische Leistung (Stützpunkte)')
+    thermal_power: Tuple[float, float] = Field(alias='Thermische Leistung (Stützpunkte)')
+    fuel_type: str = Field(alias='Brennstoff')
+    fuel_costs: Union[float, str] = Field(alias='Brennstoffkosten [€/MWh_hu]', default=0)
+    can_be_off: bool = Field(alias='Ausschaltbar', default=True)
 
-        "VerlustProStunde": (0, Union[int, float]),
-        "eta_load": (NO_DEFAULT, Union[int, float]),
-        "eta_unload": (NO_DEFAULT, Union[int, float]),
-        # Beschränkung
-        "AbhängigkeitVonDT": (False, bool),
-        "Untere Temperatur": ("TRL_FWN", Union[int, float, str]),
-        "Obere Temperatur": ("TVL_FWN", Union[int, float, str]),
-    }
+    bus_elec: str = Field(alias='Strombus', default='StromEinspeisung')
+    bus_heat: str = Field(alias='Wärmebus', default='Fernwärme')
 
-    _invest_prop = "Thermische Leistung"
+    relative_maximum: Union[int, float, str] = Field(alias='Relative Brennstoff Leistungsobergrenze', default=1)
+    relative_minimum: Union[int, float, str] = Field(alias='Relative Brennstoff Leistungsuntergrenze', default=0)
+    green_heat_factor: Union[int, float, str] = Field(alias='Grüne Wärme', default=0)
 
-    def __init__(self, **props):
-        super().__init__(**props)
-        self.meta_data_storage = {}
+    def _insert_data(self, data: pd.DataFrame):
+        self.fuel_costs = extract_data(self.fuel_costs, data)
+        self.relative_maximum = extract_data(self.relative_maximum, data)
+        self.relative_minimum = extract_data(self.relative_minimum, data)
+        self.green_heat_factor = extract_data(self.green_heat_factor, data)
 
-    def compute_investment(self, years_of_model: List[int]):
-        super().compute_investment(years_of_model)
-        self.computed_props[f"Investment {self._invest_prop} 2"] = None
-        if self.invest_args_viable:
-            size = self.computed_props[self._invest_prop]
-            self.computed_props[f"Investment {self._invest_prop} 2"] = fx.InvestParameters(
-                fixed_size=size,
-                maximum_size=self.computed_props[f"Investment {self._invest_prop}"].maximum_size,
-                optional=self.props["Optional"])
+    def _convert_to_flixopt(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+    ):
+        effects = flow_system.effect_collection.effects
 
-            # Add Effect to link installed thermal power of in and out flows
-            if not isinstance(size, (int, float)):
-                effect = fx.Effect(label=f"{self.props['Name']}_link_power", unit="",
-                                 description=f"Links the in and outflow investment value of storage {self.props['Name']}",
-                                 minimum_invest=0, maximum_invest=0)
-                self.flix_comps.append(effect)
-                self.computed_props[f"Investment {self._invest_prop}"].specific_effects[effect] = 1
-                self.computed_props[f"Investment {self._invest_prop} 2"].specific_effects = {effect: -1}
+        flow_heat = fx.Flow(
+            'Qth', busses[self.bus_heat], effects_per_flow_hour={effects['Gruene_Waerme']: self.green_heat_factor}
+        )
+        flow_fuel = fx.Flow(
+            'Qfu',
+            busses[self.fuel_type],
+            effects_per_flow_hour={effects['costs']: self.fuel_costs},
+            relative_minimum=self.relative_maximum,
+            relative_maximum=self.relative_maximum,
+        )
+        flow_el = fx.Flow(
+            'Pel',
+            busses[self.bus_elec],
+            effects_per_flow_hour={effects['costs']: -1 * extract_data('Strom', time_series_data)},
+        )
 
-    def compute_investment_capacity(self, years_of_model: List[int]):
-        self.computed_props["Kapazität [MWh]"], min_invest, max_invest = (
-            handle_invest_parameter(self.props["Kapazität [MWh]"]))
+        if self.can_be_off:
+            segmented_conversion_factors = {
+                flow_fuel: [(0, 1e-5), (self.fuel_power, self.fuel_power)],
+                flow_el: [(0, 1e-5), self.electrical_power],
+                flow_heat: [(0, 1e-5), self.thermal_power],
+            }
+        else:
+            segmented_conversion_factors = {
+                flow_fuel: [(self.fuel_power, self.fuel_power)],
+                flow_el: [self.electrical_power],
+                flow_heat: [self.thermal_power],
+            }
 
-        self.computed_props[f"Investment Kapazität [MWh]"] = None
-        if self.invest_args_viable:
-            self.meta_data_storage["fixed_effects"], self.meta_data_storage["specific_effects"] = costs_and_funding(
-                interest_rate=self.props["Zinssatz"],
-                starting_year=self.props["Startjahr"],
-                lifetime=self.props["Lebensdauer"],
-                invest_costs=0, annual_costs=0,
-                specific_invest_costs=self.props["Investkosten [€/MWh]"],
-                specific_annual_costs=self.props["Sonstige Fixkosten [€/(MWh*a)]"],
-                funding_rate=self.props["Fördersatz"],
-                years_of_model=years_of_model
+        comp = fx.LinearConverter(
+            label=self.name,
+            inputs=[flow_fuel],
+            outputs=[flow_heat, flow_el],
+            segmented_conversion_factors=segmented_conversion_factors,
+        )
+        self.insert_size(flow_fuel, self.fuel_power, effects, years_of_model)
+        self.restrict_availlability(comp, years_of_model)
+        return comp
+
+    @field_validator('electrical_power', mode='before')
+    @classmethod
+    def validate_electrical_power(cls, value):
+        start_end = numbers_from_str(value)
+        if len(start_end) != 2:
+            raise ValueError('The electrical power points must be exactly 2 numbers (start and end).')
+        else:
+            return start_end
+
+    @field_validator('thermal_power', mode='before')
+    @classmethod
+    def validate_thermal_power(cls, value):
+        return numbers_from_str(value)
+
+    @model_validator(mode='after')
+    def validate_power_points(self):
+        if len(self.electrical_power) != len(self.thermal_power):
+            raise ValueError(
+                f'The number of electrical power points ({len(self.electrical_power)}) must match the '
+                f'number of thermal power points ({len(self.thermal_power)}).'
             )
-            self.computed_props["fixed_effects_capacity"] = {key: sum(value) for key, value in
-                                                             self.meta_data_storage["fixed_effects"].items()}
-            self.computed_props["specific_effects_capacity"] = {key: sum(value) for key, value in
-                                                                self.meta_data_storage["specific_effects"].items()}
-            if self.props["Investgruppe Kapazität"]:
-                self.computed_props["specific_effects_capacity"][self.props["Investgruppe Kapazität"]] = 1
 
-            size = self.computed_props["Kapazität [MWh]"]
-            self.computed_props["Investment Kapazität [MWh]"] = fx.InvestParameters(
-                fix_effects={key: value for key, value in self.computed_props["fixed_effects_capacity"].items() if value},
-                specific_effects={key: value for key, value in self.computed_props["specific_effects_capacity"].items() if
-                               value},
-                fixed_size=size if isinstance(size, (int, float)) else None,
-                optional=self.props["Optional"],
-                minimum_size=min_invest,
-                maximum_size=max_invest)
+        for epp, tpp in zip(self.electrical_power, self.thermal_power, strict=False):
+            if epp / self.fuel_power > 1:
+                raise ValueError(f'The electric efficiency of {self.props["Name"]} exceeds 100%.')
+            if tpp / self.fuel_power > 1:
+                raise ValueError(f'The thermal efficiency of {self.props["Name"]} exceeds 100%.')
+            if (epp + tpp) / self.fuel_power > 1:
+                raise ValueError(f'The total efficiency of {self.props["Name"]} exceeds 100%.')
 
 
-    def computation(self,
-                    years_of_model: List[int],
-                    co2_factors: Dict[str, float],
-                    time_series_data: pd.DataFrame) -> None:
-        self.finalize_kwargs(time_series_data)
-        # Limiting capcity and Thermische Leistung
-        self.computed_props["Einsatzbeschränkung"] = 1
-        if self.props["AbhängigkeitVonDT"]:
-            self.computed_props["Einsatzbeschränkung"] = (
-                as_time_series(self.props["Obere Temperatur"], time_series_data) -
-                as_time_series(self.props["Untere Temperatur"], time_series_data)) / 65
-        if "relative_maximum" in self.kwargs:
-            relative_maximum = self.kwargs.pop("relative_maximum")
-            self.computed_props["Einsatzbeschränkung"] = np.where(
-                self.computed_props["Einsatzbeschränkung"] < relative_maximum,
-                self.computed_props["Einsatzbeschränkung"], relative_maximum)
-
-        self.compute_investment(years_of_model)
-        self.compute_investment_capacity(years_of_model)
-
-    def insert_effects_into_investargs(self, effects: Dict[str, fx.Effect]) -> None:
-        # Inserting effects as keys
-        invest_keys = [f"Investment {self._invest_prop}",
-                       f"Investment {self._invest_prop} 2",
-                       f"Investment Kapazität [MWh]"]
-        for invest_key in invest_keys:
-            if self.computed_props[invest_key]:
-                insert_effects(self.computed_props[invest_key].fix_effects, effects)
-                insert_effects(self.computed_props[invest_key].specific_effects, effects)
-
-    def connect_to_system(self,
-                          time_series_data: pd.DataFrame,
-                          co2_factors: Dict[str, float],
-                          years_of_model: List[int],
-                          effects: Dict[str, fx.Effect],
-                          busses: Dict[str, fx.Bus]) -> List[Element]:
-        self.computation(years_of_model, co2_factors, time_series_data)
-        if np.max(self.computed_props["exists"]) == 0:  # Dont add Components which dont exists anyway
-            return []
-
-        self.insert_effects_into_investargs(effects)
-
-        comp = fx.Storage(
-            label=self.props["Name"],
-            meta_data=self.meta_data_storage,
-            capacity_in_flow_hours=self.computed_props["Investment Kapazität [MWh]"] or self.computed_props["Kapazität [MWh]"],
-            eta_charge=self.props["eta_load"],
-            eta_discharge=self.props["eta_unload"],
-            relative_loss_per_hour=self.props["VerlustProStunde"],
-            relative_maximum_charge_state=self.computed_props["Einsatzbeschränkung"]
-            if isinstance(self.computed_props["Einsatzbeschränkung"], (int, float))
-            else np.append(self.computed_props["Einsatzbeschränkung"], self.computed_props["Einsatzbeschränkung"][-1]),
-
-            charging=fx.Flow(label='QthLoad',
-                             bus=busses["Fernwaerme"],
-                             meta_data=self.meta_data,
-                             size=self.computed_props["Investment Thermische Leistung"] or self.computed_props["Thermische Leistung"],
-                             relative_maximum=self.computed_props["Einsatzbeschränkung"]
-                             ),
-            discharging=fx.Flow(label='QthUnload',
-                                meta_data={'fixed_effects': {}, 'specific_effects': {}},
-                                bus=busses["Fernwaerme"],
-                                size=self.computed_props["Investment Thermische Leistung 2"] or self.computed_props["Thermische Leistung"],
-                                relative_maximum=self.computed_props["Einsatzbeschränkung"],
-                                can_be_off=self.on_parameters,
-                                **self.flow_kwargs
-                          ),
-            prevent_simultaneous_charge_and_discharge=True,
-        )
-
-        restrict_availlability(comp, self.computed_props['exists'])
-        update_meta_data(comp, {'Gruppe': self.props["Gruppe"],
-                                'Startjahr': self.props['Startjahr'],
-                                'Lebensdauer': self.props['Lebensdauer']})
-        validate_invest_meta_data(comp)
-        self.flix_comps.append(comp)
-        return self.flix_comps
-
-
-class ComponentFactory:
-    def __init__(self,
-                 time_series_data: pd.DataFrame,
-                 co2_factors: Dict[str, float],
-                 years_of_model: List[int],
-                 effects: Dict[str, fx.Effect],
-                 busses: Dict[str, fx.Bus]):
+class ElementFactory:
+    def __init__(
+        self,
+        flow_system: fx.FlowSystem,
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float],
+        years_of_model: List[int],
+        busses: Dict[str, fx.Bus],
+    ):
         self.time_series_data = time_series_data
         self.co2_factors = co2_factors
         self.years_of_model = years_of_model
-        self.effects = effects
+        self.flow_system = flow_system
         self.busses = busses
 
-        self.created_comps: List[EnergySystemObject] = []
+        self.created_comps: List[Element] = []
 
-    def create_energy_object(self, obj_type: str, object_properties: Dict):
+    def create_energy_object(self, obj_type: str, properties: Dict) -> None:
         obj_class = self.get_class_by_type(obj_type)
         if obj_class:
-            energy_obj = obj_class(**object_properties)
+            energy_obj: Element = obj_class(**properties)
             self.created_comps.append(energy_obj)
-            return energy_obj.connect_to_system(time_series_data=self.time_series_data,
-                                                co2_factors=self.co2_factors,
-                                                years_of_model=self.years_of_model,
-                                                effects=self.effects,
-                                                busses=self.busses)
+            energy_obj.add_to_flow_system(
+                flow_system=self.flow_system,
+                busses=self.busses,
+                time_series_data=self.time_series_data,
+                co2_factors=self.co2_factors,
+                years_of_model=self.years_of_model,
+            )
+            logger.info(f'Created {obj_type} "{energy_obj.name}"')
         else:
-            raise ValueError(f"Unknown energy object type: {obj_type}")
+            raise ValueError(f'Unknown energy object type: {obj_type}')
 
     def get_class_by_type(self, obj_type):
         # Map obj_type to the appropriate class
         class_map = {
             'Waermepumpe': Waermepumpe,
-            'AbwaermeWP': AbwaermeWaermepumpe,
-            'Geothermie': Geothermie,
             'KWK': KWK,
-            'KWKekt': KWKekt,
             'Kessel': Kessel,
-            'EHK': EHK,
             'Speicher': Speicher,
-            'AbwaermeHT': Abwaerme,
-            'Rueckkuehler': Rueckkuehler,
-            'LinearTransformer_1_1': LinearTransformer_1_1,
+            'LinearTransformer_1_1': LinearTransformer,
             'Sink': Sink,
             'Source': Source,
-
+            'AbwaermeWP': AbwaermeWaermepumpe,
+            'Geothermie': Geothermie,
+            'KWKekt': KWKekt,
+            'EHK': EHK,
+            'AbwaermeHT': Abwaerme,
+            'Rueckkuehler': Rueckkuehler,
             # More mappings as needed
         }
         return class_map.get(obj_type)
 
     def print_comps(self):
-        rep = ""
-        for comp in sorted(self.created_comps, key=lambda comp: comp.props["Name"]):
-            rep += f"{comp}\n"
+        rep = ''
+        for comp in sorted(self.created_comps, key=lambda comp: comp.name):
+            rep += f'{comp}\n'
         return rep
 
 
-##############################
+def extract_data(value: Union[str, Any], data: pd.DataFrame) -> Union[np.ndarray, Any]:
+    """
+    Extracts data from a DataFrame based on the provided value. If the value is a string, it is assumed to be a column name
+    and the corresponding data is returned. If the value is not a string, it is assumed to be the actual data and is simply
+    returned.
+    """
 
+    if isinstance(value, str):
+        if value not in data.columns:
+            raise KeyError(
+                f"Column '{value}' not found in the time series data provided. "
+                f'Only the following columns where found: {list(data.columns)}'
+            )
+        return data[value].to_numpy()
+    else:
+        return value
+
+
+def insert_effects(dictionary: Dict[Union[fx.Effect, str], Any], effects: Dict[str, fx.Effect]) -> None:
+    if dictionary is None or dictionary == 0 or dictionary == {}:
+        return None
+    for effect_name in dictionary:
+        if effect_name in effects.keys():
+            dictionary[effects[effect_name]] = dictionary.pop(effect_name)
+        elif not isinstance(effect_name, fx.Effect):
+            raise KeyError(f"Key '{effect_name}' is not found in effects Collection.")
+
+
+# Limit availability of Elements
 def exists(first_year: int, lifetime: int, years_in_model: list[int], steps_per_year: int = 8760) -> [int, np.ndarray]:
     index_per_year = np.array(index_per_year_in_model(first_year, lifetime, years_in_model))
     if np.sum(index_per_year) == 0:
@@ -1736,297 +1456,10 @@ def index_per_year_in_model(first_year: Optional[int], lifetime: Optional[int], 
         # Create a new list with 1s and 0s based on the conditions
         return [1 if first_year <= num < first_year + lifetime else 0 for num in years_of_model]
 
-def as_time_series(value: Union[float, int, str], time_series_data: pd.DataFrame) -> Union[int, float, np.ndarray]:
-    if isinstance(value, (int, float)):
-        # return np.ones(len(time_series_data.index)) * value
-        return value
-    elif value in time_series_data.columns:
-        return time_series_data[value].to_numpy()
-    else:
-        raise KeyError(f"{value} is not in TimeSeries Data of the DistrictHeatingSystem.")
 
-def calculate_cop(source_temperature: np.ndarray, target_temperature: np.ndarray, eta: float = 0.5) -> np.ndarray:
-    '''
-    Calculates the COP of a heatpump per Timestep from the Temperature of Heat sink and Heat source in Kelvin
-    Parameters
-    ----------
-    source_temperature : np.array, float, pd.Dataframe
-        Temperature of the Heat Source in Degrees Celcius
-    target_temperature : np.array, float, pd.Dataframe
-        Temperature of the Heat Sink in Degrees Celcius
-    eta : float
-        Relation to the thermodynamicaly ideal COP
-
-    Returns
-    -------
-    np.ndarray
-
-    '''
-    # Celsius zu Kelvin
-    source_temperature = source_temperature + 273.15
-    target_temperature = target_temperature + 273.15
-    return (target_temperature / (target_temperature - source_temperature)) * eta
-
-def bew_operation_funding_from_scop(scop: Union[int, float],
-                                    unit: Literal["MWh_amb", "MWh_th", "MWh_el"] = "MWh_amb") -> Union[int, float]:
-    '''
-    Calclulated the maximum funding according to the BEW.
-    Parameters
-    ----------
-    scop: assumed scop (seasonal coefficent of Performance) or cop
-
-    Returns
-    -------
-    Funding in euro per MWh_amb
-
-    '''
-    if unit not in ["MWh_amb", "MWh_th", "MWh_el"]:
-        raise Exception(f"Not a valid unit. Choose from: {['MWh_amb', 'MWh_th', 'MWh_el']}")
-
-    value = (5.5 - (6.8 - 17 / scop) * 0.75) * (scop / (scop - 1))  # ct/kWh
-    fund_amb = value * 10  # €/MWh_amb
-    if fund_amb >= 92:  # Funding is limited to 92 €/MWh_amb
-        fund_amb = 92
-
-    if unit == "MWh_amb":
-        return fund_amb
-    elif unit == "MWh_th":
-        return fund_amb * ((scop - 1) / scop)
-    else:
-        return fund_amb * (scop - 1)
-
-
-def insert_effects(dictionary: Dict[Union[fx.Effect, str], Any],
-                   effects: Dict[str, fx.Effect]) -> None:
-
-    if dictionary is None or dictionary == 0 or dictionary == {}:
-        return None
-    for effect_name, value in list(dictionary.items()):
-        if effect_name in effects.keys():
-            dictionary[effects[effect_name]] = dictionary.pop(effect_name)
-        elif not isinstance(effect_name, fx.Effect):
-            raise KeyError(f"Key '{effect_name}' is not found in effects Collection.")
-
-def get_annuity_factor(interest_rate: float, lifetime: int) -> float:
-    if interest_rate == 0:  # Preventing ZeroDicvision
-        annuity_factor = 1 / lifetime
-    else:
-        annuity_factor = (((1 + interest_rate) ** lifetime * interest_rate) /
-                          ((1 + interest_rate) ** lifetime - 1))
-    return annuity_factor
-
-def costs_and_funding(
-        interest_rate: float,
-        starting_year: int,
-        lifetime: int,
-        years_of_model: List[int],
-        invest_costs: float,
-        specific_invest_costs: float,
-        annual_costs: float,
-        specific_annual_costs: float,
-        funding_rate: float) -> Tuple[Dict[str, List[float]], Dict[str, List[float]]]:
-    '''
-    Calculates the annual costs and funding for an investment based on various financial parameters.
-
-    This function computes the fixed and specific costs and funding for an investment, considering the
-    interest rate, lifetime of the investment, investment costs (both per MW and per year), other costs (both per MW
-    and per year), funding rate, and grid fee per MW per year. The costs and funding are calculated using the annuity
-    method, which spreads out the initial investment costs over the lifetime of the investment, adjusted for the
-    interest rate.
-
-    Parameters:
-    - interest_rate (float): The annual interest rate used for calculating the annuity factor.
-    - starting_year: first year of operation
-    - lifetime (int): lifetime for calculating the investment
-    - years_of_model (List[int]): The years used in the model
-    - invest_costs (float): The total investment costs.
-    - invest_costs_per_mw (float): The investment costs per megawatt (MW).
-    - other_annual_costs (float): Other annual costs not included in the investment costs.
-    - other_annual_costs_per_mw (float): Other costs per megawatt (MW) not included in the investment costs.
-    - funding_rate (float): The rate at which the investment is funded.
-
-    Returns:
-    - Tuple[Dict[str, float], Dict[str, float]]: A tuple containing two dictionaries:
-        1. Fixed costs and funding, with keys being strings and values being the corresponding amounts in currency units.
-        2. Specific costs and funding, similar to the fixed costs but calculated per MW.
-    '''
-    annuity_factor = get_annuity_factor(interest_rate=interest_rate, lifetime=lifetime)
-    accounting_years = np.array([1 if starting_year <= year < (starting_year + lifetime) else 0 for year in years_of_model])
-
-    # Calculate costs and funding
-    fix_costs = {
-        "costs": ((invest_costs * annuity_factor + annual_costs) * accounting_years).tolist(),
-        "funding": (invest_costs * annuity_factor * funding_rate * accounting_years).tolist()
-    }
-    specific_costs = {
-        "costs": ((specific_invest_costs * annuity_factor + specific_annual_costs) * accounting_years).tolist(),
-        "funding": ((specific_invest_costs * annuity_factor * funding_rate) * accounting_years).tolist()
-    }
-
-    def clean_dict(d):
-        # Remove keys with lists that are empty or contain only zeros
-        keys_to_remove = [key for key, values in d.items() if not values or all(value == 0 for value in values)]
-        for key in keys_to_remove:
-            del d[key]
-        """
-        # TODO: Maybe do this later on
-        # Check if the dictionary is now empty or all remaining lists are empty or contain only zeros
-        if not d or all(not values or all(value == 0 for value in values) for values in d.values()):
-            return None
-        """
-        return d
-
-    return clean_dict(fix_costs), clean_dict(specific_costs)
-
-def handle_invest_parameter(invest_parameter: Union[int, float, str, type(None)]
-                            ) -> Tuple[Optional[Union[int, float]], float, float]:
-    '''
-    Handles an 'invest_parameter' value by assessing its type and assigning appropriate min, max, and value variables.
-
-    If 'invest_parameter' is string, it should be in the format 'min-max'. If it doesn't follow this format,
-    an exception will be raised. In this case, min and max are parsed from the string, and value is set to None.
-
-    If 'invest_parameter' is not string, the min is set to 0, max is set to 1e9 and value is set to the
-    'invest_parameter' itself.
-
-    Args:
-        invest_parameter (Union[str, int, float]): A number (int, float) or min-max range (string)
-
-    Returns:
-        Tuple: Return a tuple containing:
-            - value : Value of 'invest_parameter', if it was number. Else, None
-            - min   : Minimum limit for 'invest_parameter'
-            - max   : Maximum Limit for 'invest_parameter'
-
-    Raises:
-        Exception: If 'invest_parameter' is string but does not follow 'min-max' format
-    '''
-    min, max = 0, 1e9
-    if isinstance(invest_parameter, type(None)):
-        return None, min, max
-    if isinstance(invest_parameter, (int, float)):
-        value = invest_parameter
-        return value, min, max
-    if isinstance(invest_parameter, str):
-        lower_bound, upper_bound = check_min_max_format(invest_parameter)
-        return None, lower_bound, upper_bound
-
-    raise Exception(f"Wrong format of string for thermal_power '{invest_parameter}'."
-                    f"If thermal power is passed as a string, it must be of the format 'min-max'")
-
-def check_min_max_format(input_string: str) -> Tuple[float, float]:
-    '''
-    This function checks if a string is of the format "min-max" where min and max can be integers or decimal numbers
-    with . or , as decimal separators.
-
-    Parameters
-    ----------
-    input_string : str
-        The input string to check.
-
-    Returns
-    -------
-    bool
-        True if the string matches the "min-max" format, False otherwise.
-    '''
-    input_string = input_string.replace(',', '.').replace(' ', '')
-    if not re.match(r'^\d+(.\d+)?-\d+(.\d+)?$', input_string):
-        raise ValueError(f"String '{input_string}' is not of Format 'min-max'")
-    lower_bound, upper_bound = input_string.split("-")
-    return float(lower_bound), float(upper_bound)
-
-
-def fuel_factor_for_electrical_energy(
-        electrical_efficiency: Union[int, float, np.ndarray],
-        thermal_efficiency: Union[int, float, np.ndarray],
-        inferior_temperature: Union[int, float, np.ndarray] = 20,
-        forward_flow_temperature: Union[int, float, np.ndarray] = 120,
-        reverse_flow_temperature: Union[int, float, np.ndarray] = 60,
-) -> np.ndarray:
-    '''
-    Using the carnot mehtod, the fuel factor for electrical energy in a heating network is calculated
-    https://en.wikipedia.org/wiki/Carnot_method
-    '''
-    inferior_temperature = inferior_temperature + 273.15
-    forward_flow_temperature = forward_flow_temperature + 273.15
-    reverse_flow_temperature = reverse_flow_temperature + 273.15
-    superior_temperature = ((forward_flow_temperature - reverse_flow_temperature) /
-                            np.log((forward_flow_temperature / reverse_flow_temperature)))
-    n_carnot = 1 - (inferior_temperature / superior_temperature)
-
-    a_el = (1 * electrical_efficiency) / (electrical_efficiency + n_carnot * thermal_efficiency)
-    return a_el / electrical_efficiency
-
-
-def tuple_of_numbers_from_str(input_string: str, delimiter='-') -> Tuple[float, ...]:
-    '''
-    This function was written to extract numbers from a string
-    ----------
-    Returns
-    -------
-    Tuple[float, ...]
-    '''
-    input_string = input_string.replace(',', '.')
-    return tuple([float(i) for i in input_string.split(delimiter)])
-
-
-def is_valid_format_segmentsOfFlows(input_string: str, mode: Literal['validate', 'decode']) -> Union[bool, list]:
-    '''
-    This function was written to check if a string is of the format "0;0 ;5;10 ; 10;30"
-    In mode 'validate, returns bool. In mode 'decode', returns a list of numbers
-    ----------
-    Returns
-    -------
-    bool
-    '''
-
-    # Replace commas with dots to handle decimal separators
-    input_string = input_string.replace(',', '.')
-
-    # Split the string into a list of substrings using semicolon as the delimiter
-    numbers_str = input_string.split(';')
-    # Convert each substring to either int or float
-    numbers = [int(num) if '.' not in num else float(num) for num in numbers_str]
-
-    if not isinstance(numbers, list):
-        pass
-        # raise Exception("Conversion to segmentsOfFlows didnt work. Use numbers, seperated by ';'")
-    elif not all(isinstance(element, (int, float)) for element in numbers):
-        pass
-        # raise Exception("Conversion to segmentsOfFlows didnt work. Use numbers, seperated by ';'")
-    else:
-        if mode == 'validate':
-            return True
-        elif mode == 'decode':
-            return numbers
-        else:
-            raise Exception(f"{mode} is not a valid mode.")
-    if mode == 'validate':
-        return False
-    else:
-        raise Exception("Error encountered in parsing of String")
-
-
-def print_dict(data: Dict[str, Union[str, int, float, np.ndarray]]) -> str:
-    keys = sorted(data.keys())
-    values = [data[key] for key in keys]
-
-    representation = ""
-    for key, value in zip(keys, values):
-        representation += f"{key} = {value}\n"
-
-    return representation
-
-
-def add_effect_per_flow_hour(flow: fx.Flow, effect: fx.Effect, standard_effect: fx.Effect, factor: Union[float, np.ndarray]):
-    if isinstance(flow.effects_per_flow_hour, dict):
-        flow.effects_per_flow_hour.update({effect: factor})
-    elif flow.effects_per_flow_hour is None:
-        flow.effects_per_flow_hour = {effect: factor}
-    else:
-        flow.effects_per_flow_hour = {effect: factor, standard_effect: flow.effects_per_flow_hour}
-
-def restrict_availlability(component: flixOpt.elements.Component, exists: Union[int, float, np.ndarray]) -> flixOpt.elements.Component:
+def restrict_availlability(
+    component: flixOpt.elements.Component, exists: Union[int, float, np.ndarray]
+) -> flixOpt.elements.Component:
     for flow in component.inputs + component.outputs:
         flow.relative_maximum = flow.relative_maximum * exists
         flow.relative_minimum = flow.relative_minimum * exists
@@ -2036,15 +1469,65 @@ def restrict_availlability(component: flixOpt.elements.Component, exists: Union[
         component.relative_minimum_charge_state = component.relative_minimum_charge_state * storage_exists_exists
     return component
 
-def update_meta_data(component: flixOpt.elements.Component, meta_data: Dict):
-    if component.meta_data is None:
-        component.meta_data = {}
-    component.meta_data.update(meta_data)
-    for flow in component.inputs + component.outputs:
-        if flow.meta_data is None:
-            flow.meta_data = {}
-        flow.meta_data.update(meta_data)
-    return component
+
+def numbers_from_str(input_string: str, delimiter: str = '-', check_ascending: bool = False) -> Tuple[float, ...]:
+    """
+    Extract numbers from a delimited string and return them as a tuple of floats.
+
+    Parameters
+    ----------
+    input_string : str
+        The input string to extract numbers from.
+    delimiter : str, optional
+        The delimiter to use for splitting the input string. Default is '-'.
+    check_ascending : bool, optional
+        Whether to check if the numbers are in ascending order. Default is False.
+
+    Returns:
+    -------
+    Tuple[float, ...]
+        A tuple of floats extracted from the input string.
+
+    Raises:
+    ------
+    ValueError
+        If the input string contains invalid or non-numeric values.
+    """
+    input_string = input_string.replace(',', '.')  # Replace commas with dots (for robust decimal support)
+
+    parts = [
+        part.strip() for part in input_string.split(delimiter)
+    ]  # Split the string by the delimiter and strip whitespace
+
+    # Convert to floats and validate
+    try:
+        numbers = tuple(float(part) for part in parts if part)
+    except ValueError as e:
+        raise ValueError(f"Invalid input: '{input_string}'. All parts must be numeric.") from e
+
+    if not numbers:  # Check for empty results
+        raise ValueError(f"Invalid input: '{input_string}'. No valid numbers found.")
+    if check_ascending and not all(x <= y for x, y in zip(numbers, numbers[1:], strict=False)):
+        raise ValueError(
+            f"Invalid input: '{input_string}'. Numbers must be in ascending order. "
+            f'Found a violation in the sequence: {numbers}.'
+        )
+    return numbers
+
+
+def add_effect_per_flow_hour(
+    flow: fx.Flow, effect: fx.Effect, standard_effect: fx.Effect, factor: Union[float, np.ndarray]
+):
+    if isinstance(flow.effects_per_flow_hour, dict):
+        flow.effects_per_flow_hour.update({effect: factor})
+    elif flow.effects_per_flow_hour is None:
+        flow.effects_per_flow_hour = {effect: factor}
+    else:
+        flow.effects_per_flow_hour = {effect: factor, standard_effect: flow.effects_per_flow_hour}
+
+
+# validation functions
+
 
 def validate_invest_meta_data(component: flixOpt.elements.Component):
     for flow in component.inputs + component.outputs:
@@ -2058,15 +1541,47 @@ def validate_invest_meta_data(component: flixOpt.elements.Component):
                         f'The meta_data for {flow.label_full=} is not correct for the investment effects per period.'
                         f'The total {effect.label=} passed to the InvestParameters is {value}. '
                         f'The meta_data is {flow.meta_data["fixed_effects"][effect.label]}, '
-                        f'which totals to {sum(flow.meta_data["fixed_effects"][effect.label])}')
+                        f'which totals to {sum(flow.meta_data["fixed_effects"][effect.label])}'
+                    )
 
             specific_effects = flow.size.specific_effects or {}  # Making sure its a dict
             for effect, value in specific_effects.items():
-                if effect.label not in flow.meta_data['specific_effects']:
-                    logger.warning(f'Effect {effect.label} not found in specific_effects meta_data. {value=}')
-                elif abs(abs(sum(flow.meta_data['specific_effects'][effect.label])) - abs(value)) >= 1e-5:
+                if effect.label not in flow.meta_data['specific_costs']:
+                    logger.warning(f'Effect {effect.label} not found in specific_costs meta_data. {value=}')
+                elif abs(abs(sum(flow.meta_data['specific_costs'][effect.label])) - abs(value)) >= 1e-5:
                     logger.critical(
                         f'The meta_data for {flow.label_full=} is not correct for the investment effects per period.'
                         f'The total {effect.label=} passed to the InvestParameters is {value}. '
-                        f'The meta_data is {flow.meta_data["specific_effects"][effect.label]}, '
-                        f'which totals to {sum(flow.meta_data["specific_effects"][effect.label])}')
+                        f'The meta_data is {flow.meta_data["specific_costs"][effect.label]}, '
+                        f'which totals to {sum(flow.meta_data["specific_costs"][effect.label])}'
+                    )
+
+
+def validate_invest_range(
+    value: Union[int, float, str], label: str
+) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
+    """
+    This function was written to validate the investment range of a component.
+    It checks if the value is a number or a string in the format 'X-Y' and if it is positive.
+    If the value is a string, it is split into two parts and validated as a range.
+    If the value is a number, it is validated as positive.
+    """
+    if isinstance(value, (int, float)):
+        if value < 0:
+            raise ValueError(f"'{label}' must be a positive number.")
+        return value
+    elif isinstance(value, str):
+        parts = value.split('-')
+        if len(parts) != 2:
+            raise ValueError("Invalid range format. Expected 'X-Y'.")
+        try:
+            start, end = float(parts[0]), float(parts[1])
+        except ValueError as e:
+            raise ValueError("Invalid range format. Expected 'X-Y'.") from e
+        if start >= end:
+            raise ValueError('Range start must be less than range end.')
+        if start < 0:
+            raise ValueError('Range start must be positive.')
+        return start, end
+    else:
+        raise ValueError(f"'{label}' must be a number or a string in the format 'X-Y'.")

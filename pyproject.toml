@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fermieopt"
-version = "0.2.0"
+version = "0.3.0"
 description = "FermIE: Fernwärme-Investitions-und-Einsatzoptimierung. Ein Excel-basiertes Tool zur Optimierung von Fernwärme-Systemen, basierend auf 'flixOpt'."
 authors = [
     { name = "Felix Bumann", email = "felixbumann387@gmail.com" }
@@ -19,11 +19,42 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "flixOpt @git+https://github.com/flixOpt/flixOpt.git@v1.0.0"
+    "flixOpt @git+https://github.com/flixOpt/flixOpt.git@v1.0.2",
+    "pydantic >=2.10.1",
+    "openpyxl >=3.1.5",
 ]
 
 [tool.setuptools.package-data]
 fermieopt = ["flixOpt_excel/resources/ExcelTemplates/*.xlsx"]
 
-[tool.setuptools.include-package-data]
-true
+[tool.ruff]
+# Files or directories to exclude (e.g., virtual environments, cache, build artifacts)
+exclude = [
+    "venv",  # Virtual environments
+    "build",  # Build artifacts
+    "dist",  # Distribution files
+    "__pycache__",  # Bytecode cache
+    ".git",  # Git folder
+    ".mypy_cache",  # MyPy cache
+]
+
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "N"]  # Enable linting rules by category (e.g., error, warnings, unused imports)
+ignore = [  # Ignore specific rules
+    "E501",  # Ignore line-length checks (use Black for formatting)
+    "F401",  # Allow unused imports in some cases (use __all__)
+    "N813",  # Allow importing of flixOpt as fx (lowercase)
+    "N999",  # Ignore invalid module names
+]
+extend-fixable = ["B"]   # Enable fix for flake8-bugbear (`B`), on top of any rules specified by `fixable`.
+
+# Apply rule exceptions to specific files or directories
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["S101"]  # Ignore assertions in test files
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+docstring-code-format = true

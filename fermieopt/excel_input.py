@@ -1,215 +1,509 @@
-# -*- coding: utf-8 -*-
-import os
-import pandas as pd
-import numpy as np
+import logging
+import pathlib
 from datetime import datetime, timedelta
-import re
-from typing import List, Dict, Any, Tuple, Optional
+from typing import Any, Dict, List, Optional, Union
+
+import numpy as np
+import pandas as pd
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_serializer, field_validator, model_validator
+
+logger = logging.getLogger('flixOpt')
 
 
-class ExcelData:
+class MetaData(BaseModel, populate_by_name=True):
     """
-    A class to handle Excel data related to energy modeling.
-
-    Attributes:
-        file_path (str): The path to the Excel file.
-        _general_infos (pd.DataFrame): A DataFrame containing general information from the Excel file.
-        results_directory (str): The directory where results are stored.
-        calc_name (str): The name of the calculation.
-        years (list): A list of years for the model.
-        co2_limits (dict): A dictionary mapping years to CO2 limits.
-        co2_factors (dict): A dictionary mapping sources to CO2 factors.
-        time_series_data (pd.DataFrame): A DataFrame containing time series data.
-        components_data (dict): A dictionary containing component data.
+    A Pydantic model to represent metadata related to Excel data.
     """
-    def __init__(self, file_path):
+
+    results_directory: pathlib.Path = Field(alias='Speicherort', description='The directory where results are stored.')
+    calc_name: str = Field(alias='Name', description='The name of the calculation.')
+    co2_factors: Dict[str, float] = Field(
+        alias='CO2 Faktor Erdgas [t/MWh_hu]', description='A dictionary mapping sources to CO2 factors.'
+    )
+    sheets_components: List[str] = Field(alias='Erzeuger Sheets', description='A list of sheet names for components.')
+
+    @classmethod
+    def from_dataframe(cls, df: pd.DataFrame) -> 'MetaData':
         """
-        Initialize the ExcelData object with the given file path.
+        Extracts the metadata from a DataFrame and validates it.
 
         Args:
-            file_path (str): The path to the Excel file.
+            df (pd.DataFrame): The DataFrame the metadata.
+
+        Returns:
+            MetaData: A validated MetaData instance.
         """
-        self.file_path: str = file_path
-        meta_data_columns = ("Erzeuger Sheets",
-                             "CO2 Faktor Erdgas [t/MWh_hu]",
-                             "Name",
-                             "Speicherort")
-        yearly_columns = ("Jahre",
-                          "Zeitreihen Sheets",
-                          "Sonstige Zeitreihen Sheets",
-                          "Fahrkurve Fernwärmenetz VL",
-                          "Fahrkurve Fernwärmenetz RL",
-                          "CO2-limit",
-                          'Grüne Wärme Minimum [MWh]')
-        meta_data, yearly_data = self._process_general_infos(meta_data_columns, yearly_columns)
+        # Convert DataFrame to a dictionary with matching aliases
+        data_dict = df.to_dict(orient='list')
+        # Rename keys using Pydantic aliases
+        alias_map = {field_name: field.alias for field_name, field in cls.model_fields.items()}
+        attrs_with_single_value = {'results_directory', 'calc_name', 'co2_factors'}
+        aliases_with_single_value = {alias_map[attr] for attr in attrs_with_single_value}
 
-        # Basic Information
-        self.results_directory: str = meta_data["Speicherort"][0]
-        self.calc_name: str = str(meta_data["Name"][0])
-        self.co2_factors: dict = {"Erdgas": meta_data["CO2 Faktor Erdgas [t/MWh_hu]"][0]}
-        self._sheetnames_components: List[str] = meta_data["Erzeuger Sheets"]
+        # Extract first value from each entry
+        for key in data_dict:
+            if key in aliases_with_single_value:
+                data_dict[key] = data_dict[key][0]
 
-        # Information per year of the Model
-        self.years: List[int] = yearly_data["Jahre"]
-        self.co2_limits: List[Optional[int]] = yearly_data["CO2-limit"]
-        self.green_heat_min: List[Optional[int]] = yearly_data["Grüne Wärme Minimum [MWh]"]
-        self._heating_network_temperature_curves_ff_info: List[str] = yearly_data["Fahrkurve Fernwärmenetz VL"]
-        self._heating_network_temperature_curves_rf_info: List[str] = yearly_data["Fahrkurve Fernwärmenetz RL"]
-        self._sheetnames_ts_data: List[str] = yearly_data["Zeitreihen Sheets"]
-        sheetnames_ts_data_extra = yearly_data["Sonstige Zeitreihen Sheets"]
-        self._sheetnames_ts_data_extra: Optional[List[str]] = None if all(name is None for name in sheetnames_ts_data_extra) else sheetnames_ts_data_extra
-        self._validate_and_convert_types()
+        # Validate and create an instance of MetaData
+        try:
+            return cls(**data_dict)
+        except ValidationError as e:
+            print('Validation error:', e)
+            raise
 
-        # Extracting Information aboutHeating Network Temperature curves
-        self.heating_network_temperature_curves = {
-            "ff": self.validate_and_extract_factors(yearly_data["Fahrkurve Fernwärmenetz VL"]),
-            "rf": self.validate_and_extract_factors(yearly_data["Fahrkurve Fernwärmenetz RL"])}
+    @field_validator('results_directory', mode='after')
+    @classmethod
+    def validate_results_directory(cls, path):
+        path = pathlib.Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"The path '{path}' does not exist. Please create it first.")
+        if not path.is_dir():
+            raise NotADirectoryError(f"The path '{path}' is not a directory.")
+        return path
 
-        # Time Series Data
-        self.time_series_data: pd.DataFrame = self._read_time_series_data()
-        validate_time_series_data(df=self.time_series_data, years=self.years)
+    @field_validator('co2_factors', mode='before')
+    @classmethod
+    def convert_co2_factors(cls, co2_factor_gas):
+        if isinstance(co2_factor_gas, Union[float, int]):
+            return {'Erdgas': co2_factor_gas}
+        return co2_factor_gas
 
-        # Component Data
-        self.components_data: Dict = self._read_components(sheet_names=self._sheetnames_components,
-                                                     valid_types=(
-                                                         'KWK', 'Kessel', 'Speicher', 'EHK', 'Waermepumpe',
-                                                         'AbwaermeHT', 'AbwaermeWP', 'Rueckkuehler', 'KWKekt',
-                                                         'Geothermie', 'LinearTransformer_1_1', 'Sink','Source'
-                                                     ))
-        self.further_components_data: Dict = self._read_components(sheet_names=["System"],
-                                                     valid_types=('Bus', 'Sink', 'Source'))
+    @field_validator('sheets_components', mode='before')
+    @classmethod
+    def convert_sheets_components(cls, sheets_components):
+        import math
 
-    def validate_and_extract_factors(self, factor_infos: List[str]) -> List[Optional[Dict[str, float]]] :
-        condition_1 = all(isinstance(info, str) for info in factor_infos)
-        condition_2 = all(isinstance(info, type(None)) for info in factor_infos)
-        if not (condition_1 or condition_2):
-            raise Exception(f"Either specify heating Network curves for all years or for None")
-        if condition_1:
-            for i, curve in enumerate(factor_infos):
-                factor_infos[i] = curve.replace(",", ".").replace(" ", "")
-                if not re.match(r'^-?\d+/\d+;\d+/\d+$', curve):
-                    raise Exception(f"Use Text to specify the Temperature Curve of the heating network. "
-                                    f"Use Form: ' 'lb'/'value_lb';'ub'/'value_ub' '."
-                                    f"Example:    '-8/120;10/95'.")
-        factors = []
-        for infos in factor_infos:
-            if not infos:
-                factors.append(None)
+        return [
+            value
+            for value in sheets_components
+            if value is not None and not (isinstance(value, float) and math.isnan(value))
+        ]
+
+    @field_serializer('results_directory')
+    def serialize_results_directory(self, file_path: pathlib.Path):
+        return str(file_path)
+
+
+class PeriodData(BaseModel, populate_by_name=True):
+    sheets_time_series: List[str] = Field(
+        alias='Zeitreihen Sheets', description='A list of sheet names for time series data.'
+    )
+    sheets_time_series_others: Optional[List[str]] = Field(
+        alias='Sonstige Zeitreihen Sheets', description='An aditional list of sheet names for time series data.'
+    )
+    years: List[int] = Field(alias='Jahre')
+    co2_limit: List[Optional[float]] = Field(alias='CO2-limit')  # TODO: rename to CO2-Limits [t/a]
+    green_heat_min: List[Optional[float]] = Field(
+        alias='Grüne Wärme Minimum [MWh]'
+    )  # TODO: rename to Grüne Wärme Minimum [MWh/a]
+
+    @classmethod
+    def from_dataframe(cls, df: pd.DataFrame) -> 'PeriodData':
+        """
+        Extracts the time series metadata from a DataFrame and validates it.
+
+        Args:
+            df (pd.DataFrame): The DataFrame with time series metadata.
+
+        Returns:
+            PeriodData: A validated MetaDataTime instance.
+        """
+        # Check if 'Jahre' column exists and handle it
+        if 'Jahre' in df.columns:
+            # Remove rows where 'Jahre' has no value (NaN or None)
+            df = df.dropna(subset=['Jahre'])
+        else:
+            raise ValidationError("No 'Jahre' column found in the DataFrame.")
+
+        # Convert DataFrame to a dictionary with matching aliases
+        data_dict = df.to_dict(orient='list')
+
+        # Validate and create an instance of PeriodData
+        try:
+            return cls(**data_dict)
+        except ValidationError as e:
+            print('Validation error:', e)
+            raise
+
+    @model_validator(mode='after')
+    def _validate_list_lengths(self):
+        """
+        Ensures that all list attributes have the same length.
+        """
+        list_attrs = [
+            field for field, field_info in self.__annotations__.items() if isinstance(getattr(self, field), list)
+        ]
+        lengths = {len(getattr(self, attr)) for attr in list_attrs}
+
+        if len(lengths) > 1:
+            raise ValueError(f'Not all list fields have the same length: {list_attrs}.')
+        return self
+
+    @field_validator('sheets_time_series_others')
+    @classmethod
+    def _sheetnames_ts_data_extra(cls, value):
+        if all(pd.isna(x) or x is None for x in value):
+            return None
+        return value
+
+
+class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
+    """
+    A Pydantic model to represent Excel data related to energy modeling.
+
+    ### Saving Data to a JSON File:
+
+        with open("excel_data.json", "w") as f:
+            print(excel_model.excel_data.model_dump_json(indent=4, by_alias=True), file=f)
+
+    or reload the data with
+
+        with open('excel_data.json', "r", encoding="utf-8") as file:
+            json_string = file.read()
+        excel_data = ExcelData.model_validate_json(json_string)
+
+    """
+
+    file_path: pathlib.Path = Field(alias='File Path', description='The path to the Excel file.')
+
+    meta_data: Optional[MetaData] = Field(default=None)
+    period_data: Optional[PeriodData] = Field(default=None)
+    time_series_data: Optional[pd.DataFrame] = Field(None, description='A DataFrame containing time series data.')
+    components_data: Optional[Dict[str, List[Dict[str, Any]]]] = Field(
+        None, description='A dictionary containing component data.'
+    )
+    flow_system_data: Optional[Dict[str, List[Dict[str, Any]]]] = Field(
+        None, description='A dictionary containing flow system data.'
+    )
+    _skip_read_data: bool = PrivateAttr(default=False)
+
+    _component_data_keys_mapping: Dict[str, str] = PrivateAttr(
+        default={
+            'Thermische Leistung': 'Thermische Leistung [MW]',
+            'Nennleistung': 'Nennleistung [MW]',
+            'Investkosten [€]': 'Investkosten (fix) [€]',
+            'Sonstige Fixkosten [€/a]': 'Sonstige Fixkosten (fix) [€/a]',
+            'Investkosten [€/MW]': 'Investkosten (spezifisch) [€/MW]',
+            'Sonstige Fixkosten [€/(MW*a)]': 'Sonstige Fixkosten (spezifisch) [€/(MW*a)]',
+            'eta_th': 'Thermischer Wirkungsgrad',
+            'eta_el': 'Elektrischer Wirkungsgrad',
+            'Zusatzkosten pro MWh Brennstoff': 'Brennstoffkosten Zusatz [€/MWh_hu]',
+            'Zusatzkosten pro MWh Strom': 'Stromkosten Zusatz [€/MWh]',
+            'effects_per_flow_hour': 'Zusätzliche Wärmeerzeugungskosten [€/MWh]',
+            'SCOP für BEW': 'SCOP für BEW',
+            'Maximale Stromkostenförderung BEW': 'Maximale Stromkostenförderung BEW',
+            'Investkosten [€/MWh]': 'Investkosten [€/MWh]',
+            'Sonstige Fixkosten [€/(MWh*a)]': 'Sonstige Fixkosten (fix) [€/(MWh*a)]',
+            'Carnot Effizienz': 'Carnot Effizienz',
+            'relative_maximum': 'Relative thermische Leistungsobergrenze',
+            'relative_minimum': 'Relative thermische Leistungsuntergrenze',
+        }
+    )
+
+    _time_series_data_mapping: Dict[str, str] = PrivateAttr(
+        default={
+            'TVL_FWN': 'Vorlauftemperatur Fernwärmenetz [°C]',
+            'TRL_FWN': 'Rücklauftemperatur Fernwärmenetz [°C]',
+        }
+    )
+
+    @model_validator(mode='after')
+    def read_data_from_excel(self):
+        """
+        Loads the data from an Excel file into the ExcelData model.
+        """
+
+        if self._skip_read_data:
+            # Skip reading data if flag is set
+            return self
+
+        logger.info('Creating ExcelData object from file %s', self.file_path)
+        excel_file = pd.ExcelFile(self.file_path)
+        if 'Allgemeines' not in excel_file.sheet_names:
+            raise ValueError("The Excel file does not contain a 'Allgemeines' sheet.")
+
+        meta_data_df = pd.read_excel(excel_file, sheet_name='Allgemeines')
+        meta_data_df = meta_data_df.loc[:, ~meta_data_df.columns.str.startswith('Unnamed')]
+        meta_data_df = meta_data_df.replace(
+            {
+                np.nan: None,
+                '': None,
+                'NaN': None,
+                'None': None,
+                'null': None,
+                'NULL': None,
+                'ja': True,
+                'Ja': True,
+                'nein': False,
+                'Nein': False,
+            }
+        )
+
+        # Create MetaData and PeriodData instances
+        self.meta_data = MetaData.from_dataframe(meta_data_df)
+        self.period_data = PeriodData.from_dataframe(meta_data_df)
+
+        # Extract time series data (assuming the second sheet contains time series data)
+        logger.info('Reading data for years %s', self.period_data.years)
+        self.time_series_data = self._read_time_series_data(excel_file)
+
+        # Extract component data (assuming it's in separate sheets named by component)
+        self.components_data = self._read_components(
+            excel_file,
+            self.meta_data.sheets_components,
+            valid_keys=[
+                'KWK',
+                'Kessel',
+                'Speicher',
+                'EHK',
+                'Waermepumpe',
+                'AbwaermeHT',
+                'AbwaermeWP',
+                'Rueckkuehler',
+                'KWKekt',
+                'Geothermie',
+                'LinearTransformer_1_1',
+            ],
+        )
+        self.flow_system_data = self._read_components(
+            excel_file, sheets=['System'], valid_keys=['Bus', 'Sink', 'Source']
+        )
+        logger.info('Component Data from all sheets read sucessully.')
+
+        self._augment_components_with_several_start_years()
+
+        return self
+
+    @model_validator(mode='after')
+    def validate_time_series_data(self):
+        if len(self.time_series_data) / 8760 != len(self.period_data.years):
+            raise Exception(
+                f'Length of DataFrame ({len(self.time_series_data)}) and the Number of years '
+                f"({len(self.period_data.years)} don't match. Expecting 8760 rows per year."
+            )
+
+        columns_with_nan = self.time_series_data.columns[self.time_series_data.isna().any()]
+        if not columns_with_nan.empty:
+            raise Exception(f'There are missing values in the time series data: {columns_with_nan}.')
+
+        return self
+
+    @model_validator(mode='after')
+    def rename_legacy_columns_and_keys(self):
+        old_columns = self.time_series_data.columns
+        new_columns = []
+        for col in old_columns:
+            if col in self._time_series_data_mapping:
+                new_columns_name = self._time_series_data_mapping[col]
+                new_columns.append(new_columns_name)
+                logger.warning(f'Column "{col}" was automatically renamed to "{new_columns_name}"')
             else:
-                lower, upper = infos.split(";")
-                lower_bound, value_below_bound = lower.split("/")
-                upper_bound, value_above_bound = upper.split("/")
+                new_columns.append(col)
+        self.time_series_data.columns = new_columns
 
-                factors.append({
-                    "lb": float(lower_bound),
-                    "ub": float(upper_bound),
-                    "value_lb": float(value_below_bound),
-                    "value_ub": float(value_above_bound)})
-        return factors
+        # Replace deprecated keys with new ones
+        for comp_type in self.components_data:
+            self.components_data[comp_type] = self._insert_old_keys(self.components_data[comp_type])
+        for comp_type in self.flow_system_data:
+            self.flow_system_data[comp_type] = self._insert_old_keys(self.flow_system_data[comp_type])
 
-    def _validate_and_convert_types(self):
-        # self.years
-        for i in range(len(self.years)):
-            if isinstance(self.years[i], float) and self.years[i]%int(self.years[i]) == 0:
-                self.years[i] = int(self.years[i])
-            elif isinstance(self.years[i], int):
-                continue
-            else:
-                raise ValueError(f"Every year must be an Integer.")
+        return self
 
-        # self.results_directory
-        if not os.path.exists(self.results_directory):
-            raise Exception(f"The path '{self.results_directory}' for saving does not exist. Please create it first.")
-        if not os.path.isdir(self.results_directory):
-            raise Exception(f"The path '{self.results_directory}' for saving is not a directory.")
+    @model_validator(mode='after')
+    def check_used_columns(self):
+        if 'Vorlauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
+            logger.warning(
+                'Column "Vorlauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.'
+            )
+        if 'Rücklauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
+            logger.warning(
+                'Column "Rücklauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.'
+            )
+        return self
 
-        # self.sheetnames_ts_data
-        if not all(isinstance(name, str) for name in self._sheetnames_ts_data):
-            raise Exception(f"Use Text to specify the Sheetnames of TimeSeries Data")
-        if not len(self._sheetnames_ts_data) == len(self.years):
-            raise Exception(f"The number of 'years' and the number of 'Zeitreihen Sheets' must match.")
+    @field_serializer('time_series_data')
+    def serialize_time_series_data(self, value: pd.DataFrame):
+        return value.to_json(date_format='iso', orient='split')
 
-        # self.sheetnames_ts_data_extra
-        if self._sheetnames_ts_data_extra:
-            if not all(isinstance(name, str) for name in self._sheetnames_ts_data_extra):
-                raise Exception(f"Use Text to specify the Sheetnames of TimeSeries Data")
-            if len(self._sheetnames_ts_data_extra) != 0 and len(self._sheetnames_ts_data_extra) != len(self.years):
-                raise Exception(f"The number of 'years' and the number of 'Sonstige Zeitreihen Sheets' must match. "
-                                f"You can also not use 'Sonstige Zeitreihen Sheets' at all. Just leave the lines blank")
+    @field_serializer('file_path')
+    def serialize_file_path(self, file_path: pathlib.Path):
+        return str(file_path)
 
-        # self._sheetnames_components
-        if not all(isinstance(name, str) for name in self._sheetnames_components):
-            raise Exception(f"Use Text to specify the Sheetnames of Components")
-        if len(self._sheetnames_components) == 0:
-            raise Exception("At least One Sheet Name must be given")
+    @field_validator('file_path', mode='after')
+    @classmethod
+    def validate_file_path(cls, value):
+        return pathlib.Path(value) if isinstance(value, str) else value
 
-    def _process_general_infos(self, meta_data_columns: Tuple, yearly_columns: Tuple) -> Tuple[Dict[str, List], Dict[str, List]]:
-        '''
-        Gets data from sheet 'Allgemeines' and checks if all needed columns are present
-        Returns
-        -------
+    # Deserialize DataFrame from JSON when loading the model
+    @field_validator('time_series_data', mode='before')
+    @classmethod
+    def deserialize_dataframe(cls, value: Optional[Union[str, pd.DataFrame]]) -> pd.DataFrame:
+        if isinstance(value, str):
+            return pd.read_json(value, orient='split')
+        return value
 
-        '''
-        general_info = pd.read_excel(self.file_path, sheet_name="Allgemeines")
-        general_info = general_info.replace({np.nan: None})
-
-        for column_name in meta_data_columns + yearly_columns:
-            if column_name not in general_info:
-                raise Exception(f"Column '{column_name}' is missing in sheet 'Allgemeines'.")
-
-        meta_data = general_info[list(meta_data_columns)].to_dict(orient='list')
-        meta_data = {k: list(filter(None, v)) for k, v in meta_data.items()}  # Removing None values
-
-        yearly_data = general_info[list(yearly_columns)].copy()
-        yearly_data["Jahre"] = pd.to_numeric(yearly_data["Jahre"], errors='coerce')
-        yearly_data = yearly_data.dropna(subset=["Jahre"])
-        yearly_data = yearly_data.to_dict(orient='list')
-
-        return meta_data, yearly_data
-
-    def _read_time_series_data(self) -> pd.DataFrame:
-        li = []
-        for sheet_name in self._sheetnames_ts_data:
-            df = pd.read_excel(self.file_path, sheet_name=sheet_name, skiprows=[1, 2])
-            li.append(df)
-        time_series_data = pd.concat(li, axis=0, ignore_index=True)  # Concatenate the DataFrames of the list
-
-        if self._sheetnames_ts_data_extra:
-            li = []
-            for sheet_name in self._sheetnames_ts_data_extra:
-                df = pd.read_excel(self.file_path, sheet_name=sheet_name, skiprows=[1, 2])
-                li.append(df)
-
-            time_series_data_extra = pd.concat(li, axis=0, ignore_index=True)  # Concatenate the DataFrames in the list
+    def _read_time_series_data(self, excel_file: pd.ExcelFile) -> pd.DataFrame:
+        # Extract time series data (assuming the second sheet contains time series data)
+        time_series_data = pd.concat(
+            [
+                pd.read_excel(excel_file, sheet_name=sheet_name, skiprows=[1, 2])
+                for sheet_name in self.period_data.sheets_time_series
+            ],
+            axis=0,
+            ignore_index=True,
+        )
+        if self.period_data.sheets_time_series_others:
+            time_series_data_extra = pd.concat(
+                [
+                    pd.read_excel(excel_file, sheet_name=sheet_name, skiprows=[1, 2])
+                    for sheet_name in self.period_data.sheets_time_series_others
+                ],
+                axis=0,
+                ignore_index=True,
+            )
             time_series_data = pd.concat([time_series_data, time_series_data_extra], axis=1)
-
         # Adding the Index ain datetime format
-        a_time_series = datetime(2021, 1, 1) + np.arange(8760*len(self.years)) * timedelta(hours=1)
+        a_time_series = datetime(2021, 1, 1) + np.arange(8760 * len(self.period_data.years)) * timedelta(hours=1)
         a_time_series = a_time_series.astype('datetime64')
         time_series_data.index = a_time_series
-
         return time_series_data
 
-    def _read_components_from_sheet(self,  sheet_name: str, valid_types: tuple) -> Dict[str, pd.DataFrame]:
-        df = pd.read_excel(self.file_path, sheet_name=sheet_name, header=None, nrows=30)
-        component_data_by_type = organize_component_data_by_type(df, valid_types)
-        print(f"Component Data of Sheet '{sheet_name}' was read sucessfully.")
-        return component_data_by_type
-
-
-    def _read_components(self, sheet_names: List[str], valid_types: tuple):
+    def _read_components(
+        self, excel_file: pd.ExcelFile, sheets: List[str], valid_keys: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
         component_data_by_type = {}
-        for sheet_name in sheet_names:
-            component_data = self._read_components_from_sheet(sheet_name, valid_types)
+        for sheet_name in sheets:
+            df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, nrows=30)
+            component_data = organize_component_data_by_type(df, valid_keys)
             component_data_by_type = combine_dicts_of_component_data(component_data_by_type, component_data)
-
+            logger.info(f"Component Data of Sheet '{sheet_name}' was read sucessfully.")
         component_data_converted = convert_component_data_types(component_data_by_type)
         component_data_final = seperate_component_data_into_single_dicts(component_data_converted)
-        print(f"Component Data from sheets '{sheet_names}' was read and converted")
+
         return component_data_final
 
+    def __eq__(self, other):
+        if not isinstance(other, ExcelData):
+            return NotImplemented
 
-def organize_component_data_by_type(df: pd.DataFrame, valid_types: tuple) -> Dict[str, pd.DataFrame]:
+        def log_and_compare(attr_name, value1, value2, comparison_func=None):
+            """
+            Logs and compares two attributes.
+
+            Args:
+                attr_name (str): Name of the attribute being compared.
+                value1: Value from `self`.
+                value2: Value from `other`.
+                comparison_func (callable, optional): Custom function for comparison. Defaults to equality operator.
+
+            Returns:
+                bool: True if values are equal, False otherwise.
+            """
+            def compare(x, y):
+                return x == y
+
+            if comparison_func is None:
+                comparison_func = compare
+
+            if not comparison_func(value1, value2):
+                logger.warning(f'{attr_name} not equal')
+                return False
+            return True
+
+        # List of comparisons
+        comparisons = [
+            ('meta_data', self.meta_data, other.meta_data),
+            ('period_data', self.period_data, other.period_data),
+            ('time_series_data', self.time_series_data, other.time_series_data, lambda x, y: x.equals(y)),
+            ('components_data', self.components_data, other.components_data, self._compare_nested_dicts),
+            ('flow_system_data', self.flow_system_data, other.flow_system_data, self._compare_nested_dicts),
+        ]
+
+        # Perform all comparisons
+        all_equal = True
+        for name, value1, value2, *comp_func in comparisons:
+            comparison_func = comp_func[0] if comp_func else None
+            if not log_and_compare(name, value1, value2, comparison_func):
+                all_equal = False
+
+        return all_equal
+
+    @staticmethod
+    def _compare_nested_dicts(dict1, dict2):
+        if dict1.keys() != dict2.keys():
+            return False
+        for key in dict1:
+            if isinstance(dict1[key], list) and isinstance(dict2[key], list):
+                if len(dict1[key]) != len(dict2[key]) or any(
+                    d1 != d2 for d1, d2 in zip(dict1[key], dict2[key], strict=False)
+                ):
+                    return False
+            elif dict1[key] != dict2[key]:
+                return False
+        return True
+
+    def _insert_old_keys(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Inserts new keys into a data dictionary that used deprecated keys.
+        """
+        new_data = []
+        for item in data:
+            new_data_single = {}
+            for key, value in item.items():
+                if key in self._component_data_keys_mapping:
+                    new_data_single[self._component_data_keys_mapping[key]] = value
+                    logger.warning(
+                        f'Key "{key}" is deprecated and was automatically renamed to {self._component_data_keys_mapping[key]}'
+                    )
+                else:
+                    new_data_single[key] = value
+            new_data.append(new_data_single)
+        return new_data
+
+    def _augment_components_with_several_start_years(self):
+        """
+        Augment components with several start years.
+        This enables the start year to be given as a range of format "YYYY-YYYY".
+        """
+
+        from fermieopt.DistrictHeatingComps import validate_invest_range
+        for comp_type in self.components_data:
+            items_to_remove = []
+            for component_data in self.components_data[comp_type]:
+                years = component_data.get('Startjahr')
+                if years is not None:
+                    name = component_data.get("Name")
+                    if name is None:
+                        raise AttributeError('Name of Element was not found.')
+                    try:
+                        values = validate_invest_range(years, label=f'{comp_type}: {name}')
+                        if not isinstance(values, tuple):
+                            continue
+                        else:
+                            first_start_year, last_start_year = int(values[0]), int(values[1])
+                            items_to_remove.append(component_data)
+                            new_names = []
+                            for year in self.period_data.years:
+                                if first_start_year <= year <= last_start_year:
+                                    new_comp_data = component_data.copy()
+                                    new_comp_data['Startjahr'] = year
+                                    new_name = f'{new_comp_data["Name"]}_{year}'
+                                    new_comp_data['Name'] = new_name
+
+                                    new_names.append(new_name)
+                                    self.components_data[comp_type].append(new_comp_data)
+                            logger.info(f'Augmented {comp_type} "{name}" {len(new_names)} times: {new_names}. Startjahr was "{years}"')
+                    except ValueError as e:
+                        raise ValueError(
+                            f'Startjahr "{years}" was identified as a range, but isnt in the right format. Use "YYYY-YYYY".'
+                        ) from e
+
+            for item in items_to_remove:
+                self.components_data[comp_type].remove(item)
+
+
+def organize_component_data_by_type(df: pd.DataFrame, valid_types: List[str]) -> Dict[str, pd.DataFrame]:
     """
     Processes component data from an Excel file, validating component types and organizing data into separate DataFrames.
 
@@ -229,17 +523,18 @@ def organize_component_data_by_type(df: pd.DataFrame, valid_types: tuple) -> Dic
 
     # Check for invalid Comp types
     for typ in df.iloc[0, :].dropna():
-        if typ not in valid_types: raise Exception(
-            f"{typ} is not an accepted type of Component. Accepted types are: {valid_types}")
+        if typ not in valid_types:
+            raise Exception(f'{typ} is not an accepted type of Component. Accepted types are: {valid_types}')
 
     # Iterate through unique values and create specific DataFrames for each type
     # Create a dictionary to store DataFrames for each unique value
-    Erzeugerdaten = {}
+    erzeuger_daten = {}
     for value in valid_types:
         # Select columns where the first row has the current value
         subset_df = df.loc[:, df.iloc[0] == value]
 
-        if subset_df.shape[1] <= 1: continue  # skip, if no data inside
+        if subset_df.shape[1] <= 1:
+            continue  # skip, if no data inside
 
         # Resetting the index and droping the first column
         subset_df = subset_df.drop(0).reset_index(drop=True)
@@ -249,8 +544,8 @@ def organize_component_data_by_type(df: pd.DataFrame, valid_types: tuple) -> Dic
         # Rename the column at position 0
         column_names = subset_df.columns.tolist()
         if len(column_names) != len(set(column_names)):
-            raise Exception(f"There are Components [{value}] with the same Name. Please rename ({column_names})")
-        column_names[0] = "category"
+            raise Exception(f'There are Components [{value}] with the same Name. Please rename ({column_names})')
+        column_names[0] = 'category'
         subset_df.columns = column_names
 
         # subset_df = subset_df.drop(0).reset_index(drop=True)
@@ -262,9 +557,10 @@ def organize_component_data_by_type(df: pd.DataFrame, valid_types: tuple) -> Dic
         subset_df.set_index('category', inplace=True)
 
         # Store the subset DataFrame in the dictionary
-        Erzeugerdaten[value] = subset_df
+        erzeuger_daten[value] = subset_df
 
-    return Erzeugerdaten
+    return erzeuger_daten
+
 
 def convert_component_data_types(component_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     """
@@ -284,20 +580,33 @@ def convert_component_data_types(component_data: Dict[str, pd.DataFrame]) -> Dic
         The updated dictionary with DataFrames containing data with the correct data types.
     """
 
-    for key, subset_df in component_data.items():
+    for subset_df in component_data.values():
         # Replace all nan values with None
         subset_df.replace({np.nan: None}, inplace=True)
 
         # replace "ja" and "nein" with True and False
-        subset_df.replace({'ja': True, 'Ja': True, 'True': True, 'true': True,
-                           'nein': False, 'Nein': False, 'false': False, 'False': False}, inplace=True)
+        subset_df.replace(
+            {
+                'ja': True,
+                'Ja': True,
+                'True': True,
+                'true': True,
+                'nein': False,
+                'Nein': False,
+                'false': False,
+                'False': False,
+            },
+            inplace=True,
+        )
 
         # check if
 
     return component_data
 
-def combine_dicts_of_component_data(component_data_1: Dict[str, pd.DataFrame],
-                                    component_data_2: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+
+def combine_dicts_of_component_data(
+    component_data_1: Dict[str, pd.DataFrame], component_data_2: Dict[str, pd.DataFrame]
+) -> Dict[str, pd.DataFrame]:
     """
     This function merges the DataFrames from two dictionaries, ensuring that there are no duplicate columns in each DataFrame.
     If duplicates are found, an exception is raised.
@@ -329,7 +638,10 @@ def combine_dicts_of_component_data(component_data_1: Dict[str, pd.DataFrame],
 
     return result_dict
 
-def seperate_component_data_into_single_dicts(Erzeugerdaten: Dict[str, pd.DataFrame]) -> Dict[str, List[Dict[str, Any]]]:
+
+def seperate_component_data_into_single_dicts(
+    erzeuger_daten: Dict[str, pd.DataFrame],
+) -> Dict[str, List[Dict[str, Any]]]:
     """
     Transforms component data into a format suitable for iterative processing.
 
@@ -339,7 +651,7 @@ def seperate_component_data_into_single_dicts(Erzeugerdaten: Dict[str, pd.DataFr
 
     Parameters
     ----------
-    Erzeugerdaten : dict
+    erzeuger_daten : dict
         A dictionary mapping component types (as strings) to DataFrames containing the data for each component type.
 
     Returns
@@ -347,17 +659,18 @@ def seperate_component_data_into_single_dicts(Erzeugerdaten: Dict[str, pd.DataFr
     dict
         A dictionary where each key is a component type, and the value is a list of dictionaries. Each dictionary within the list represents the data for a single component, with `None` values removed. This structure is optimized for iterative processing to create components.
     """
-    ErzDaten = {}
-    for typ in Erzeugerdaten:
-        ErzDaten[typ] = list()
-        for comp in Erzeugerdaten[typ].columns:
-            erzeugerdaten_as_dict = Erzeugerdaten[typ][comp].to_dict()
+    erzeuger_daten_seperated = {}
+    for typ in erzeuger_daten:
+        erzeuger_daten_seperated[typ] = list()
+        for comp in erzeuger_daten[typ].columns:
+            erzeugerdaten_as_dict = erzeuger_daten[typ][comp].to_dict()
             erzeugerdaten_as_dict_wo_none = {k: v for k, v in erzeugerdaten_as_dict.items() if v is not None}
-            ErzDaten[typ].append(erzeugerdaten_as_dict_wo_none)
-            if not ErzDaten[typ]:  # if list is empty
-                ErzDaten.pop(typ)
+            erzeuger_daten_seperated[typ].append(erzeugerdaten_as_dict_wo_none)
+            if not erzeuger_daten_seperated[typ]:  # if list is empty
+                erzeuger_daten_seperated.pop(typ)
 
-    return ErzDaten
+    return erzeuger_daten_seperated
+
 
 def validate_time_series_data(df: pd.DataFrame, years: List[int]) -> None:
     """
@@ -382,5 +695,10 @@ def validate_time_series_data(df: pd.DataFrame, years: List[int]) -> None:
 
     columns_with_nan = df.columns[df.isna().any()]
     if not columns_with_nan.empty:
-        raise Exception(f"There are missing values in the columns: {columns_with_nan}.")
+        raise Exception(f'There are missing values in the columns: {columns_with_nan}.')
 
+
+def is_nan(value) -> bool:
+    import math
+
+    return value is None or value == '' or value == np.nan or isinstance(value, float) and math.isnan(value)
