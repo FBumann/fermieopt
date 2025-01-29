@@ -37,9 +37,7 @@ class ExcelModel:
         self._create_components()
 
     def solve_model(self, solver_name: str, gap_frac: float = 0.01, timelimit: int = 3600):
-        self.excel_data.meta_data.calc_name = (
-            f'{datetime.datetime.now().strftime("%Y-%m-%d-%HH-%MM")}_{self.excel_data.meta_data.calc_name}'
-        )
+        self._update_timestamp()
 
         self._create_dirs_and_save_input_data()
 
@@ -59,10 +57,13 @@ class ExcelModel:
 
     def load_results(self) -> FlixPostXL:
         return FlixPostXL(
-            calculation_name=self.excel_data.meta_data.calc_name,
+            calculation_name=self.calc_name,
             results_folder=self._solve_results_folder,
             output_years=self.years,
         )
+
+    def _update_timestamp(self) -> None:
+        self._timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%HH-%MM")
 
     def _create_dirs_and_save_input_data(self):
         os.makedirs(self.final_directory, exist_ok=True)
@@ -270,7 +271,7 @@ class ExcelModel:
 
     @property
     def calc_name(self) -> str:
-        return self.excel_data.meta_data.calc_name
+        return f'{self._timestamp}_{self.excel_data.meta_data.calc_name}'
 
     @property
     def _solve_results_folder(self) -> pathlib.Path:
