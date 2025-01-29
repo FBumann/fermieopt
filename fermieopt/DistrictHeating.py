@@ -73,9 +73,9 @@ class ExcelModel:
             print(self.excel_data.model_dump_json(indent=4, by_alias=True), file=log_file)
             logger.info('Excel Data written to file')
 
-        with open(self.final_directory / f'{self.calc_name}__Component_data.txt', 'w', encoding='utf-8') as log_file:
-            console = Console(file=log_file, width=10000)
-            console.print(self.components_data)
+        with open(self.final_directory / f'{self.calc_name}__Component_data.json', 'w', encoding='utf-8') as log_file:
+            import json
+            json.dump(self.excel_data.components_data, log_file, indent=4, ensure_ascii=False)
             logger.info('Component Data written to file')
 
         with open(
