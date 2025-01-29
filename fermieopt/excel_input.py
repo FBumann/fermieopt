@@ -165,36 +165,35 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     )
     _skip_read_data: bool = PrivateAttr(default=False)
 
-    _component_data_keys_mapping: Dict[str, str] = PrivateAttr(default={
-        'Thermische Leistung': 'Thermische Leistung [MW]',
-        'Nennleistung': 'Nennleistung [MW]',
+    _component_data_keys_mapping: Dict[str, str] = PrivateAttr(
+        default={
+            'Thermische Leistung': 'Thermische Leistung [MW]',
+            'Nennleistung': 'Nennleistung [MW]',
+            'Investkosten [€]': 'Investkosten (fix) [€]',
+            'Sonstige Fixkosten [€/a]': 'Sonstige Fixkosten (fix) [€/a]',
+            'Investkosten [€/MW]': 'Investkosten (spezifisch) [€/MW]',
+            'Sonstige Fixkosten [€/(MW*a)]': 'Sonstige Fixkosten (spezifisch) [€/(MW*a)]',
+            'eta_th': 'Thermischer Wirkungsgrad',
+            'eta_el': 'Elektrischer Wirkungsgrad',
+            'Zusatzkosten pro MWh Brennstoff': 'Brennstoffkosten Zusatz [€/MWh_hu]',
+            'Zusatzkosten pro MWh Strom': 'Stromkosten Zusatz [€/MWh]',
+            'effects_per_flow_hour': 'Zusätzliche Wärmeerzeugungskosten [€/MWh]',
+            'SCOP für BEW': 'SCOP für BEW',
+            'Maximale Stromkostenförderung BEW': 'Maximale Stromkostenförderung BEW',
+            'Investkosten [€/MWh]': 'Investkosten [€/MWh]',
+            'Sonstige Fixkosten [€/(MWh*a)]': 'Sonstige Fixkosten (fix) [€/(MWh*a)]',
+            'Carnot Effizienz': 'Carnot Effizienz',
+            'relative_maximum': 'Relative thermische Leistungsobergrenze',
+            'relative_minimum': 'Relative thermische Leistungsuntergrenze',
+        }
+    )
 
-        'Investkosten [€]': 'Investkosten (fix) [€]',
-        'Sonstige Fixkosten [€/a]': 'Sonstige Fixkosten (fix) [€/a]',
-        'Investkosten [€/MW]': 'Investkosten (spezifisch) [€/MW]',
-        'Sonstige Fixkosten [€/(MW*a)]': 'Sonstige Fixkosten (spezifisch) [€/(MW*a)]',
-
-        'eta_th': 'Thermischer Wirkungsgrad',
-        'eta_el': 'Elektrischer Wirkungsgrad',
-
-        'Zusatzkosten pro MWh Brennstoff': 'Brennstoffkosten Zusatz [€/MWh_hu]',
-        'Zusatzkosten pro MWh Strom': 'Stromkosten Zusatz [€/MWh]',
-        'effects_per_flow_hour': 'Zusätzliche Wärmeerzeugungskosten [€/MWh]',
-
-        'SCOP für BEW': 'SCOP für BEW',
-        'Maximale Stromkostenförderung BEW': 'Maximale Stromkostenförderung BEW',
-
-        'Investkosten [€/MWh]': 'Investkosten [€/MWh]',
-        'Sonstige Fixkosten [€/(MWh*a)]': 'Sonstige Fixkosten (fix) [€/(MWh*a)]',
-        'Carnot Effizienz': 'Carnot Effizienz',
-        'relative_maximum': 'Relative thermische Leistungsobergrenze',
-        'relative_minimum': 'Relative thermische Leistungsuntergrenze',
-    })
-
-    _time_series_data_mapping: Dict[str, str] = PrivateAttr(default={
-        'TVL_FWN': 'Vorlauftemperatur Fernwärmenetz [°C]',
-        'TRL_FWN': 'Rücklauftemperatur Fernwärmenetz [°C]',
-    })
+    _time_series_data_mapping: Dict[str, str] = PrivateAttr(
+        default={
+            'TVL_FWN': 'Vorlauftemperatur Fernwärmenetz [°C]',
+            'TRL_FWN': 'Rücklauftemperatur Fernwärmenetz [°C]',
+        }
+    )
 
     @model_validator(mode='after')
     def read_data_from_excel(self):
@@ -390,17 +389,17 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
                 comparison_func = lambda x, y: x == y
 
             if not comparison_func(value1, value2):
-                logger.warning(f"{attr_name} not equal")
+                logger.warning(f'{attr_name} not equal')
                 return False
             return True
 
         # List of comparisons
         comparisons = [
-            ("meta_data", self.meta_data, other.meta_data),
-            ("period_data", self.period_data, other.period_data),
-            ("time_series_data", self.time_series_data, other.time_series_data, lambda x, y: x.equals(y)),
-            ("components_data", self.components_data, other.components_data, self._compare_nested_dicts),
-            ("flow_system_data", self.flow_system_data, other.flow_system_data, self._compare_nested_dicts),
+            ('meta_data', self.meta_data, other.meta_data),
+            ('period_data', self.period_data, other.period_data),
+            ('time_series_data', self.time_series_data, other.time_series_data, lambda x, y: x.equals(y)),
+            ('components_data', self.components_data, other.components_data, self._compare_nested_dicts),
+            ('flow_system_data', self.flow_system_data, other.flow_system_data, self._compare_nested_dicts),
         ]
 
         # Perform all comparisons
@@ -418,7 +417,9 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             return False
         for key in dict1:
             if isinstance(dict1[key], list) and isinstance(dict2[key], list):
-                if len(dict1[key]) != len(dict2[key]) or any(d1 != d2 for d1, d2 in zip(dict1[key], dict2[key], strict=False)):
+                if len(dict1[key]) != len(dict2[key]) or any(
+                    d1 != d2 for d1, d2 in zip(dict1[key], dict2[key], strict=False)
+                ):
                     return False
             elif dict1[key] != dict2[key]:
                 return False
@@ -434,12 +435,13 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             for key, value in item.items():
                 if key in self._component_data_keys_mapping:
                     new_data_single[self._component_data_keys_mapping[key]] = value
-                    logger.warning(f'Key "{key}" is deprecated and was automatically renamed to {self._component_data_keys_mapping[key]}')
+                    logger.warning(
+                        f'Key "{key}" is deprecated and was automatically renamed to {self._component_data_keys_mapping[key]}'
+                    )
                 else:
                     new_data_single[key] = value
             new_data.append(new_data_single)
         return new_data
-
 
 
 def organize_component_data_by_type(df: pd.DataFrame, valid_types: List[str]) -> Dict[str, pd.DataFrame]:

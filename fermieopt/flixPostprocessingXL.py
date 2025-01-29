@@ -291,11 +291,7 @@ class FlixPostXL(fx.results.CalculationResults):
 
             total = np.sum(self.effect_results[effect].all_results['invest']['invest_per_period'])
             computed_total = np.sum(
-                np.sum(
-                    list(
-                        self.effect_results[effect].all_results['invest']['Shares_per_period'].values()
-                    )
-                )
+                np.sum(list(self.effect_results[effect].all_results['invest']['Shares_per_period'].values()))
             )
             if not np.isclose(total, computed_total, rtol=0, atol=1e-5):
                 logger.critical(

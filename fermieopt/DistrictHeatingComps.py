@@ -65,11 +65,13 @@ class InvestElement(Element):
 
     @property
     def needs_investment(self) -> bool:
-        return (self.invest_costs_fixed != 0 or
-                self.invest_costs_specific != 0 or
-                self.annual_costs_fixed != 0 or
-                self.annual_costs_specific != 0 or
-                self.optional is True)
+        return (
+            self.invest_costs_fixed != 0
+            or self.invest_costs_specific != 0
+            or self.annual_costs_fixed != 0
+            or self.annual_costs_specific != 0
+            or self.optional is True
+        )
 
     @field_validator('invest_group', mode='before')
     @classmethod
@@ -92,7 +94,9 @@ class InvestElement(Element):
             raise ValueError("Either set BOTH or NONE of 'Startjahr' and 'Lebensdauer'!")
         if self.lifetime is not None and self.amortization_time is None:
             self.amortization_time = self.lifetime
-            logger.debug(f'Amortization time of {self.name} was set to {self.lifetime} years, as no amortization time was given')
+            logger.debug(
+                f'Amortization time of {self.name} was set to {self.lifetime} years, as no amortization time was given'
+            )
         return self
 
     @staticmethod
@@ -101,12 +105,14 @@ class InvestElement(Element):
         if interest_rate == 0:  # Preventing ZeroDivision
             annuity_factor = 1 / duration_in_years
         else:
-            annuity_factor = ((1 + interest_rate) ** duration_in_years * interest_rate) / ((1 + interest_rate) ** duration_in_years - 1)
+            annuity_factor = ((1 + interest_rate) ** duration_in_years * interest_rate) / (
+                (1 + interest_rate) ** duration_in_years - 1
+            )
         return annuity_factor
 
     @classmethod
     def costs_and_funding(
-            cls,
+        cls,
         interest_rate: float,
         start_year: int,
         amortization_time: int,
@@ -151,20 +157,18 @@ class InvestElement(Element):
 
         # Calculate costs and funding
         fix_costs = {
-            'costs': invest_costs * annuity_factor * amortization_years +
-                     annual_costs * operation_years,
+            'costs': invest_costs * annuity_factor * amortization_years + annual_costs * operation_years,
             'funding': invest_costs * annuity_factor * amortization_years * funding_rate,
         }
         specific_costs = {
-            'costs': specific_invest_costs * annuity_factor * amortization_years +
-                     specific_annual_costs* operation_years,
+            'costs': specific_invest_costs * annuity_factor * amortization_years
+            + specific_annual_costs * operation_years,
             'funding': specific_invest_costs * annuity_factor * amortization_years * funding_rate,
         }
 
         def clean_dict(d):
             # Remove keys with lists or arrays that are empty or contain only zeros
-            keys_to_remove = [key for key, values in d.items()
-                              if values is None or np.all(values == 0)]
+            keys_to_remove = [key for key, values in d.items() if values is None or np.all(values == 0)]
             for key in keys_to_remove:
                 del d[key]
 
@@ -232,8 +236,12 @@ class InvestElement(Element):
         co2_factors: Dict[str, float] = None,
         years_of_model: List[int] = None,
     ):
-        if self.start_year is not None and np.all(self.operation_years(self.start_year, self.lifetime, years_of_model) == 0):
-            logger.warning(f'The Element "{self.name}" is not present in the modeled years and is not added to the model.')
+        if self.start_year is not None and np.all(
+            self.operation_years(self.start_year, self.lifetime, years_of_model) == 0
+        ):
+            logger.warning(
+                f'The Element "{self.name}" is not present in the modeled years and is not added to the model.'
+            )
         else:
             self._insert_data(time_series_data)
             flow_system.add_elements(
@@ -242,15 +250,11 @@ class InvestElement(Element):
 
     @staticmethod
     def operation_years(start_year: int, lifetime: int, years_of_model: List[int]) -> np.ndarray[int]:
-        return np.array(
-                [1 if start_year <= year < (start_year + lifetime) else 0 for year in years_of_model]
-            )
+        return np.array([1 if start_year <= year < (start_year + lifetime) else 0 for year in years_of_model])
 
     @staticmethod
     def amortization_years(start_year: int, amortization_time: int, years_of_model: List[int]) -> np.ndarray[int]:
-        return np.array(
-            [1 if start_year <= year < (start_year + amortization_time) else 0 for year in years_of_model]
-        )
+        return np.array([1 if start_year <= year < (start_year + amortization_time) else 0 for year in years_of_model])
 
     @model_validator(mode='after')
     def check_amortization(self):
@@ -277,7 +281,9 @@ class PowerInvestElement(InvestElement):
 
 
 class ThermalInvestElement(InvestElement):
-    thermal_power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(alias='Thermische Leistung [MW]')
+    thermal_power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(
+        alias='Thermische Leistung [MW]'
+    )
     grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0)
     bus_heat: str = Field(alias='Wärmebus', default='Fernwärme')
 
@@ -294,21 +300,21 @@ class ThermalInvestElement(InvestElement):
         self.relative_minimum = extract_data(self.relative_minimum, data)
         self.green_heat_factor = extract_data(self.green_heat_factor, data)
 
-    def thermal_effects_per_flow_hour(self,
-                                      effects: Dict[str, fx.Effect],
-                                      ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
+    def thermal_effects_per_flow_hour(
+        self,
+        effects: Dict[str, fx.Effect],
+    ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
         """Calculates the thermal_effects per flow_hour."""
-        data = {effects['Gruene_Waerme']: self.green_heat_factor,
-                effects['costs']: self.costs_per_mwh_heat_extra}
+        data = {effects['Gruene_Waerme']: self.green_heat_factor, effects['costs']: self.costs_per_mwh_heat_extra}
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
 
     def insert_grid_fee(
-            self,
-            grid_fee: Union[int, float],
-            invest_flow: fx.Flow,
-            efficiency: Union[int, float, np.ndarray],
-            effect: fx.Effect,
-            years_of_model: List[int]
+        self,
+        grid_fee: Union[int, float],
+        invest_flow: fx.Flow,
+        efficiency: Union[int, float, np.ndarray],
+        effect: fx.Effect,
+        years_of_model: List[int],
     ) -> None:
         """Adds the grid fee to the investment parameters of the invest_flow and it's meta_data."""
         if grid_fee == 0:
@@ -323,9 +329,9 @@ class ThermalInvestElement(InvestElement):
             if invest_flow.size.specific_effects is None:
                 invest_flow.size.specific_effects = {effect: np.sum(grid_fee_costs)}
             else:
-                invest_flow.size.specific_effects[effect] = (
-                        np.sum(grid_fee_costs) + invest_flow.size.specific_effects.get(effect, 0)
-                )
+                invest_flow.size.specific_effects[effect] = np.sum(
+                    grid_fee_costs
+                ) + invest_flow.size.specific_effects.get(effect, 0)
 
             assert effect.label == 'costs', f"Effect {effect.label} is not 'costs', which is expected in this function"
             if not invest_flow.meta_data:
@@ -424,7 +430,9 @@ class LinearTransformer(PowerInvestElement):
         years_of_model: List[int],
     ):
         effects = flow_system.effect_collection.effects
-        flow_out = fx.Flow(label=self.flow_label_out, bus=busses[self.bus_out], fixed_relative_profile=self.fixed_profile)
+        flow_out = fx.Flow(
+            label=self.flow_label_out, bus=busses[self.bus_out], fixed_relative_profile=self.fixed_profile
+        )
 
         flow_in = fx.Flow(
             label=self.flow_label_in,
@@ -463,18 +471,17 @@ class FuelThermalInvestElement(ThermalInvestElement):
     def co2_factor(self, time_series_data: pd.DataFrame, co2_factors: Dict[str, float]) -> float:
         return extract_data(co2_factors.get(self.fuel_type, 0), time_series_data)
 
-    def fuel_effects_per_flow_hour(self,
-                                      effects: Dict[str, fx.Effect],
-                                      time_series_data: pd.DataFrame,
-                                      co2_factors: Dict[str, float]
-                                      ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
+    def fuel_effects_per_flow_hour(
+        self, effects: Dict[str, fx.Effect], time_series_data: pd.DataFrame, co2_factors: Dict[str, float]
+    ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
         """Calculates the thermal_effects per flow_hour."""
-        data = {effects['costs']: (
-                        self._fuel_costs
-                        + self.fuel_cost_extra
-                        + (self.co2_factor(time_series_data, co2_factors) * extract_data('CO2', time_series_data))
-                ),
-                effects['CO2']: self.co2_factor(time_series_data, co2_factors),
+        data = {
+            effects['costs']: (
+                self._fuel_costs
+                + self.fuel_cost_extra
+                + (self.co2_factor(time_series_data, co2_factors) * extract_data('CO2', time_series_data))
+            ),
+            effects['CO2']: self.co2_factor(time_series_data, co2_factors),
         }
 
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
@@ -664,7 +671,9 @@ class Waermepumpe(ThermalInvestElement):
             P_el=fx.Flow(
                 label='Pel',
                 bus=busses[self.bus_elec],
-                effects_per_flow_hour=self._electricity_effects_per_flow_hour(effects, time_series_data, years_of_model),
+                effects_per_flow_hour=self._electricity_effects_per_flow_hour(
+                    effects, time_series_data, years_of_model
+                ),
             ),
         )
         self.insert_size(
@@ -707,16 +716,15 @@ class Waermepumpe(ThermalInvestElement):
         # Begrenzung auf 10 Jahre
         return fund_per_mw_el * exists(self.start_year, 10, years_of_model)
 
-    def _electricity_effects_per_flow_hour(self,
-                                      effects: Dict[str, fx.Effect],
-                                      time_series_data: pd.DataFrame,
-                                      years_of_model: List[int]
-                                      ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
+    def _electricity_effects_per_flow_hour(
+        self, effects: Dict[str, fx.Effect], time_series_data: pd.DataFrame, years_of_model: List[int]
+    ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
         """Calculates the electricity_effects per flow_hour."""
 
-        data = {effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
-                effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model),
-                }
+        data = {
+            effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
+            effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model),
+        }
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
 
     @staticmethod
@@ -1077,8 +1085,11 @@ class Rueckkuehler(ThermalInvestElement):
         self.restrict_availlability(cool, years_of_model)
         if cool.specific_electricity_demand != 0:
             self.insert_grid_fee(
-                self.grid_fee_per_year, cool.Q_th, 1 / cool.specific_electricity_demand, effects['costs'],
-                years_of_model
+                self.grid_fee_per_year,
+                cool.Q_th,
+                1 / cool.specific_electricity_demand,
+                effects['costs'],
+                years_of_model,
             )
         return cool
 
@@ -1268,11 +1279,16 @@ class KWKekt(InvestElement):
     ):
         effects = flow_system.effect_collection.effects
 
-        flow_heat = fx.Flow('Qth', busses[self.bus_heat],
-                            effects_per_flow_hour={effects['Gruene_Waerme']: self.green_heat_factor})
-        flow_fuel = fx.Flow('Qfu', busses[self.fuel_type], effects_per_flow_hour={effects['costs']: self.fuel_costs},
-                            relative_minimum=self.relative_maximum,
-                            relative_maximum=self.relative_maximum)
+        flow_heat = fx.Flow(
+            'Qth', busses[self.bus_heat], effects_per_flow_hour={effects['Gruene_Waerme']: self.green_heat_factor}
+        )
+        flow_fuel = fx.Flow(
+            'Qfu',
+            busses[self.fuel_type],
+            effects_per_flow_hour={effects['costs']: self.fuel_costs},
+            relative_minimum=self.relative_maximum,
+            relative_maximum=self.relative_maximum,
+        )
         flow_el = fx.Flow(
             'Pel',
             busses[self.bus_elec],
@@ -1542,8 +1558,7 @@ def validate_invest_meta_data(component: flixOpt.elements.Component):
 
 
 def validate_invest_range(
-        value: Union[int, float, str],
-        label: str
+    value: Union[int, float, str], label: str
 ) -> Union[int, float, Tuple[Union[int, float], Union[int, float]]]:
     """
     This function was written to validate the investment range of a component.

@@ -245,7 +245,9 @@ class ExcelModel:
                 if '-' in limits:
                     limits = limits.split('-')
                     if len(limits) != 2:
-                        raise ValueError(f'Invalid invest group: {label}. If limits are given, they must be of form: "min-max"')
+                        raise ValueError(
+                            f'Invalid invest group: {label}. If limits are given, they must be of form: "min-max"'
+                        )
                     lb, ub = limits
                     try:
                         lb = float(lb)

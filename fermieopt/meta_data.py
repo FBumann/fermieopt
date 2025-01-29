@@ -19,6 +19,7 @@ class MetaData(TypedDict):
 
 class MetaDataFactory:
     length = 1
+
     @classmethod
     def create(cls) -> MetaData:
         return {
