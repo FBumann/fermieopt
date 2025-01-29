@@ -795,7 +795,7 @@ class Waermepumpe(ThermalInvestElement):
                 f"Need to specify a 'COP' for {self.name} or "
                 f"use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally."
             )
-        if self.cop and (self.source_temperature and self.sink_temperature):
+        if self.cop and (self.source_temperature or self.sink_temperature):
             raise Exception(
                 f"Either specify a 'COP' for {self.name} "
                 f"OR use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally."
@@ -1199,6 +1199,15 @@ class Geothermie(Waermepumpe):
         self.restrict_availlability(heat_pump, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
         return heat_pump
+
+    @model_validator(mode='after')
+    def validate_amount_of_pump_electricity(self):
+        if self.cop and self.amount_of_pump_electricity:
+            raise Exception(
+                f"Either specify a 'COP' for {self.name} "
+                f"OR use 'Anteil Pumpstrom pro MW_geo' to calculate the COP internally."
+            )
+        return self
 
 
 class Abwaerme(ThermalInvestElement):
