@@ -104,10 +104,11 @@ class InvestElement(Element):
             annuity_factor = ((1 + interest_rate) ** duration_in_years * interest_rate) / ((1 + interest_rate) ** duration_in_years - 1)
         return annuity_factor
 
-    @staticmethod
+    @classmethod
     def costs_and_funding(
+            cls,
         interest_rate: float,
-        starting_year: int,
+        start_year: int,
         amortization_time: int,
         lifetime: int,
         years_of_model: List[int],
@@ -128,7 +129,7 @@ class InvestElement(Element):
 
         Parameters:
         - interest_rate (float): The annual interest rate used for calculating the annuity factor.
-        - starting_year (int): first year of operation
+        - start_year (int): first year of operation
         - amortization_time (int): amortization time for calculating the investment
         - lifetime (int): lifetime for calculating the fixed yearly costs
         - years_of_model (List[int]): The years used in the model
@@ -145,12 +146,8 @@ class InvestElement(Element):
         """
         annuity_factor = InvestElement.annuity_factor(interest_rate=interest_rate, duration_in_years=amortization_time)
 
-        operation_years = np.array(
-            [1 if starting_year <= year < (starting_year + lifetime) else 0 for year in years_of_model]
-        )
-        amortization_years = np.array(
-            [1 if starting_year <= year < (starting_year + amortization_time) else 0 for year in years_of_model]
-        )
+        operation_years = cls.operation_years(start_year, lifetime, years_of_model)
+        amortization_years = cls.amortization_years(start_year, amortization_time, years_of_model)
 
         # Calculate costs and funding
         fix_costs = {
@@ -187,7 +184,7 @@ class InvestElement(Element):
         else:
             fixed_effects_per_period, specific_effects_per_period = self.costs_and_funding(
                 interest_rate=self.interest_rate,
-                starting_year=self.start_year,
+                start_year=self.start_year,
                 amortization_time=self.amortization_time,
                 lifetime=self.lifetime,
                 years_of_model=years_of_model,
@@ -226,6 +223,34 @@ class InvestElement(Element):
     def restrict_availlability(self, component: flixOpt.elements.Component, years_in_model: List[int]) -> None:
         existance = exists(self.start_year, self.lifetime, years_in_model)
         restrict_availlability(component, existance)
+
+    def add_to_flow_system(
+        self,
+        flow_system: fx.FlowSystem,
+        busses: Dict[str, fx.Bus],
+        time_series_data: pd.DataFrame,
+        co2_factors: Dict[str, float] = None,
+        years_of_model: List[int] = None,
+    ):
+        if self.start_year is not None and np.all(self.operation_years(self.start_year, self.lifetime, years_of_model) == 0):
+            logger.warning(f'The Element "{self.name}" is not present in the modeled years and is not added to the model.')
+        else:
+            self._insert_data(time_series_data)
+            flow_system.add_elements(
+                self._convert_to_flixopt(flow_system, busses, time_series_data, co2_factors, years_of_model)
+            )
+
+    @staticmethod
+    def operation_years(start_year: int, lifetime: int, years_of_model: List[int]) -> np.ndarray[int]:
+        return np.array(
+                [1 if start_year <= year < (start_year + lifetime) else 0 for year in years_of_model]
+            )
+
+    @staticmethod
+    def amortization_years(start_year: int, amortization_time: int, years_of_model: List[int]) -> np.ndarray[int]:
+        return np.array(
+            [1 if start_year <= year < (start_year + amortization_time) else 0 for year in years_of_model]
+        )
 
     @model_validator(mode='after')
     def check_amortization(self):
@@ -293,9 +318,7 @@ class ThermalInvestElement(InvestElement):
         else:
             highest_possible_grid_draw = np.max(invest_flow.relative_maximum / efficiency)
             yearly_grid_fee = grid_fee * highest_possible_grid_draw
-            operation_years = np.array(
-                [1 if self.start_year <= year < (self.start_year + self.lifetime) else 0 for year in years_of_model]
-            )
+            operation_years = self.operation_years(self.start_year, self.lifetime, years_of_model)
             grid_fee_costs: np.ndarray = operation_years * yearly_grid_fee
             if invest_flow.size.specific_effects is None:
                 invest_flow.size.specific_effects = {effect: np.sum(grid_fee_costs)}
@@ -893,7 +916,7 @@ class Speicher(ThermalInvestElement):
         else:
             _, specific_effects_per_period = self.costs_and_funding(
                 interest_rate=self.interest_rate,
-                starting_year=self.start_year,
+                start_year=self.start_year,
                 amortization_time=self.amortization_time,
                 lifetime=self.lifetime,
                 years_of_model=years_of_model,
