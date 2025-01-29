@@ -400,8 +400,11 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             Returns:
                 bool: True if values are equal, False otherwise.
             """
+            def compare(x, y):
+                return x == y
+
             if comparison_func is None:
-                comparison_func = lambda x, y: x == y
+                comparison_func = compare
 
             if not comparison_func(value1, value2):
                 logger.warning(f'{attr_name} not equal')

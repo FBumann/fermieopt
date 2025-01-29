@@ -2,11 +2,11 @@ import logging
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import flixOpt as fx
-import flixOpt.elements
 import flixOpt.components
+import flixOpt.elements
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator, ValidationError
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
 from fermieopt.meta_data import MetaData, MetaDataFactory
 
