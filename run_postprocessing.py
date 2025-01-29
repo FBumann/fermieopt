@@ -4,9 +4,9 @@ from fermieopt.excel_output import ExcelFcts, create_report_grouped, visualize_r
 from fermieopt.flixPostprocessingXL import FlixPostXL
 
 calc_results = FlixPostXL(
-    calculation_name='2025-01-06_Basis+TAB-2030',
-    results_folder=r'C:\Users\FELIBUMA\Downloads\Test_new_model\2025-01-06_Basis+TAB-2030\SolveResults',
-    output_years=[2030],
+    calculation_name='2025-01-28-16H-30M_Test',
+    results_folder=r'/Users/felix/Documents/Dokumente-eigene/Code/FermIE/tests/2025-01-28-16H-30M_Test/SolveResults',
+    output_years=[2030,2045],
 )
 
 
@@ -16,19 +16,10 @@ calc_results = FlixPostXL(
 
 visualize_results(
     calc_results=calc_results,
-    comps_yearly=True,
-    buses_yearly=True,
-    effects_yearly=True,
-    comps_daily=True,
-    buses_daily=True,
-    effects_daily=True,
-    comps_hourly=True,
-    buses_hourly=True,
-    effects_hourly=True,
 )
 for bus in calc_results.bus_results:
     create_report_grouped(
         calc_results,
-        path=Path(calc_results.folder) / f'{calc_results.label}-report_{bus}.pdf',
+        path=calc_results.folder / f'{calc_results.name}-report_{bus}.pdf',
         connected_to=bus,
     )
