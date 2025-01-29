@@ -25,6 +25,7 @@ class ExcelModel:
 
     def __init__(self, excel_file_path: str):
         self.excel_data = ExcelData(file_path=pathlib.Path(excel_file_path))
+        self._timestamp = self._update_timestamp()
         MetaDataFactory.length = len(self.excel_data.period_data.years)
         self.final_model = fx.FlowSystem(time_series=self.excel_data.time_series_data.index)
         self._busses = self._create_busses()
@@ -191,9 +192,6 @@ class ExcelModel:
         ]
 
     def _create_components(self) -> None:
-        # data manipulation if a range is given for the start year for some components
-        self._augment_components_with_several_start_years()
-
         element_factory = ElementFactory(
             flow_system=self.final_model,
             time_series_data=self.excel_data.time_series_data,
@@ -205,27 +203,6 @@ class ExcelModel:
         for comp_type, comp_instances_data in self.components_data.items():
             for comp_props in comp_instances_data:
                 element_factory.create_energy_object(comp_type, comp_props)
-
-    def _augment_components_with_several_start_years(self):
-        for comp_type in self.excel_data.components_data:
-            items_to_remove = []
-            for component_data in self.excel_data.components_data[comp_type]:
-                years = component_data.get('Startjahr')
-                if isinstance(years, str):
-                    try:
-                        first_year, last_year = numbers_from_str(years)
-                    except ValueError as e:
-                        raise ValueError('"Startjahr" must be an integer or a string of format "min-max"') from e
-                    first_year, last_year = int(first_year), int(last_year)
-                    items_to_remove.append(component_data)
-                    for year in self.excel_data.period_data.years:
-                        if first_year <= year <= last_year:
-                            new_comp_data = component_data.copy()
-                            new_comp_data['Startjahr'] = year
-                            new_comp_data['Name'] = f'{new_comp_data["Name"]}_{year}'
-                            self.excel_data.components_data[comp_type].append(new_comp_data)
-            for item in items_to_remove:
-                self.excel_data.components_data[comp_type].remove(item)
 
     def _create_invest_groups(self):
         effects = {}

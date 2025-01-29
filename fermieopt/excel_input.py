@@ -57,7 +57,7 @@ class MetaData(BaseModel, populate_by_name=True):
     def validate_results_directory(cls, path):
         path = pathlib.Path(path)
         if not path.exists():
-            raise FileNotFoundError(f"The path '{path}' does not exist.")
+            raise FileNotFoundError(f"The path '{path}' does not exist. Please create it first.")
         if not path.is_dir():
             raise NotADirectoryError(f"The path '{path}' is not a directory.")
         return path
@@ -138,6 +138,7 @@ class PeriodData(BaseModel, populate_by_name=True):
 
         if len(lengths) > 1:
             raise ValueError(f'Not all list fields have the same length: {list_attrs}.')
+        return self
 
     @field_validator('sheets_time_series_others')
     @classmethod
@@ -150,6 +151,18 @@ class PeriodData(BaseModel, populate_by_name=True):
 class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     """
     A Pydantic model to represent Excel data related to energy modeling.
+
+    ### Saving Data to a JSON File:
+
+        with open("excel_data.json", "w") as f:
+            print(excel_model.excel_data.model_dump_json(indent=4, by_alias=True), file=f)
+
+    or reload the data with
+
+        with open('excel_data.json', "r", encoding="utf-8") as file:
+            json_string = file.read()
+        excel_data = ExcelData.model_validate_json(json_string)
+
     """
 
     file_path: pathlib.Path = Field(alias='File Path', description='The path to the Excel file.')
@@ -257,6 +270,8 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             excel_file, sheets=['System'], valid_keys=['Bus', 'Sink', 'Source']
         )
         logger.info('Component Data from all sheets read sucessully.')
+
+        self._augment_components_with_several_start_years()
 
         return self
 
@@ -442,6 +457,47 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
                     new_data_single[key] = value
             new_data.append(new_data_single)
         return new_data
+
+    def _augment_components_with_several_start_years(self):
+        """
+        Augment components with several start years.
+        This enables the start year to be given as a range of format "YYYY-YYYY".
+        """
+
+        from fermieopt.DistrictHeatingComps import validate_invest_range
+        for comp_type in self.components_data:
+            items_to_remove = []
+            for component_data in self.components_data[comp_type]:
+                years = component_data.get('Startjahr')
+                if years is not None:
+                    name = component_data.get("Name")
+                    if name is None:
+                        raise AttributeError('Name of Element was not found.')
+                    try:
+                        values = validate_invest_range(years, label=f'{comp_type}: {name}')
+                        if not isinstance(values, tuple):
+                            continue
+                        else:
+                            first_start_year, last_start_year = int(values[0]), int(values[1])
+                            items_to_remove.append(component_data)
+                            new_names = []
+                            for year in self.period_data.years:
+                                if first_start_year <= year <= last_start_year:
+                                    new_comp_data = component_data.copy()
+                                    new_comp_data['Startjahr'] = year
+                                    new_name = f'{new_comp_data["Name"]}_{year}'
+                                    new_comp_data['Name'] = new_name
+
+                                    new_names.append(new_name)
+                                    self.components_data[comp_type].append(new_comp_data)
+                            logger.info(f'Augmented {comp_type} "{name}" {len(new_names)} times: {new_names}. Startjahr was "{years}"')
+                    except ValueError as e:
+                        raise ValueError(
+                            f'Startjahr "{years}" was identified as a range, but isnt in the right format. Use "YYYY-YYYY".'
+                        ) from e
+
+            for item in items_to_remove:
+                self.components_data[comp_type].remove(item)
 
 
 def organize_component_data_by_type(df: pd.DataFrame, valid_types: List[str]) -> Dict[str, pd.DataFrame]:
