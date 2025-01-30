@@ -153,7 +153,9 @@ class FlixPostXL(fx.results.CalculationResults):
         self,
         element_label: str,
         effect_label: str,
-        domain: Literal['invest', 'operation', 'invest_per_period', 'operation_per_period', 'total_per_period', 'total']
+        domain: Literal[
+            'invest', 'operation', 'invest_per_period', 'operation_per_period', 'total_per_period', 'total'
+        ],
     ) -> Union[int, float, np.ndarray[float]]:
         """
         This function returns the effects introduced by an element.
@@ -227,19 +229,18 @@ class FlixPostXL(fx.results.CalculationResults):
             from .excel_output import resample_data
 
             return resample_data(
-                self.get_effects_of_element(element_label, effect_label, 'operation'),
-                self.years,
-                'YE',
-                'sum',
-                'h').values.flatten()
+                self.get_effects_of_element(element_label, effect_label, 'operation'), self.years, 'YE', 'sum', 'h'
+            ).values.flatten()
 
         elif domain == 'total_per_period':
-            return (self.get_effects_of_element(element_label, effect_label, 'invest_per_period')
-                    + self.get_effects_of_element(element_label, effect_label, 'operation_per_period'))
+            return self.get_effects_of_element(
+                element_label, effect_label, 'invest_per_period'
+            ) + self.get_effects_of_element(element_label, effect_label, 'operation_per_period')
 
         elif domain == 'total':
-            return (self.get_effects_of_element(element_label, effect_label, 'invest')
-                    + np.sum(self.get_effects_of_element(element_label, effect_label, 'operation')))
+            return self.get_effects_of_element(element_label, effect_label, 'invest') + np.sum(
+                self.get_effects_of_element(element_label, effect_label, 'operation')
+            )
 
         else:
             logger.critical(f'Not allowed domain. Must be in {["invest", "operation", "invest_per_period"]}')
