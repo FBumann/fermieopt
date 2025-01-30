@@ -297,7 +297,7 @@ class ExcelFcts:
         costs_label: str = 'costs',
         funding_label: str = 'funding',
         co2_label_fw: str = 'CO2FW',
-        label_main_bus: str = 'Fernwaerme',
+        label_main_bus: str = 'Fernwärme',
         label_demand: str = 'Waermebedarf',
         label_demand_losses='Netzverluste',
         group_label_heat_demand_w_loss: str = 'Wärmelast',
@@ -584,8 +584,8 @@ class ExcelFcts:
         logger.info('...Overview Plots to Excel finished')
 
     def get_costs_and_funding_per_year(self):
-        funding_var = self.calc.get_effect_results(self.funding_label, origin='operation', as_TS=True)
-        costs_var = self.calc.get_effect_results(self.costs_label, origin='operation', as_TS=True)
+        funding_var = self.calc.get_effect_results(self.funding_label, origin='operation', as_time_series=True)
+        costs_var = self.calc.get_effect_results(self.costs_label, origin='operation', as_time_series=True)
 
         df = pd.DataFrame(
             data={'Variable Kosten (abzgl. Förderung)': costs_var, 'Förderung Betrieb': -1 * funding_var},

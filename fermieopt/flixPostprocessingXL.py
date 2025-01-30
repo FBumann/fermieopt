@@ -153,15 +153,35 @@ class FlixPostXL(fx.results.CalculationResults):
         self,
         element_label: str,
         effect_label: str,
-        domain: Literal[
-            'invest', 'operation', 'invest_per_period', 'operation_per_period', 'total_per_period', 'total'
-        ],
+        domain: Literal['invest', 'operation', 'invest_per_period', 'operation_per_period', 'total_per_period', 'total']
     ) -> Union[int, float, np.ndarray[float]]:
         """
         This function returns the effects introduced by an element.
         If the Element is a Component, effects of sub elements are included.
         The returned value includes direct and indirect effects.
         """
+
+        def matches_element_label(label_to_check, element_labels: List[str]) -> bool:
+            """
+            Evaluates if the given label belongs to the element.
+            Evaluates to True, if either the label to check is in the element labels, or if the element labels + '__'
+
+            Parameters
+            ----------
+            label_to_check: The label to perform the check on
+            element_labels: A list of possible element labels
+
+            Returns
+            -------
+
+            """
+            if label_to_check in element_label:
+                return True
+            extended_labels = [f'{label}__' for label in element_labels]
+            if any([label_to_check.startswith(extended_label) for extended_label in extended_labels]):
+                return True
+            return False
+
         labels = [element_label]
         if element_label in self.component_results:
             component = self.component_results[element_label]
@@ -175,7 +195,7 @@ class FlixPostXL(fx.results.CalculationResults):
             conversion_factors[effect_label] = 1  # Share to itself is 1
             for effect, conversion_factor in conversion_factors.items():
                 for origin, value in self.effect_results[effect].all_results['operation']['Shares'].items():
-                    if any([origin.startswith(f'{label}__') for label in labels]):
+                    if matches_element_label(origin, labels):
                         total = total + value * conversion_factor
             return total
 
@@ -187,7 +207,7 @@ class FlixPostXL(fx.results.CalculationResults):
             conversion_factors[effect_label] = 1  # Share to itself is 1
             for effect, conversion_factor in conversion_factors.items():
                 for origin, value in self.effect_results[effect].all_results['invest']['Shares'].items():
-                    if any([origin.startswith(f'{label}__') for label in labels]):
+                    if matches_element_label(origin, labels):
                         total = total + value * conversion_factor
             return total
 
@@ -199,7 +219,7 @@ class FlixPostXL(fx.results.CalculationResults):
             conversion_factors[effect_label] = 1  # Share to itself is 1
             for effect, conversion_factor in conversion_factors.items():
                 for origin, value in self.effect_results[effect].all_results['invest']['Shares_per_period'].items():
-                    if any([origin.startswith(f'{label}__') for label in labels]):
+                    if matches_element_label(origin, labels):
                         total = total + value * conversion_factor
             return total
 
@@ -207,23 +227,22 @@ class FlixPostXL(fx.results.CalculationResults):
             from .excel_output import resample_data
 
             return resample_data(
-                self.get_effects_of_element(element_label, effect_label, 'operation'), self.years, 'YE', 'sum', 'h'
-            ).values.flatten()
+                self.get_effects_of_element(element_label, effect_label, 'operation'),
+                self.years,
+                'YE',
+                'sum',
+                'h').values.flatten()
 
         elif domain == 'total_per_period':
-            return self.get_effects_of_element(
-                element_label, effect_label, 'invest_per_period'
-            ) + self.get_effects_of_element(element_label, effect_label, 'operation_per_period')
+            return (self.get_effects_of_element(element_label, effect_label, 'invest_per_period')
+                    + self.get_effects_of_element(element_label, effect_label, 'operation_per_period'))
 
         elif domain == 'total':
-            return self.get_effects_of_element(element_label, effect_label, 'invest') + np.sum(
-                self.get_effects_of_element(element_label, effect_label, 'operation')
-            )
+            return (self.get_effects_of_element(element_label, effect_label, 'invest')
+                    + np.sum(self.get_effects_of_element(element_label, effect_label, 'operation')))
 
         else:
-            logger.critical(
-                f'Not allowed domain. Must be in {["invest", "operation", "invest_per_period", "operation_per_period", "total_per_period", "total"]}'
-            )
+            logger.critical(f'Not allowed domain. Must be in {["invest", "operation", "invest_per_period"]}')
 
     def get_effect_results(
         self,
