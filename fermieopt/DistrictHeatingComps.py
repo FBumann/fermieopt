@@ -795,7 +795,7 @@ class Waermepumpe(ThermalInvestElement):
                 f"Need to specify a 'COP' for {self.name} or "
                 f"use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally."
             )
-        if self.cop and (self.source_temperature or self.sink_temperature):
+        if self.cop and (self.source_temperature or self.sink_temperature != self.model_fields['sink_temperature'].default):
             raise Exception(
                 f"Either specify a 'COP' for {self.name} "
                 f"OR use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally."
