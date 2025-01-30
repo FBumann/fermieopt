@@ -150,7 +150,12 @@ class FlixPostXL(fx.results.CalculationResults):
         return shares_operation, shares_invest
 
     def get_effects_of_element(
-        self, element_label: str, effect_label: str, domain: Literal['invest', 'operation', 'invest_per_period']
+        self,
+        element_label: str,
+        effect_label: str,
+        domain: Literal[
+            'invest', 'operation', 'invest_per_period', 'operation_per_period', 'total_per_period', 'total'
+        ],
     ) -> Union[int, float, np.ndarray[float]]:
         """
         This function returns the effects introduced by an element.
@@ -172,6 +177,7 @@ class FlixPostXL(fx.results.CalculationResults):
                 for origin, value in self.effect_results[effect].all_results['operation']['Shares'].items():
                     if any([origin.startswith(f'{label}__') for label in labels]):
                         total = total + value * conversion_factor
+            return total
 
         elif domain == 'invest':
             total = 0
@@ -181,8 +187,10 @@ class FlixPostXL(fx.results.CalculationResults):
             conversion_factors[effect_label] = 1  # Share to itself is 1
             for effect, conversion_factor in conversion_factors.items():
                 for origin, value in self.effect_results[effect].all_results['invest']['Shares'].items():
-                    if origin in labels:
+                    if any([origin.startswith(f'{label}__') for label in labels]):
                         total = total + value * conversion_factor
+            return total
+
         elif domain == 'invest_per_period':
             total = np.zeros_like(self.years)
             conversion_factors = {
@@ -191,13 +199,31 @@ class FlixPostXL(fx.results.CalculationResults):
             conversion_factors[effect_label] = 1  # Share to itself is 1
             for effect, conversion_factor in conversion_factors.items():
                 for origin, value in self.effect_results[effect].all_results['invest']['Shares_per_period'].items():
-                    if origin in labels:
+                    if any([origin.startswith(f'{label}__') for label in labels]):
                         total = total + value * conversion_factor
-        else:
-            logger.critical(f'Not allowed domain. Must be in {["invest", "operation", "invest_per_period"]}')
-            total = 0
+            return total
 
-        return total
+        elif domain == 'operation_per_period':
+            from .excel_output import resample_data
+
+            return resample_data(
+                self.get_effects_of_element(element_label, effect_label, 'operation'), self.years, 'YE', 'sum', 'h'
+            ).values.flatten()
+
+        elif domain == 'total_per_period':
+            return self.get_effects_of_element(
+                element_label, effect_label, 'invest_per_period'
+            ) + self.get_effects_of_element(element_label, effect_label, 'operation_per_period')
+
+        elif domain == 'total':
+            return self.get_effects_of_element(element_label, effect_label, 'invest') + np.sum(
+                self.get_effects_of_element(element_label, effect_label, 'operation')
+            )
+
+        else:
+            logger.critical(
+                f'Not allowed domain. Must be in {["invest", "operation", "invest_per_period", "operation_per_period", "total_per_period", "total"]}'
+            )
 
     def get_effect_results(
         self,
