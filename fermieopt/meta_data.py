@@ -15,6 +15,7 @@ class InvestMetaData(TypedDict):
 
 class MetaData(TypedDict):
     invest: InvestMetaData
+    Gruppe: Optional[str]
 
 
 class MetaDataFactory:
@@ -33,4 +34,5 @@ class MetaDataFactory:
                     'specific_effects': np.array([0] * cls.length, dtype=float),
                 },
             },
+            'Gruppe': None,
         }

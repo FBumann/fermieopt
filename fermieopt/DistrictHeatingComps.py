@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 import flixOpt as fx
 import flixOpt.components
 import flixOpt.elements
+import flixOpt.structure
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator, model_validator
@@ -20,7 +21,6 @@ class Element(
 ):  # Forbids unexpected keys in input data
     name: str = Field(alias='Name')
     group: Optional[str] = Field(alias='Gruppe', default=None)
-    _meta_data: MetaData = PrivateAttr(default_factory=MetaDataFactory.create)
 
     def add_to_flow_system(
         self,
@@ -38,6 +38,12 @@ class Element(
     def _insert_data(self, data: pd.DataFrame):
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         raise NotImplementedError
+
+    def _insert_group(self, element: flixOpt.structure.Element):
+        element.meta_data['Gruppe'] = self.group
+        if isinstance(element, flixOpt.elements.Component):
+            for flow in element.flows.values():
+                flow.meta_data['Gruppe'] = self.group
 
     def _convert_to_flixopt(
         self,
@@ -244,9 +250,12 @@ class InvestElement(Element):
             )
         else:
             self._insert_data(time_series_data)
-            flow_system.add_elements(
-                self._convert_to_flixopt(flow_system, busses, time_series_data, co2_factors, years_of_model)
-            )
+            elements = self._convert_to_flixopt(flow_system, busses, time_series_data, co2_factors, years_of_model)
+            if self.group is not None:
+                for element in elements:
+                    self._insert_group(element)
+
+            flow_system.add_elements(elements)
 
     @staticmethod
     def operation_years(start_year: int, lifetime: int, years_of_model: List[int]) -> np.ndarray[int]:
