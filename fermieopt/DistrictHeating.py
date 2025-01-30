@@ -63,7 +63,7 @@ class ExcelModel:
         )
 
     def _update_timestamp(self) -> None:
-        self._timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%HH-%MM")
+        self._timestamp = datetime.datetime.now().strftime('%Y-%m-%d-%HH-%MM')
 
     def _create_dirs_and_save_input_data(self):
         os.makedirs(self.final_directory, exist_ok=True)
@@ -75,6 +75,7 @@ class ExcelModel:
 
         with open(self.final_directory / f'{self.calc_name}__Component_data.json', 'w', encoding='utf-8') as log_file:
             import json
+
             json.dump(self.excel_data.components_data, log_file, indent=4, ensure_ascii=False)
             logger.info('Component Data written to file')
 

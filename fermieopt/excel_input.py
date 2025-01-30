@@ -400,6 +400,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             Returns:
                 bool: True if values are equal, False otherwise.
             """
+
             def compare(x, y):
                 return x == y
 
@@ -468,12 +469,13 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         """
 
         from fermieopt.DistrictHeatingComps import validate_invest_range
+
         for comp_type in self.components_data:
             items_to_remove = []
             for component_data in self.components_data[comp_type]:
                 years = component_data.get('Startjahr')
                 if years is not None:
-                    name = component_data.get("Name")
+                    name = component_data.get('Name')
                     if name is None:
                         raise AttributeError('Name of Element was not found.')
                     try:
@@ -493,7 +495,9 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
 
                                     new_names.append(new_name)
                                     self.components_data[comp_type].append(new_comp_data)
-                            logger.info(f'Augmented {comp_type} "{name}" {len(new_names)} times: {new_names}. Startjahr was "{years}"')
+                            logger.info(
+                                f'Augmented {comp_type} "{name}" {len(new_names)} times: {new_names}. Startjahr was "{years}"'
+                            )
                     except ValueError as e:
                         raise ValueError(
                             f'Startjahr "{years}" was identified as a range, but isnt in the right format. Use "YYYY-YYYY".'

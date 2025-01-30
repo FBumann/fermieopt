@@ -1124,7 +1124,9 @@ class AbwaermeWaermepumpe(Waermepumpe):
             P_el=fx.Flow(
                 label='Pel',
                 bus=busses[self.bus_elec],
-                effects_per_flow_hour=self._electricity_effects_per_flow_hour(effects, time_series_data, years_of_model),
+                effects_per_flow_hour=self._electricity_effects_per_flow_hour(
+                    effects, time_series_data, years_of_model
+                ),
             ),
             Q_ab=fx.Flow(
                 label='Qab',
@@ -1186,7 +1188,9 @@ class Geothermie(Waermepumpe):
             P_el=fx.Flow(
                 label='Pel',
                 bus=busses[self.bus_elec],
-                effects_per_flow_hour=self._electricity_effects_per_flow_hour(effects, time_series_data, years_of_model),
+                effects_per_flow_hour=self._electricity_effects_per_flow_hour(
+                    effects, time_series_data, years_of_model
+                ),
             ),
             Q_ab=fx.Flow(label='Qab', bus=busses[self.bus_waste_heat]),
         )
