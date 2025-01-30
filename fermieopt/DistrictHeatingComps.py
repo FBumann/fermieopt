@@ -1146,7 +1146,7 @@ class AbwaermeWaermepumpe(Waermepumpe):
 
 
 class Geothermie(Waermepumpe):
-    amount_of_pump_electricity: Union[int, float, str] = Field(alias='Anteil Pumpstrom pro MW_geo')
+    amount_of_pump_electricity: Union[int, float, str] = Field(alias='Anteil Pumpstrom pro MW_geo', ge=0)
     bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
 
     def _insert_data(self, data: pd.DataFrame):
@@ -1203,15 +1203,6 @@ class Geothermie(Waermepumpe):
         self.restrict_availlability(heat_pump, years_of_model)
         self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
         return heat_pump
-
-    @model_validator(mode='after')
-    def validate_amount_of_pump_electricity(self):
-        if self.cop and self.amount_of_pump_electricity:
-            raise Exception(
-                f"Either specify a 'COP' for {self.name} "
-                f"OR use 'Anteil Pumpstrom pro MW_geo' to calculate the COP internally."
-            )
-        return self
 
 
 class Abwaerme(ThermalInvestElement):
