@@ -21,8 +21,10 @@ class Element(
     populate_by_name=True,  # Enables using both field names and aliases
     extra='forbid',
 ):
-    name: str = Field(alias='Name')
-    group: Optional[str] = Field(alias='Gruppe', default=None)
+    name: str = Field(alias='Name', description='Name des Energieelements. Jeder Name muss eindeutig sein.')
+    group: Optional[str] = Field(
+        alias='Gruppe', default=None,
+        description='Verwendet zur Gruppierung verschiedener Energieelemente in der Auswertung.')
 
     def add_to_flow_system(
         self,
@@ -93,17 +95,17 @@ class Element(
 
 
 class InvestElement(Element):
-    start_year: Optional[int] = Field(alias='Startjahr', default=None, ge=1800)
-    amortization_time: Optional[int] = Field(alias='Abschreibungsdauer', default=None, ge=1)
-    lifetime: Optional[int] = Field(alias='Lebensdauer', default=None, ge=1)
-    optional: bool = Field(alias='Optional', default=False)
-    invest_costs_fixed: Union[int, float] = Field(alias='Investkosten (fix) [€]', default=0)
-    invest_costs_specific: Union[int, float] = Field(alias='Investkosten (spezifisch) [€/MW]', default=0)
-    annual_costs_fixed: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/a]', default=0)
-    annual_costs_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (spezifisch) [€/(MW*a)]', default=0)
-    interest_rate: Union[int, float] = Field(alias='Zinssatz', default=0)
-    funding_rate: Union[int, float] = Field(alias='Fördersatz', default=0)
-    invest_group: Optional[str] = Field(alias='Investgruppe', default=None)
+    start_year: Optional[int] = Field(alias='Startjahr', default=None, ge=1800, description='Start der Abschreibung und Inbetriebnahme')
+    amortization_time: Optional[int] = Field(alias='Abschreibungsdauer', default=None, ge=1, description='Zeit in Jahren, bis der Erzeuger vollständig abgeschrieben ist')
+    lifetime: Optional[int] = Field(alias='Lebensdauer', default=None, ge=1, description='Zeit in Jahren, bis der Erzeuger nicht mehr betrieben werden kann')
+    optional: bool = Field(alias='Optional', default=False, description='Wenn Ja, dann ist der Erzeuger optional. Ind er Optimierung wird entschieden ob das Investment getätigt wird um ihn Betreiben zu können, oder nicht.')
+    invest_costs_fixed: Union[int, float] = Field(alias='Investkosten (fix) [€]', default=0, description='Werden über die Abschreibungsdauer annuisiert, falls sich für die Investitions entschieden wird.')
+    invest_costs_specific: Union[int, float] = Field(alias='Investkosten (spezifisch) [€/MW]', default=0, description='Werden über die Abschreibungsdauer annuisiert, falls sich für die Investitions entschieden wird. Ist entschieden um die Größe einer Anlage zu optimieren.')
+    annual_costs_fixed: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/a]', default=0, description='Fallen über die Lebensdauer jährlich an, falls sich für die Investitions entschieden wird.')
+    annual_costs_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (spezifisch) [€/(MW*a)]', default=0, description='Fallen über die Lebensdauer jährlich an, falls sich für die Investitions entschieden wird. Ist entschieden um die Größe einer Anlage zu optimieren.')
+    interest_rate: Union[int, float] = Field(alias='Zinssatz', default=0, description='Zinssatz für die annuisierung der Anlage.')
+    funding_rate: Union[int, float] = Field(alias='Fördersatz', default=0, description='Anteil der Investitionskosten, der gefördert wird.')
+    invest_group: Optional[str] = Field(alias='Investgruppe', default=None, description='Gruppierung der Investition. Format: "Gruppe:Limit". Damit kann eine obergrenze für mehrere Anlagen definiert werden.')
 
     @property
     def needs_investment(self) -> bool:
