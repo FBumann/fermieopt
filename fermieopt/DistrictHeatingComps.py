@@ -1505,17 +1505,19 @@ class ElementFactory:
         """
 
         field_info = {}
+        types_translation = {int: 'Integer', float: 'Float', str: 'String', bool: "Ja/Nein", type(None): "None"}
         for model_name, model in cls.class_map.items():
             for field_name, field in model.model_fields.items():
                 alias = field.alias or field_name
                 description = field.description or ""
 
-                types = get_args(field.annotation)
+                types = get_args(field.annotation) or [field.annotation]
                 as_time_series = any(t is str for t in types) and any(t in (int, float) for t in types)
 
                 if alias not in field_info:
                     field_info[alias] = {"Beschreibung": description,
-                                         "Auch als Zeitreihe": as_time_series}
+                                         "Auch als Zeitreihe": as_time_series,
+                                         "Typ": str(list(set(types_translation.get(t, t) for t in types)))}
 
                 field_info[alias][model_name] = True  # Mark field as present
 
