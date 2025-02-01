@@ -64,10 +64,10 @@ class TemperatureLabels(LabelBase):
 
 
 class EnergyPriceLabels(LabelBase):
-    GAS = 'Erdgas [€/MWh_hu]'
-    HYDROGEN = 'Wasserstoff [€/MWh_hu]'
-    ELECTRICITY = 'Strom [€/MWh]'
-    CO2 = 'CO2 [€/t]'
+    GAS = 'Erdgas-Preis [€/MWh_hu]'
+    HYDROGEN = 'H2-Preis [€/MWh_hu]'
+    ELECTRICITY = 'Strom-Preis [€/MWh]'
+    CO2 = 'CO2-Preis [€/t]'
 
 
 class EnergyTypeLabels(LabelBase):

@@ -319,7 +319,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     def check_used_columns(self):
         for col in self._mandatory_columns:
             if col not in self.time_series_data.columns:
-                logger.warning(
+                logger.critical(
                     f'Column "{col}" wurde nicht in den Zeitreihen gefunden. Bitte Zeitreihe mit Name "{col}" einfügen.'
                 )
         return self

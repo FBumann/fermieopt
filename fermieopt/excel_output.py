@@ -307,7 +307,8 @@ class ExcelEvaluation:
         demand_heat_losses=SinkLabels.HEAT_LOSSES,
         group_label_heat_demand: str = 'Wärmelast',
         bus_electricity_out: str = BusLabels.ELECTRICITY_OUT,
-        price_electricity: str = OtherLabels.ENERGY_PRICES,
+        price_electricity: str = EnergyPriceLabels.ELECTRICITY,
+        price_helper_elements: str = OtherLabels.ENERGY_PRICES,
     ):
         self.results = results
 
@@ -320,6 +321,7 @@ class ExcelEvaluation:
         self.group_label_heat_demand = group_label_heat_demand
         self.bus_electricity_out = bus_electricity_out
         self.price_electricity = price_electricity
+        self.price_helper_elements = price_helper_elements
 
     def run_excel_graphics_years(self, short_version=False, custom_output_file_path: str = 'default'):
         """
@@ -643,10 +645,10 @@ class ExcelEvaluation:
 
             try:
                 df_fernwaerme = pd.concat([
-                    df_fernwaerme, self.results.get_energy_prices(self.price_electricity)[EnergyPriceLabels.ELECTRICITY]
+                    df_fernwaerme, self.results.get_energy_prices(self.price_helper_elements)[self.price_electricity]
                 ], axis=1)
             except KeyError:
-                logger.warning('Strompreis was not found and therefore can not be plotted')
+                logger.warning(f'Electricity price "{self.price_electricity}" was not found and therefore can not be plotted')
 
         df_fernwaerme_erz_nach_techn = resample_data(df_fernwaerme, self.results.years, resamply_by, rs_method)
 
@@ -999,7 +1001,7 @@ class ExcelEvaluation:
             'Kühler',
         ]  # First 11 fixed columns
         undefined_columns = ['U1', 'U2', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8', 'U9']  # 8 undefined placeholders
-        fixed_columns_2 = ['others', 'Wärmelast', 'Strompreis']  # Last 2 fixed columns
+        fixed_columns_2 = ['others', self.group_label_heat_demand, self.price_electricity]  # Last 2 fixed columns
 
         # Combine all parts into the final column structure
         all_columns = fixed_columns_1 + undefined_columns + fixed_columns_2
