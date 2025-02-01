@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union, get_args
 
 import flixOpt as fx
 import flixOpt.components
@@ -354,7 +354,7 @@ class ThermalInvestElement(InvestElement):
     thermal_power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(
         alias='Thermische Leistung [MW]', description='Thermische (Nenn-)Leistung des Erzeugers. Kann auch als "Von-Bis" angegeben werden, um die Größe anhand der Investitionskosten zu optimieren.'
     )
-    grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0, description='Fällt jährlich an, solange die ANlage betrieben wird. Die höhe enspricht der höchsten möglichen Netzbezugsleistung, berechnent aus Nennleistung, Effizientz und verfügbarkeit.')
+    grid_fee_per_year: Union[int, float] = Field(alias='Netzentgelt [€/(MW*a)]', default=0, description='Fällt jährlich an, solange die ANlage betrieben wird. Die höhe enspricht der höchsten möglichen Netzbezugsleistung, berechnent aus Nennleistung, Effizientz und verfügbarkeit.')
     bus_heat: str = Field(alias='Wärmebus', default=BusLabels.HEAT)
 
     costs_per_mwh_heat_extra: Zahl_oder_Zeitreihe = Field(
