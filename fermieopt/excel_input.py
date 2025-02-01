@@ -375,10 +375,11 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     def _read_components(
         self, excel_file: pd.ExcelFile, sheets: List[str], valid_keys: List[str]
     ) -> Dict[str, List[Dict[str, Any]]]:
+        from fermieopt.DistrictHeatingComps import ElementFactory
         component_data_by_type = {}
         for sheet_name in sheets:
             df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, nrows=30)
-            component_data = organize_component_data_by_type(df, valid_keys)
+            component_data = organize_component_data_by_type(df, list(ElementFactory.class_map) + ['Bus'])
             component_data_by_type = combine_dicts_of_component_data(component_data_by_type, component_data)
             logger.info(f"Component Data of Sheet '{sheet_name}' was read sucessfully.")
         component_data_converted = convert_component_data_types(component_data_by_type)
