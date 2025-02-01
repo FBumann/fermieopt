@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_serializer, field_validator, model_validator
 
-from fermieopt.config import TemperatureLabels, EnergyPriceLabels
+from fermieopt.config import EnergyPriceLabels, TemperatureLabels
 
 logger = logging.getLogger('flixOpt')
 

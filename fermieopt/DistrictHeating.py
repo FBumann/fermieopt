@@ -9,8 +9,8 @@ import flixOpt as fx
 import flixOpt.structure
 from rich.console import Console
 
+from fermieopt.config import BusLabels, EffectLabels, EnergyPriceLabels, SinkLabels, SourceLabels
 from fermieopt.DistrictHeatingComps import ElementFactory, exists, extract_data
-from fermieopt.config import BusLabels, SinkLabels, SourceLabels, EffectLabels, EnergyPriceLabels
 from fermieopt.excel_input import ExcelData
 from fermieopt.flixPostprocessingXL import FlixPostXL
 from fermieopt.meta_data import MetaDataFactory

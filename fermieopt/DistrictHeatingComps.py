@@ -1,6 +1,6 @@
 import logging
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union, get_args
 from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union, get_args
 
 import flixOpt as fx
 import flixOpt.components
@@ -11,8 +11,8 @@ import pandas as pd
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator, model_validator
 from pydantic_core import PydanticUndefined
 
+from fermieopt.config import BusLabels, EffectLabels, EnergyPriceLabels, FuelTypeToPriceMapping, TemperatureLabels
 from fermieopt.meta_data import MetaDataFactory
-from fermieopt.config import BusLabels, TemperatureLabels, FuelTypeToPriceMapping, EnergyPriceLabels, EffectLabels
 
 logger = logging.getLogger('flixOpt')
 

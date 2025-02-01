@@ -11,8 +11,8 @@ from openpyxl import load_workbook
 from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.utils.dataframe import dataframe_to_rows
 
+from fermieopt.config import BusLabels, EffectLabels, EnergyPriceLabels, OtherLabels, SinkLabels
 from fermieopt.flixPostprocessingXL import FlixPostXL
-from fermieopt.config import BusLabels, SinkLabels, OtherLabels, EffectLabels, EnergyPriceLabels
 
 logger = logging.getLogger('flixOpt')
 
