@@ -1547,7 +1547,7 @@ class ElementFactory:
             obj_class = self.class_map[obj_type]
         except KeyError as e:
             raise KeyError(
-                f'Unbekanntes Element: "{obj_type}". Wähle eines der folgenden Elemente aus: {list(self.class_map.keys())}'
+                f'Unbekanntes Element: "{obj_type}". Wähle eines der folgenden Elemente aus: {list(self.class_map)}'
             ) from e
 
         energy_obj: Element = obj_class(**properties)
