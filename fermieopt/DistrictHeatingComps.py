@@ -8,6 +8,7 @@ import flixOpt.structure
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator, model_validator
+from pydantic_core import PydanticUndefined
 
 from fermieopt.meta_data import MetaDataFactory
 from fermieopt.config import BusLabels, TemperatureLabels, FuelTypeToPriceMapping, EnergyPriceLabels, EffectLabels
@@ -55,6 +56,40 @@ class Element(
         years_of_model: List[int],
     ) -> flixOpt.elements.Component:
         raise NotImplementedError
+
+
+    @classmethod
+    def field_aliases(cls):
+        return [field_info.alias or field_name for field_name, field_info in cls.model_fields.items()]
+
+    @classmethod
+    def mandatory_aliases(cls):
+        return [field_info.alias or field_name for field_name, field_info in cls.model_fields.items()
+                if field_info.default is PydanticUndefined]
+
+    @classmethod
+    def model_fields_as_df(cls) -> pd.DataFrame:
+        """
+        Exportiert die Feld-Aliase, Datentypen, Beschreibungen, Default-Werte und ob das Feld obligatorisch ist
+        aus dem Pydantic-Modell in eine Excel-Datei.
+
+        Parameter:
+            file_name (str): Der Name der zu speichernden Excel-Datei.
+
+        Beispiel:
+            MyModel.export_model_fields_to_excel("modell_felder.xlsx")
+        """
+        # Metadaten extrahieren
+        data = [
+            {
+                "Parameter": field_info.alias or field_name,
+                "Beschreibung": getattr(field_info, "description", "") or "",
+                "Erforderlich": "Ja" if field_info.default is PydanticUndefined else "Nein",
+            }
+            for field_name, field_info in cls.model_fields.items()
+        ]
+
+        return  pd.DataFrame(data)
 
 
 class InvestElement(Element):
@@ -1391,6 +1426,22 @@ class KWKekt(InvestElement):
 
 
 class ElementFactory:
+    class_map = {
+        'Waermepumpe': Waermepumpe,
+        'KWK': KWK,
+        'Kessel': Kessel,
+        'Speicher': Speicher,
+        'LinearTransformer_1_1': LinearTransformer,
+        'Sink': Sink,
+        'Source': Source,
+        'AbwaermeWP': AbwaermeWaermepumpe,
+        'Geothermie': Geothermie,
+        'KWKekt': KWKekt,
+        'EHK': EHK,
+        'AbwaermeHT': Abwaerme,
+        'Rueckkuehler': Rueckkuehler,
+        # More mappings as needed
+    }
     def __init__(
         self,
         flow_system: fx.FlowSystem,
@@ -1408,7 +1459,7 @@ class ElementFactory:
         self.created_comps: List[Element] = []
 
     def create_energy_object(self, obj_type: str, properties: Dict) -> None:
-        obj_class = self.get_class_by_type(obj_type)
+        obj_class = self.class_map.get(obj_type)
         if obj_class:
             energy_obj: Element = obj_class(**properties)
             self.created_comps.append(energy_obj)
@@ -1421,33 +1472,44 @@ class ElementFactory:
             )
             logger.info(f'Created {obj_type} "{energy_obj.name}"')
         else:
-            raise ValueError(f'Unknown energy object type: {obj_type}')
-
-    def get_class_by_type(self, obj_type):
-        # Map obj_type to the appropriate class
-        class_map = {
-            'Waermepumpe': Waermepumpe,
-            'KWK': KWK,
-            'Kessel': Kessel,
-            'Speicher': Speicher,
-            'LinearTransformer_1_1': LinearTransformer,
-            'Sink': Sink,
-            'Source': Source,
-            'AbwaermeWP': AbwaermeWaermepumpe,
-            'Geothermie': Geothermie,
-            'KWKekt': KWKekt,
-            'EHK': EHK,
-            'AbwaermeHT': Abwaerme,
-            'Rueckkuehler': Rueckkuehler,
-            # More mappings as needed
-        }
-        return class_map.get(obj_type)
+            raise ValueError(
+                f'Unbekanntes Element: "{obj_type}". Wähle eines der folgenden Elemente aus: {list(self.class_map.keys())}'
+            )
 
     def print_comps(self):
         rep = ''
         for comp in sorted(self.created_comps, key=lambda comp: comp.name):
             rep += f'{comp}\n'
         return rep
+
+    @classmethod
+    def export_model_fields_to_excel(cls,
+                                     file_name: str = 'Dokumentation.xlsx',
+                                     sheet_name: str = 'Dokumentation') -> pd.DataFrame:
+        """
+        Exportiert die Feld-Aliase, Datentypen, Beschreibungen, Default-Werte und ob das Feld obligatorisch ist
+        in eine Excel-Datei.
+        """
+
+        field_info = {}
+        for model_name, model in cls.class_map.items():
+            for field_name, field in model.model_fields.items():
+                alias = field.alias or field_name
+                description = field.description or ""
+
+                if alias not in field_info:
+                    field_info[alias] = {"Beschreibung": description}
+
+                field_info[alias][model_name] = True  # Mark field as present
+
+        # Convert to DataFrame
+        df = pd.DataFrame.from_dict(field_info, orient="index").fillna(False)
+        df.index.name = "Parameter"
+
+        with pd.ExcelWriter(file_name) as writer:
+            df.replace({True: "Ja", False: "Nein"}).to_excel(writer, index=True, sheet_name=sheet_name)
+
+        return df
 
 
 def extract_data(value: Union[str, Any], data: pd.DataFrame) -> Union[np.ndarray, Any]:
