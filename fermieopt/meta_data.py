@@ -15,7 +15,10 @@ class InvestMetaData(TypedDict):
 
 class MetaData(TypedDict):
     invest: InvestMetaData
+    Verfuegbarkeit: np.ndarray[Union[int, float]]
     Gruppe: Optional[str]
+    Startjahr: Optional[int]
+    Lebensdauer: Optional[int]
 
 
 class MetaDataFactory:
@@ -35,4 +38,7 @@ class MetaDataFactory:
                 },
             },
             'Gruppe': None,
+            'Startjahr': None,
+            'Lebensdauer': None,
+            'Verfuegbarkeit': np.array([1] * cls.length, dtype=int)
         }

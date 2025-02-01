@@ -9,7 +9,8 @@ import flixOpt as fx
 import flixOpt.structure
 from rich.console import Console
 
-from fermieopt.DistrictHeatingComps import ElementFactory, exists, extract_data, numbers_from_str
+from fermieopt.DistrictHeatingComps import ElementFactory, exists, extract_data
+from fermieopt.config import BusLabels, SinkLabels, SourceLabels, EffectLabels, EnergyPriceLabels
 from fermieopt.excel_input import ExcelData
 from fermieopt.flixPostprocessingXL import FlixPostXL
 from fermieopt.meta_data import MetaDataFactory
@@ -35,6 +36,8 @@ class ExcelModel:
         self.final_model.add_effects(*list(self._effects.values()))
 
         self._create_components()
+
+        self._validate_predefined_elements()
 
     def solve_model(self, solver_name: str, gap_frac: float = 0.01, timelimit: int = 3600):
         self._update_timestamp()
@@ -80,7 +83,7 @@ class ExcelModel:
             logger.info('Component Data written to file')
 
         with open(
-            self.final_directory / f'{self.calc_name}__System_Description.txt', 'w', encoding='utf-8'
+                self.final_directory / f'{self.calc_name}__System_Description.txt', 'w', encoding='utf-8'
         ) as log_file:
             console = Console(file=log_file, width=10000)
             console.print(self.final_model)
@@ -95,6 +98,10 @@ class ExcelModel:
                 busses[label] = fx.Bus(label=label, excess_penalty_per_flow_hour=None)
             except KeyError as e:
                 raise Exception(f"Every Bus needs a 'Name'! Error: {e}") from e
+
+        for bus in BusLabels.all_values():
+            if bus not in busses:
+                logger.critical(f'Bus "{bus}" fehlt. Bitte hinzufügen. Erstellte Busse: {list(busses)}')
 
         return busses
 
@@ -129,7 +136,7 @@ class ExcelModel:
             'CO2', 't', 'CO2Emissionen', specific_share_to_other_effects_operation={effects['CO2FW']: 1}
         )
 
-        effects['Gruene_Waerme'] = fx.Effect('Gruene_Waerme', 'MWh', 'Menge an produzierter grüner Wärme')
+        effects[EffectLabels.GREEN_HEAT] = fx.Effect(EffectLabels.GREEN_HEAT, 'MWh', 'Menge an produzierter grüner Wärme')
 
         # Limit CO2 Emissions per year
         yearly_co2 = add_yearly_effects_with_bounds(
@@ -145,7 +152,7 @@ class ExcelModel:
 
         # Limit CO2 Emissions per year
         yearly_gw = add_yearly_effects_with_bounds(
-            effects['Gruene_Waerme'],
+            effects[EffectLabels.GREEN_HEAT],
             years=self.years,
             lower_bounds=self.excel_data.period_data.green_heat_min,
             upper_bounds=[None] * len(self.years),
@@ -160,36 +167,30 @@ class ExcelModel:
 
     def _create_helpers(self) -> List[flixOpt.structure.Element]:
         p_out1 = fx.Flow(
-            label='Strompreis',
-            bus=self._busses['StromEinspeisung'],
+            label=EnergyPriceLabels.ELECTRICITY,
+            bus=self._busses[BusLabels.ELECTRICITY_OUT],
             size=0,
-            effects_per_flow_hour=extract_data('Strom', self.excel_data.time_series_data),
+            effects_per_flow_hour={self._effects['costs']: extract_data(EnergyPriceLabels.ELECTRICITY, self.excel_data.time_series_data)},
         )
         p_out2 = fx.Flow(
-            label='Gaspreis',
-            bus=self._busses['Erdgas'],
+            label=EnergyPriceLabels.GAS,
+            bus=self._busses[BusLabels.GAS],
             size=0,
-            effects_per_flow_hour=extract_data('Erdgas', self.excel_data.time_series_data),
+            effects_per_flow_hour={self._effects['costs']: extract_data(EnergyPriceLabels.GAS, self.excel_data.time_series_data)},
         )
         p_out3 = fx.Flow(
-            label='Wasserstoffpreis',
-            bus=self._busses['Wasserstoff'],
+            label=EnergyPriceLabels.HYDROGEN,
+            bus=self._busses[BusLabels.HYDROGEN],
             size=0,
-            effects_per_flow_hour=extract_data('Wasserstoff', self.excel_data.time_series_data),
-        )
-        p_out4 = fx.Flow(
-            label='EBSPreis',
-            bus=self._busses['EBS'],
-            size=0,
-            effects_per_flow_hour=extract_data('EBS', self.excel_data.time_series_data),
+            effects_per_flow_hour={self._effects['costs']: extract_data(EnergyPriceLabels.HYDROGEN, self.excel_data.time_series_data)},
         )
 
         return [
             fx.LinearConverter(
-                label='HelperPreise',
+                label='Energiepreise',
                 inputs=[],
-                outputs=[p_out1, p_out2, p_out3, p_out4],
-                conversion_factors=[{p_out1: 1, p_out2: 1, p_out3: 1, p_out4: 1}],
+                outputs=[p_out1, p_out2, p_out3],
+                conversion_factors=[{p_out1: 1, p_out2: 1, p_out3: 1}],
             )
         ]
 
@@ -278,15 +279,42 @@ class ExcelModel:
     def _solve_results_folder(self) -> pathlib.Path:
         return self.final_directory / 'SolveResults'
 
+    def _validate_predefined_elements(self):
+        effect_labels = EffectLabels.all_values()
+        bus_labels = BusLabels.all_values()
+        sink_labels = SinkLabels.all_values()
+        source_labels = SourceLabels.all_values()
+
+        for bus in bus_labels:
+            if bus not in self._busses:
+                logger.critical(f'Bus {bus} is missing. This might make the automated evaluation fail.'
+                                f'The following Buses are needed: {bus_labels}')
+
+        for effect in effect_labels:
+            if effect not in self._effects:
+                logger.critical(f'Effect {effect} is missing. This might make the automated evaluation fail.'
+                                f'The following Effects are needed: {effect_labels}')
+
+        for sink in sink_labels:
+            if sink not in self.final_model.components:
+                logger.critical(f'Sink {sink} is missing. This might make the automated evaluation fail.'
+                                f'The following Sinks are needed: {sink_labels}')
+
+        for source in source_labels:
+            if source not in self.final_model.components:
+                logger.critical(f'Source {source} is missing. This might make the automated evaluation fail.'
+                                f'The following Sources are needed: {source_labels}')
+
+
 
 def add_yearly_effects_with_bounds(
-    base_effect: fx.Effect,
-    years: List[int],
-    lower_bounds: List[Optional[float]],
-    upper_bounds: List[Optional[float]],
-    label: str,
-    unit: str,
-    description: str,
+        base_effect: fx.Effect,
+        years: List[int],
+        lower_bounds: List[Optional[float]],
+        upper_bounds: List[Optional[float]],
+        label: str,
+        unit: str,
+        description: str,
 ) -> Dict[str, fx.Effect]:
     """
     Creates multiple new Effects for yearly allocation of values. Gets values from the base_effect (Factor = 1).

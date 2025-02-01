@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_serializer, field_validator, model_validator
 
+from fermieopt.config import TemperatureLabels, EnergyPriceLabels
+
 logger = logging.getLogger('flixOpt')
 
 
@@ -178,6 +180,13 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     )
     _skip_read_data: bool = PrivateAttr(default=False)
 
+    _mandatory_columns: List[str] = PrivateAttr(
+        default=EnergyPriceLabels.all_values() + [
+            TemperatureLabels.NETWORK_FORWARD,
+            TemperatureLabels.NETWORK_RETURN,
+        ]
+    )
+
     _component_data_keys_mapping: Dict[str, str] = PrivateAttr(
         default={
             'Thermische Leistung': 'Thermische Leistung [MW]',
@@ -191,11 +200,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             'Zusatzkosten pro MWh Brennstoff': 'Brennstoffkosten Zusatz [€/MWh_hu]',
             'Zusatzkosten pro MWh Strom': 'Stromkosten Zusatz [€/MWh]',
             'effects_per_flow_hour': 'Zusätzliche Wärmeerzeugungskosten [€/MWh]',
-            'SCOP für BEW': 'SCOP für BEW',
-            'Maximale Stromkostenförderung BEW': 'Maximale Stromkostenförderung BEW',
-            'Investkosten [€/MWh]': 'Investkosten [€/MWh]',
             'Sonstige Fixkosten [€/(MWh*a)]': 'Sonstige Fixkosten (fix) [€/(MWh*a)]',
-            'Carnot Effizienz': 'Carnot Effizienz',
             'relative_maximum': 'Relative thermische Leistungsobergrenze',
             'relative_minimum': 'Relative thermische Leistungsuntergrenze',
         }
@@ -203,14 +208,10 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
 
     _time_series_data_mapping: Dict[str, str] = PrivateAttr(
         default={
-            'TVL_FWN': 'Vorlauftemperatur Fernwärmenetz [°C]',
-            'TRL_FWN': 'Rücklauftemperatur Fernwärmenetz [°C]',
-            'SinkHeat': 'Wärmelast [MW]',
-            'SinkLossHeat': 'Netzverluste [MW]',
+            'TVL_FWN': TemperatureLabels.NETWORK_FORWARD,
+            'TRL_FWN': TemperatureLabels.NETWORK_RETURN,
         }
     )
-
-    _mandatory_columns = ['Wärmelast [MW]', 'Netzverluste [MW]', 'Vorlauftemperatur Fernwärmenetz [°C]', 'Rücklauftemperatur Fernwärmenetz [°C]']
 
     @model_validator(mode='after')
     def read_data_from_excel(self):
@@ -316,14 +317,11 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
 
     @model_validator(mode='after')
     def check_used_columns(self):
-        if 'Vorlauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
-            logger.warning(
-                'Column "Vorlauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.'
-            )
-        if 'Rücklauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
-            logger.warning(
-                'Column "Rücklauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.'
-            )
+        for col in self._mandatory_columns:
+            if col not in self.time_series_data.columns:
+                logger.warning(
+                    f'Column "{col}" wurde nicht in den Zeitreihen gefunden. Bitte Zeitreihe mit Name "{col}" einfügen.'
+                )
         return self
 
     @field_serializer('time_series_data')
