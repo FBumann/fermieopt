@@ -1,13 +1,13 @@
 import logging
 
 from fermieopt.DistrictHeating import ExcelModel
-from fermieopt.excel_output import ExcelFcts, create_report_grouped, visualize_results
+from fermieopt.excel_output import ExcelEvaluation, create_report_grouped, visualize_results
 
 logger = logging.getLogger('flixOpt')
 
 ########################################################################################################################
 
-excel_file_path = r'Template_Input.xlsx'    # path to the excel input file
+excel_file_path = r'Template_Input.xlsx'  # path to the excel input file
 
 solver_name = 'highs'                       # Preinstalled open source solver (default). Might take a while...
 # solver_name = "gurobi"                    # Commercial solver (Free academic licences). Much faster...
@@ -18,12 +18,12 @@ def main(excel_file_path: str, solver_name: str = 'highs'):
     excel_model.final_model.visualize_network(False, controls=['physics'])
     excel_model.solve_model(solver_name=solver_name, gap_frac=0.0005, timelimit=2 * 3600)
     excel_model.final_model.visualize_network(
-        f'{excel_model.final_directory}/{excel_model.calc_name}_network.html', controls=['physics']
+        excel_model.final_directory / f'{excel_model.calc_name}_network.html', controls=['physics']
     )
 
     calc_results = excel_model.load_results()
     logger.info('START: EXPORT OF RESULTS TO EXCEL...')
-    excel = ExcelFcts(calc_results)
+    excel = ExcelEvaluation(calc_results)
     excel.run_excel_graphics_main()
     excel.run_excel_graphics_years(short_version=False)
     visualize_results(calc_results=calc_results)

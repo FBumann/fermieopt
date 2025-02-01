@@ -10,9 +10,9 @@ calc_results = FlixPostXL(
 )
 
 
-# excel = ExcelFcts(calc_results)
-# excel.run_excel_graphics_main()
-# excel.run_excel_graphics_years()
+excel_evaluation = ExcelEvaluation(calc_results)
+excel_evaluation.run_excel_graphics_main()
+excel_evaluation.run_excel_graphics_years()
 
 visualize_results(
     calc_results=calc_results,
