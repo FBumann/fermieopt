@@ -7,10 +7,10 @@ logger = logging.getLogger('flixOpt')
 
 ########################################################################################################################
 
-excel_file_path = r'Template_Input.xlsx'  # path to the excel input file
+excel_file_path = r'Template_Input.xlsx'  # Pfad zur Excel-Eingabedatei
 
-solver_name = 'highs'                       # Preinstalled open source solver (default). Might take a while...
-# solver_name = "gurobi"                    # Commercial solver (Free academic licences). Much faster...
+solver_name = 'highs'  # Vorinstallierter Open-Source-Solver (Standard). Kann länger dauern...
+# solver_name = 'gurobi'  # Kommerzieller Solver (kostenlose akademische Lizenzen verfügbar). Deutlich schneller...
 
 
 def main(excel_file_path: str, solver_name: str = 'highs'):
@@ -22,7 +22,7 @@ def main(excel_file_path: str, solver_name: str = 'highs'):
     )
 
     calc_results = excel_model.load_results()
-    logger.info('START: EXPORT OF RESULTS TO EXCEL...')
+    logger.info('EXPORT DER ERGEBNISSE NACH EXCEL...')
     excel = ExcelEvaluation(calc_results)
     excel.run_excel_graphics_main()
     excel.run_excel_graphics_years(short_version=False)
@@ -33,17 +33,9 @@ def main(excel_file_path: str, solver_name: str = 'highs'):
             path=calc_results.folder / f'{calc_results.name}__Report_{bus}.pdf',
             connected_to=bus,
         )
+    # Berechnungsergebnisse für weitere Analysen laden
     # calculation_results_for_further_inspection = excel_model.load_results()
 
 
 if __name__ == '__main__':
     main(excel_file_path, solver_name)
-
-# optional: change values for gap_frac and timelimit
-"""
-:param gap_frac:
-    0...1 ; gap to relaxed solution. Higher values for faster solving. 0...1
-:param timelimit:
-    timelimit in seconds. After this time limit is exceeded, the solution process is stopped and the best yet found result is used.
-    If no result is found yet, the Process is aborted
-"""
