@@ -1,5 +1,6 @@
 import logging
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union, get_args
+from pathlib import Path
 
 import flixOpt as fx
 import flixOpt.components
@@ -1440,19 +1441,19 @@ class KWKekt(InvestElement):
 
 class ElementFactory:
     class_map = {
-        'Waermepumpe': Waermepumpe,
+        'Wärmepumpe': Waermepumpe,
         'KWK': KWK,
         'Kessel': Kessel,
         'Speicher': Speicher,
-        'LinearTransformer_1_1': LinearTransformer,
+        'Umwandler': LinearTransformer,
         'Sink': Sink,
         'Source': Source,
-        'AbwaermeWP': AbwaermeWaermepumpe,
+        'Abwärme-WP': AbwaermeWaermepumpe,
         'Geothermie': Geothermie,
-        'KWKekt': KWKekt,
-        'EHK': EHK,
-        'AbwaermeHT': Abwaerme,
-        'Rueckkuehler': Rueckkuehler,
+        'KWK-Ekt': KWKekt,
+        'Power-to-Heat': EHK,
+        'Abwärme': Abwaerme,
+        'Kühlturm': Rueckkuehler,
         # More mappings as needed
     }
     def __init__(
@@ -1472,32 +1473,27 @@ class ElementFactory:
         self.created_comps: List[Element] = []
 
     def create_energy_object(self, obj_type: str, properties: Dict) -> None:
-        obj_class = self.class_map.get(obj_type)
-        if obj_class:
-            energy_obj: Element = obj_class(**properties)
-            self.created_comps.append(energy_obj)
-            energy_obj.add_to_flow_system(
-                flow_system=self.flow_system,
-                busses=self.busses,
-                time_series_data=self.time_series_data,
-                co2_factors=self.co2_factors,
-                years_of_model=self.years_of_model,
-            )
-            logger.info(f'Created {obj_type} "{energy_obj.name}"')
-        else:
-            raise ValueError(
+        try:
+            obj_class = self.class_map[obj_type]
+        except KeyError as e:
+            raise KeyError(
                 f'Unbekanntes Element: "{obj_type}". Wähle eines der folgenden Elemente aus: {list(self.class_map.keys())}'
-            )
+            ) from e
 
-    def print_comps(self):
-        rep = ''
-        for comp in sorted(self.created_comps, key=lambda comp: comp.name):
-            rep += f'{comp}\n'
-        return rep
+        energy_obj: Element = obj_class(**properties)
+        self.created_comps.append(energy_obj)
+        energy_obj.add_to_flow_system(
+            flow_system=self.flow_system,
+            busses=self.busses,
+            time_series_data=self.time_series_data,
+            co2_factors=self.co2_factors,
+            years_of_model=self.years_of_model,
+        )
+        logger.info(f'Created {obj_type} "{energy_obj.name}"')
 
     @classmethod
-    def export_model_fields_to_excel(cls,
-                                     file_name: str = 'Dokumentation.xlsx',
+    def model_overview(cls,
+                                     file_name: Optional[str] = 'Dokumentation.xlsx',
                                      sheet_name: str = 'Dokumentation') -> pd.DataFrame:
         """
         Exportiert die Feld-Aliase, Datentypen, Beschreibungen, Default-Werte und ob das Feld obligatorisch ist
@@ -1525,8 +1521,31 @@ class ElementFactory:
         df = pd.DataFrame.from_dict(field_info, orient="index").fillna(False)
         df.index.name = "Parameter"
 
-        with pd.ExcelWriter(file_name) as writer:
-            df.replace({True: "Ja", False: "Nein"}).to_excel(writer, index=True, sheet_name=sheet_name)
+        if file_name:
+            with pd.ExcelWriter(file_name) as writer:
+                df.replace({True: "Ja", False: "Nein"}).to_excel(writer, index=True, sheet_name=sheet_name)
+
+        return df
+
+    @classmethod
+    def model_templates(cls,
+                        optional_fields: bool = True,
+                        file_name: Optional[str] = 'Dokumentation.xlsx',
+                        sheet_name: str = 'Templates',
+                        ) -> pd.DataFrame:
+        """
+        Exportiert die Verfügbaren Klassn und Parameter in eine Excel-Datei.
+        """
+
+        field_info = {model_name: model.field_aliases() if optional_fields else model.mandatory_aliases()
+                      for model_name, model in cls.class_map.items()}
+
+        # Convert to DataFrame
+        df = pd.DataFrame.from_dict(field_info, orient="index").T
+
+        if file_name:
+            with pd.ExcelWriter(file_name) as writer:
+                df.to_excel(writer, index=False, sheet_name=sheet_name)
 
         return df
 
