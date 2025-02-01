@@ -325,6 +325,11 @@ class ExcelEvaluation:
         self.price_electricity = price_electricity
         self.price_helper_elements = price_helper_elements
 
+        for comp in [self.demand_heat, self.demand_heat_losses]:
+            if self.results.group_map[comp] != self.group_label_heat_demand:
+                logger.warning(f'Die Gruppe von "{comp}" ({self.results.group_map[comp]}) entspricht nicht dem '
+                               f'erwarteten Wert: "{self.group_label_heat_demand}".')
+
     def run_excel_graphics_years(self, short_version=False, custom_output_file_path: str = 'default'):
         """
         Generate detailed annual comparison plots and save them to individual Excel workbooks for each year.
@@ -384,7 +389,7 @@ class ExcelEvaluation:
         else:
             output_file_path = custom_output_file_path
 
-        logger.info('Annual Plots to Excel...')
+        logger.info('Ergebnisse je Jahr werden erstellt...')
 
         # computation for the whole calculation
 
@@ -413,14 +418,13 @@ class ExcelEvaluation:
         df_speicher_fuellstand_h = self._get_speicher_fuellstand('h', 'mean', allocated=False)
         df_speicher_fuellstand_h_alloc = self._get_speicher_fuellstand('h', 'mean', allocated=True)
 
-        logger.info('......computation of data for short version finished')
         if not short_version:
             # Erzeugung ungrouped
             df_fernwaerme_erz_h = self._get_fernwaerme_erz_individual()
 
         # TODO: weitere Grafiken
 
-        logger.info('......computation of data finished')
+        logger.info('...Berechnungen für die Ergebnisse je Jahr beendet')
 
         templ_path_excel_year = Path(__file__).parent / 'resources' / 'Template_Evaluation_Year.xlsx'
 
@@ -489,15 +493,14 @@ class ExcelEvaluation:
                 df = df_speicher_fuellstand_h[df_speicher_fuellstand_h.index.year == year]
                 df.to_excel(writer, index=True, sheet_name='Speicherfüllstand H')
 
-                logger.info(f'......Year-{year} finished (short version)')
                 if not short_version:
                     df = df_fernwaerme_erz_h[df_fernwaerme_erz_h.index.year == year]
                     df.reset_index(drop=True).to_excel(writer, index=True, sheet_name='Wärmeerzeugung-Einzeln')
-            logger.info(f'...Year-{year} finished')
+            logger.info(f'...Jahr-{year} abgeschlossen')
 
             # TODO: weitere Grafiken
 
-        logger.info('...Annual Plots to Excel finished')
+        logger.info('...Alle Jahre abgeschlossen')
 
     def run_excel_graphics_main(self, custom_output_file_path: str = 'default'):
         """
@@ -540,7 +543,7 @@ class ExcelEvaluation:
         ```
 
         """
-        logger.info('Overview Plots to Excel...')
+        logger.info('Jahresübersicht wird erstellt...')
 
         if custom_output_file_path == 'default':
             output_file_path = self.results.folder
@@ -592,7 +595,7 @@ class ExcelEvaluation:
             )
             df_speicher_fuellstand_sum_h.to_excel(writer, index=True, sheet_name='Speicher Summen')
 
-        logger.info('...Overview Plots to Excel finished')
+        logger.info('...Jahesübersicht abgeschlossen')
 
     def _get_costs_and_funding_per_year(self):
         funding_var = self.results.get_effect_results(self.effect_funding, origin='operation', as_time_series=True)
@@ -1068,7 +1071,7 @@ def write_bus_results_to_excel(
     -------
     None
     """
-    logger.info(f'...Writing Bus Results ({resample_by}) to Excel...')
+    logger.info(f'...Ergebnisse je Bus ({resample_by}) werden erstellt...')
 
     if custom_output_file_path == 'default':
         output_file_path = calc.folder
@@ -1085,7 +1088,7 @@ def write_bus_results_to_excel(
         )
         df_to_excel_w_chart(data, path_excel, bus_name, 'MWh', 'Time')
 
-    logger.info(f'......Buses ({resample_by}) finished')
+    logger.info(f'......Ergebnisse je Bus ({resample_by}) abgeschlossen')
 
 
 def write_component_results_to_excel(
@@ -1108,7 +1111,7 @@ def write_component_results_to_excel(
     -------
     None
     """
-    logger.info(f'...Writing Components Results ({resample_by}) to Excel...')
+    logger.info(f'...Ergebnisse der Anlagen ({resample_by}) werden erstellt...')
 
     if custom_output_file_path == 'default':
         output_file_path = calc.folder
@@ -1125,14 +1128,14 @@ def write_component_results_to_excel(
         )
         df_to_excel_w_chart(data, path_excel, comp_name, 'MWh', 'Time')
 
-    logger.info(f'......Components ({resample_by}) finished')
+    logger.info(f'......Ergebnisse der Anlagen ({resample_by}) abgeschlossen')
 
 
 def write_effects_per_comp_per_period_to_excel(calc: FlixPostXL, custom_output_file_path: str = 'default'):
     """
     Saving the effects of every component per period to excel
     """
-    logger.info('...Writing Effects Results per Component...')
+    logger.info('...Effekte pro Jahr und Anlage werden erstellt...')
 
     if custom_output_file_path == 'default':
         output_file_path = calc.folder
@@ -1206,33 +1209,34 @@ def visualize_results(
     Returns:
         FlixPostXL: The calculated results.
     """
-    logger.info('Writing Results to Excel (YE)...')
+    logger.info('Weitere Ergebnisse werden exportiert...')
     if buses_yearly:
         write_bus_results_to_excel(calc_results, 'YE')
     if effects_per_comp_and_year:
         write_effects_per_comp_per_period_to_excel(calc_results)
     if comps_yearly:
         write_component_results_to_excel(calc_results, 'YE')
-    logger.info('...Results to Excel (YE) finished...')
+    if any([buses_yearly, effects_per_comp_and_year,comps_yearly]):
+        logger.info('...Jahreswerte abgeschlossen...')
 
-    logger.info('Writing Results to Excel (d)...')
     if buses_daily:
         write_bus_results_to_excel(calc_results, 'd')
     if comps_daily:
         write_component_results_to_excel(calc_results, 'd')
-    logger.info('...Results to Excel (d) finished...')
+    if any([buses_yearly, effects_per_comp_and_year, comps_yearly]):
+        logger.info('...Tageswerte abgeschlossen...')
 
-    logger.info('Writing results to Excel (h)...')
     if buses_hourly:
         write_bus_results_to_excel(calc_results, 'h')
     if comps_hourly:
         write_component_results_to_excel(calc_results, 'h')
-    logger.info('...Results to Excel (h) finished...')
+    if any([buses_hourly, comps_hourly]):
+        logger.info('...Stundenwerte abgeschlossen...')
 
 
 ################## PDF - OUTPUT ####################
 def create_report(calc: FlixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4):
-    logger.info(f"Creating Report of Components connected to '{connected_to}'")
+    logger.info(f'Erstelle PDF-Report für Komponenten an Bus "{connected_to}"')
     res = calc.bus_results[connected_to]
     flows_to_plot = [
         flow.label_full for flow in res.inputs + res.outputs if flow.to_dataframe('flow_rate').sum().sum() >= 1
@@ -1260,7 +1264,7 @@ def create_report(calc: FlixPostXL, path: str = 'report.pdf', connected_to: str 
 def create_report_grouped(
     calc: FlixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4
 ) -> None:
-    logger.info(f"Creating Report of Components connected to '{connected_to}'")
+    logger.info(f'Erstelle gruppierten PDF-Report für Komponenten an Bus "{connected_to}"')
     # Filtering and sorting
     grouped_flows = {'others': []}
     res = calc.bus_results[connected_to]
