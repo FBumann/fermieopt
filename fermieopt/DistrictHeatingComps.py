@@ -16,6 +16,12 @@ from fermieopt.config import BusLabels, TemperatureLabels, FuelTypeToPriceMappin
 logger = logging.getLogger('flixOpt')
 
 
+Zahl_oder_Zeitreihe = Union[int, float, str]
+Zahl_oder_Zeitreihe_optional = Optional[Zahl_oder_Zeitreihe]
+Zeitreihe = str
+Zeitreihe_optional = Optional[Zeitreihe]
+
+
 class Element(
     BaseModel,
     populate_by_name=True,  # Enables using both field names and aliases
@@ -329,7 +335,7 @@ class InvestElement(Element):
 
 class PowerInvestElement(InvestElement):
     power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(alias='Nennleistung [MW]')
-    fixed_profile: Optional[str] = Field(alias='Festes Profil', default=None)
+    fixed_profile: Zeitreihe_optional = Field(alias='Festes Profil', default=None)
 
     def _insert_data(self, data: pd.DataFrame):
         self.fixed_profile = extract_data(self.fixed_profile, data)
@@ -351,15 +357,15 @@ class ThermalInvestElement(InvestElement):
     grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0, description='Fällt jährlich an, solange die ANlage betrieben wird. Die höhe enspricht der höchsten möglichen Netzbezugsleistung, berechnent aus Nennleistung, Effizientz und verfügbarkeit.')
     bus_heat: str = Field(alias='Wärmebus', default=BusLabels.HEAT)
 
-    costs_per_mwh_heat_extra: Union[int, float, str] = Field(
+    costs_per_mwh_heat_extra: Zahl_oder_Zeitreihe = Field(
         alias='Zusätzliche Wärmeerzeugungskosten [€/MWh]', default=0,
         description='Fallen bei der erzeugung von Wärme an.'
     )
-    relative_maximum: Union[int, float, str] = Field(alias='Relative thermische Leistungsobergrenze', default=1,
+    relative_maximum: Zahl_oder_Zeitreihe = Field(alias='Relative thermische Leistungsobergrenze', default=1,
                                                      description='Verfügbarkeit der Anlage, bezogen auf die thermische Nennleistung .')
-    relative_minimum: Union[int, float, str] = Field(alias='Relative thermische Leistungsuntergrenze', default=0,
+    relative_minimum: Zahl_oder_Zeitreihe = Field(alias='Relative thermische Leistungsuntergrenze', default=0,
                                                      description='Mindestleistung der Anlage, bezogen auf die thermische Nennleistung.')
-    green_heat_factor: Union[int, float, str] = Field(alias='Grüne Wärme', default=0,
+    green_heat_factor: Zahl_oder_Zeitreihe = Field(alias='Grüne Wärme', default=0,
                                                       description='Zahlt die produzierte Wärme auf das Ziel "Grüne Wärme" ein? (Kann auch anteilig sein)')
 
     def _insert_data(self, data: pd.DataFrame):
@@ -477,12 +483,12 @@ class Source(PowerInvestElement):
 
 
 class LinearTransformer(PowerInvestElement):
-    efficiency: Union[int, float, str] = Field(alias='Wirkungsgrad')
+    efficiency: Zahl_oder_Zeitreihe = Field(alias='Wirkungsgrad')
     bus_in: str = Field(alias='Von Bus')
     bus_out: str = Field(alias='Zu Bus')
     flow_label_in: str = Field(alias='Flowname in', default='in')
     flow_label_out: str = Field(alias='Flowname out', default='out')
-    cost_per_mwh_in: Union[int, float, str] = Field(alias='Kosten pro MWh von Bus', default=0,
+    cost_per_mwh_in: Zahl_oder_Zeitreihe = Field(alias='Kosten pro MWh von Bus', default=0,
                                                     description='Kosten pro MWh, die die Anlage bezieht')
 
     def _insert_data(self, data: pd.DataFrame):
@@ -526,9 +532,9 @@ class LinearTransformer(PowerInvestElement):
 
 
 class FuelThermalInvestElement(ThermalInvestElement):
-    eta_thermal: Union[float, str] = Field(alias='Thermischer Wirkungsgrad')
+    eta_thermal: Zahl_oder_Zeitreihe = Field(alias='Thermischer Wirkungsgrad')
     fuel_type: str = Field(alias='Brennstoff')
-    fuel_cost_extra: Union[float, str] = Field(alias='Brennstoffkosten Zusatz [€/MWh_hu]', default=0)
+    fuel_cost_extra: Zahl_oder_Zeitreihe = Field(alias='Brennstoffkosten Zusatz [€/MWh_hu]', default=0)
     _fuel_costs: Union[float, np.ndarray] = 0
 
     def _insert_data(self, data: pd.DataFrame):
@@ -595,14 +601,14 @@ class Kessel(FuelThermalInvestElement):
 
 
 class KWK(FuelThermalInvestElement):
-    eta_el: Union[int, float, str] = Field(alias='Elektrischer Wirkungsgrad')
-    forward_flow_temperature: Union[int, float, str] = Field(
+    eta_el: Zahl_oder_Zeitreihe = Field(alias='Elektrischer Wirkungsgrad')
+    forward_flow_temperature: Zahl_oder_Zeitreihe = Field(
         alias='Vorlauftemperatur', default=TemperatureLabels.NETWORK_FORWARD
     )
-    reverse_flow_temperature: Union[int, float, str] = Field(
+    reverse_flow_temperature: Zahl_oder_Zeitreihe = Field(
         alias='Rücklauftemperatur', default=TemperatureLabels.NETWORK_RETURN
     )
-    ambient_temperature: Union[int, float, str] = Field(
+    ambient_temperature: Zahl_oder_Zeitreihe = Field(
         alias='Umgebungstemperatur', default=TemperatureLabels.AMBIENT_AIR
     )
 
@@ -705,14 +711,14 @@ class KWK(FuelThermalInvestElement):
 
 
 class Waermepumpe(ThermalInvestElement):
-    cop: Optional[Union[int, float, str]] = Field(alias='COP', default=None)
-    carnot_efficiency: Optional[Union[int, float, str]] = Field(alias='Carnot Effizienz', default=0.5)
-    source_temperature: Union[int, float, str] = Field(alias='Quelltemperatur', default=None)
-    sink_temperature: Union[int, float, str] = Field(
+    cop: Zahl_oder_Zeitreihe_optional = Field(alias='COP', default=None)
+    carnot_efficiency: Zahl_oder_Zeitreihe_optional = Field(alias='Carnot Effizienz', default=0.5)
+    source_temperature: Zahl_oder_Zeitreihe_optional = Field(alias='Quelltemperatur', default=None)
+    sink_temperature: Zahl_oder_Zeitreihe = Field(
         alias='Zieltemperatur', default=TemperatureLabels.NETWORK_FORWARD
     )
 
-    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
+    extra_costs_per_mwh_elec: Zahl_oder_Zeitreihe = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
 
     scop_bew: Optional[Union[int, float]] = Field(alias='SCOP für BEW', default=None)
     max_bew_elec_funding: Optional[Union[int, float]] = Field(alias='Maximale Stromkostenförderung BEW', default=None)
@@ -896,15 +902,15 @@ class Speicher(ThermalInvestElement):
     invest_costs_capacity_specific: Union[int, float] = Field(alias='Investkosten [€/MWh]', default=0)
     annual_costs_capacity_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/(MWh*a)]', default=0)
 
-    eta_load: Union[int, float, str] = Field(alias='eta_load')
-    eta_unload: Union[int, float, str] = Field(alias='eta_unload')
-    loss_per_hour: Union[int, float, str] = Field(alias='VerlustProStunde', default=0)
+    eta_load: Zahl_oder_Zeitreihe = Field(alias='eta_load')
+    eta_unload: Zahl_oder_Zeitreihe = Field(alias='eta_unload')
+    loss_per_hour: Zahl_oder_Zeitreihe = Field(alias='VerlustProStunde', default=0)
 
     depends_on_temperature: bool = Field(alias='AbhängigkeitVonDT', default=False)
-    temperature_lower: Union[int, float, str] = Field(
+    temperature_lower: Zahl_oder_Zeitreihe = Field(
         alias='Untere Temperatur', default=TemperatureLabels.NETWORK_RETURN
     )
-    temperature_upper: Union[int, float, str] = Field(
+    temperature_upper: Zahl_oder_Zeitreihe = Field(
         alias='Obere Temperatur', default=TemperatureLabels.NETWORK_FORWARD
     )
 
@@ -1066,7 +1072,7 @@ class Speicher(ThermalInvestElement):
 
 class EHK(ThermalInvestElement):
     eta_thermal: Union[float, str] = Field(alias='Thermischer Wirkungsgrad')
-    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
+    extra_costs_per_mwh_elec: Zahl_oder_Zeitreihe = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
     bus_elec: str = Field(alias='Strombus', default=BusLabels.ELECTRICITY_IN)
 
     def _insert_data(self, data: pd.DataFrame):
@@ -1114,8 +1120,8 @@ class EHK(ThermalInvestElement):
 
 
 class Rueckkuehler(ThermalInvestElement):
-    specific_electricity_demand: Union[int, float, str] = Field(alias='Strombedarf', default=0)
-    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
+    specific_electricity_demand: Zahl_oder_Zeitreihe = Field(alias='Strombedarf', default=0)
+    extra_costs_per_mwh_elec: Zahl_oder_Zeitreihe = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
 
     bus_elec: str = Field(alias='Strombus', default=BusLabels.ELECTRICITY_IN)
 
@@ -1170,7 +1176,7 @@ class Rueckkuehler(ThermalInvestElement):
 
 
 class AbwaermeWaermepumpe(Waermepumpe):
-    heat_source_costs: Union[int, float, str] = Field(alias='Abwärmekosten', default=0)
+    heat_source_costs: Zahl_oder_Zeitreihe = Field(alias='Abwärmekosten', default=0)
     bus_waste_heat: str = Field(alias='Abwärmebus', default=BusLabels.WASTE_HEAT)
 
     def _insert_data(self, data: pd.DataFrame):
@@ -1221,7 +1227,7 @@ class AbwaermeWaermepumpe(Waermepumpe):
 
 
 class Geothermie(Waermepumpe):
-    amount_of_pump_electricity: Union[int, float, str] = Field(alias='Anteil Pumpstrom pro MW_geo', ge=0)
+    amount_of_pump_electricity: Zahl_oder_Zeitreihe = Field(alias='Anteil Pumpstrom pro MW_geo', ge=0)
     bus_waste_heat: str = Field(alias='Abwärmebus', default=BusLabels.WASTE_HEAT)
 
     def _insert_data(self, data: pd.DataFrame):
@@ -1281,7 +1287,7 @@ class Geothermie(Waermepumpe):
 
 
 class Abwaerme(ThermalInvestElement):
-    waste_heat_costs: Union[int, float, str] = Field(alias='Abwärmekosten')
+    waste_heat_costs: Zahl_oder_Zeitreihe = Field(alias='Abwärmekosten')
     bus_waste_heat: str = Field(alias='Abwärmebus', default=BusLabels.WASTE_HEAT)
 
     def _insert_data(self, data: pd.DataFrame):
@@ -1338,14 +1344,14 @@ class KWKekt(InvestElement):
     bus_elec: str = Field(alias='Strombus', default=BusLabels.ELECTRICITY_OUT)
     bus_heat: str = Field(alias='Wärmebus', default=BusLabels.HEAT)
 
-    relative_maximum: Union[int, float, str] = Field(alias='Relative Brennstoff Leistungsobergrenze', default=1)
-    relative_minimum: Union[int, float, str] = Field(alias='Relative Brennstoff Leistungsuntergrenze', default=0)
-    green_heat_factor: Union[int, float, str] = Field(alias='Grüne Wärme', default=0)
+    relative_maximum_fuel: Zahl_oder_Zeitreihe = Field(alias='Relative Brennstoff Leistungsobergrenze', default=1)
+    relative_minimum_fuel: Zahl_oder_Zeitreihe = Field(alias='Relative Brennstoff Leistungsuntergrenze', default=0)
+    green_heat_factor: Zahl_oder_Zeitreihe = Field(alias='Grüne Wärme', default=0)
 
     def _insert_data(self, data: pd.DataFrame):
         self.fuel_costs = extract_data(self.fuel_costs, data)
-        self.relative_maximum = extract_data(self.relative_maximum, data)
-        self.relative_minimum = extract_data(self.relative_minimum, data)
+        self.relative_maximum_fuel = extract_data(self.relative_maximum_fuel, data)
+        self.relative_minimum_fuel = extract_data(self.relative_minimum_fuel, data)
         self.green_heat_factor = extract_data(self.green_heat_factor, data)
 
     def _convert_to_flixopt(
@@ -1367,8 +1373,8 @@ class KWKekt(InvestElement):
             busses[self.fuel_type],
             size=self.fuel_power,
             effects_per_flow_hour={effects['costs']: self.fuel_costs},
-            relative_minimum=self.relative_maximum,
-            relative_maximum=self.relative_maximum,
+            relative_minimum=self.relative_maximum_fuel,
+            relative_maximum=self.relative_maximum_fuel,
         )
         flow_el = fx.Flow(
             'Pel',
@@ -1503,9 +1509,11 @@ class ElementFactory:
             for field_name, field in model.model_fields.items():
                 alias = field.alias or field_name
                 description = field.description or ""
+                as_time_series = True if str in field.annotation and (int in field.annotation or float in field.annotation) else False
 
                 if alias not in field_info:
-                    field_info[alias] = {"Beschreibung": description}
+                    field_info[alias] = {"Beschreibung": description,
+                                         "Auch als Zeitreihe": as_time_series}
 
                 field_info[alias][model_name] = True  # Mark field as present
 
