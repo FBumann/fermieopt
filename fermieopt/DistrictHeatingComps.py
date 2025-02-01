@@ -1509,7 +1509,9 @@ class ElementFactory:
             for field_name, field in model.model_fields.items():
                 alias = field.alias or field_name
                 description = field.description or ""
-                as_time_series = True if str in field.annotation and (int in field.annotation or float in field.annotation) else False
+
+                types = get_args(field.annotation)
+                as_time_series = any(t is str for t in types) and any(t in (int, float) for t in types)
 
                 if alias not in field_info:
                     field_info[alias] = {"Beschreibung": description,
