@@ -30,8 +30,10 @@ class Element(
 ):
     name: str = Field(alias='Name', description='Name des Energieelements. Jeder Name muss eindeutig sein.')
     group: Optional[str] = Field(
-        alias='Gruppe', default=None,
-        description='Verwendet zur Gruppierung verschiedener Energieelemente in der Auswertung.')
+        alias='Gruppe',
+        default=None,
+        description='Verwendet zur Gruppierung verschiedener Energieelemente in der Auswertung.',
+    )
 
     def add_to_flow_system(
         self,
@@ -66,15 +68,17 @@ class Element(
     ) -> flixOpt.elements.Component:
         raise NotImplementedError
 
-
     @classmethod
     def field_aliases(cls):
         return [field_info.alias or field_name for field_name, field_info in cls.model_fields.items()]
 
     @classmethod
     def mandatory_aliases(cls):
-        return [field_info.alias or field_name for field_name, field_info in cls.model_fields.items()
-                if field_info.default is PydanticUndefined]
+        return [
+            field_info.alias or field_name
+            for field_name, field_info in cls.model_fields.items()
+            if field_info.default is PydanticUndefined
+        ]
 
     @classmethod
     def model_fields_as_df(cls) -> pd.DataFrame:
@@ -91,28 +95,68 @@ class Element(
         # Metadaten extrahieren
         data = [
             {
-                "Parameter": field_info.alias or field_name,
-                "Beschreibung": getattr(field_info, "description", "") or "",
-                "Erforderlich": "Ja" if field_info.default is PydanticUndefined else "Nein",
+                'Parameter': field_info.alias or field_name,
+                'Beschreibung': getattr(field_info, 'description', '') or '',
+                'Erforderlich': 'Ja' if field_info.default is PydanticUndefined else 'Nein',
             }
             for field_name, field_info in cls.model_fields.items()
         ]
 
-        return  pd.DataFrame(data)
+        return pd.DataFrame(data)
 
 
 class InvestElement(Element):
-    start_year: Optional[int] = Field(alias='Startjahr', default=None, ge=1800, description='Start der Abschreibung und Inbetriebnahme')
-    amortization_time: Optional[int] = Field(alias='Abschreibungsdauer', default=None, ge=1, description='Zeit in Jahren, bis der Erzeuger vollständig abgeschrieben ist')
-    lifetime: Optional[int] = Field(alias='Lebensdauer', default=None, ge=1, description='Zeit in Jahren, bis der Erzeuger nicht mehr betrieben werden kann')
-    optional: bool = Field(alias='Optional', default=False, description='Wenn Ja, dann ist der Erzeuger optional. Ind er Optimierung wird entschieden ob das Investment getätigt wird um ihn Betreiben zu können, oder nicht.')
-    invest_costs_fixed: Union[int, float] = Field(alias='Investkosten (fix) [€]', default=0, description='Werden über die Abschreibungsdauer annuisiert, falls sich für die Investitions entschieden wird.')
-    invest_costs_specific: Union[int, float] = Field(alias='Investkosten (spezifisch) [€/MW]', default=0, description='Werden über die Abschreibungsdauer annuisiert, falls sich für die Investitions entschieden wird. Ist entschieden um die Größe einer Anlage zu optimieren.')
-    annual_costs_fixed: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/a]', default=0, description='Fallen über die Lebensdauer jährlich an, falls sich für die Investitions entschieden wird.')
-    annual_costs_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (spezifisch) [€/(MW*a)]', default=0, description='Fallen über die Lebensdauer jährlich an, falls sich für die Investitions entschieden wird. Ist entschieden um die Größe einer Anlage zu optimieren.')
-    interest_rate: Union[int, float] = Field(alias='Zinssatz', default=0, description='Zinssatz für die annuisierung der Anlage.')
-    funding_rate: Union[int, float] = Field(alias='Fördersatz', default=0, description='Anteil der Investitionskosten, der gefördert wird.')
-    invest_group: Optional[str] = Field(alias='Investgruppe', default=None, description='Gruppierung der Investition. Format: "Gruppe:Limit". Damit kann eine obergrenze für mehrere Anlagen definiert werden.')
+    start_year: Optional[int] = Field(
+        alias='Startjahr', default=None, ge=1800, description='Start der Abschreibung und Inbetriebnahme'
+    )
+    amortization_time: Optional[int] = Field(
+        alias='Abschreibungsdauer',
+        default=None,
+        ge=1,
+        description='Zeit in Jahren, bis der Erzeuger vollständig abgeschrieben ist',
+    )
+    lifetime: Optional[int] = Field(
+        alias='Lebensdauer',
+        default=None,
+        ge=1,
+        description='Zeit in Jahren, bis der Erzeuger nicht mehr betrieben werden kann',
+    )
+    optional: bool = Field(
+        alias='Optional',
+        default=False,
+        description='Wenn Ja, dann ist der Erzeuger optional. Ind er Optimierung wird entschieden ob das Investment getätigt wird um ihn Betreiben zu können, oder nicht.',
+    )
+    invest_costs_fixed: Union[int, float] = Field(
+        alias='Investkosten (fix) [€]',
+        default=0,
+        description='Werden über die Abschreibungsdauer annuisiert, falls sich für die Investitions entschieden wird.',
+    )
+    invest_costs_specific: Union[int, float] = Field(
+        alias='Investkosten (spezifisch) [€/MW]',
+        default=0,
+        description='Werden über die Abschreibungsdauer annuisiert, falls sich für die Investitions entschieden wird. Ist entschieden um die Größe einer Anlage zu optimieren.',
+    )
+    annual_costs_fixed: Union[int, float] = Field(
+        alias='Sonstige Fixkosten (fix) [€/a]',
+        default=0,
+        description='Fallen über die Lebensdauer jährlich an, falls sich für die Investitions entschieden wird.',
+    )
+    annual_costs_specific: Union[int, float] = Field(
+        alias='Sonstige Fixkosten (spezifisch) [€/(MW*a)]',
+        default=0,
+        description='Fallen über die Lebensdauer jährlich an, falls sich für die Investitions entschieden wird. Ist entschieden um die Größe einer Anlage zu optimieren.',
+    )
+    interest_rate: Union[int, float] = Field(
+        alias='Zinssatz', default=0, description='Zinssatz für die annuisierung der Anlage.'
+    )
+    funding_rate: Union[int, float] = Field(
+        alias='Fördersatz', default=0, description='Anteil der Investitionskosten, der gefördert wird.'
+    )
+    invest_group: Optional[str] = Field(
+        alias='Investgruppe',
+        default=None,
+        description='Gruppierung der Investition. Format: "Gruppe:Limit". Damit kann eine obergrenze für mehrere Anlagen definiert werden.',
+    )
 
     @property
     def needs_investment(self) -> bool:
@@ -302,7 +346,9 @@ class InvestElement(Element):
             flow_system.add_elements(component)
 
     @staticmethod
-    def operation_years(start_year: Optional[int], lifetime: Optional[int], years_of_model: List[int]) -> np.ndarray[int]:
+    def operation_years(
+        start_year: Optional[int], lifetime: Optional[int], years_of_model: List[int]
+    ) -> np.ndarray[int]:
         """
         Retuns the active periods, depending on the start year and lifetim and the years of the model.
         Returns all ones if no start year or lifetime are given
@@ -353,21 +399,36 @@ class PowerInvestElement(InvestElement):
 
 class ThermalInvestElement(InvestElement):
     thermal_power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(
-        alias='Thermische Leistung [MW]', description='Thermische (Nenn-)Leistung des Erzeugers. Kann auch als "Von-Bis" angegeben werden, um die Größe anhand der Investitionskosten zu optimieren.'
+        alias='Thermische Leistung [MW]',
+        description='Thermische (Nenn-)Leistung des Erzeugers. Kann auch als "Von-Bis" angegeben werden, um die Größe anhand der Investitionskosten zu optimieren.',
     )
-    grid_fee_per_year: Union[int, float] = Field(alias='Netzentgelt [€/(MW*a)]', default=0, description='Fällt jährlich an, solange die ANlage betrieben wird. Die höhe enspricht der höchsten möglichen Netzbezugsleistung, berechnent aus Nennleistung, Effizientz und verfügbarkeit.')
+    grid_fee_per_year: Union[int, float] = Field(
+        alias='Netzentgelt [€/(MW*a)]',
+        default=0,
+        description='Fällt jährlich an, solange die ANlage betrieben wird. Die höhe enspricht der höchsten möglichen Netzbezugsleistung, berechnent aus Nennleistung, Effizientz und verfügbarkeit.',
+    )
     bus_heat: str = Field(alias='Wärmebus', default=BusLabels.HEAT)
 
     costs_per_mwh_heat_extra: Zahl_oder_Zeitreihe = Field(
-        alias='Zusätzliche Wärmeerzeugungskosten [€/MWh]', default=0,
-        description='Fallen bei der erzeugung von Wärme an.'
+        alias='Zusätzliche Wärmeerzeugungskosten [€/MWh]',
+        default=0,
+        description='Fallen bei der erzeugung von Wärme an.',
     )
-    relative_maximum: Zahl_oder_Zeitreihe = Field(alias='Relative thermische Leistungsobergrenze', default=1,
-                                                     description='Verfügbarkeit der Anlage, bezogen auf die thermische Nennleistung .')
-    relative_minimum: Zahl_oder_Zeitreihe = Field(alias='Relative thermische Leistungsuntergrenze', default=0,
-                                                     description='Mindestleistung der Anlage, bezogen auf die thermische Nennleistung.')
-    green_heat_factor: Zahl_oder_Zeitreihe = Field(alias='Grüne Wärme', default=0,
-                                                      description='Zahlt die produzierte Wärme auf das Ziel "Grüne Wärme" ein? (Kann auch anteilig sein)')
+    relative_maximum: Zahl_oder_Zeitreihe = Field(
+        alias='Relative thermische Leistungsobergrenze',
+        default=1,
+        description='Verfügbarkeit der Anlage, bezogen auf die thermische Nennleistung .',
+    )
+    relative_minimum: Zahl_oder_Zeitreihe = Field(
+        alias='Relative thermische Leistungsuntergrenze',
+        default=0,
+        description='Mindestleistung der Anlage, bezogen auf die thermische Nennleistung.',
+    )
+    green_heat_factor: Zahl_oder_Zeitreihe = Field(
+        alias='Grüne Wärme',
+        default=0,
+        description='Zahlt die produzierte Wärme auf das Ziel "Grüne Wärme" ein? (Kann auch anteilig sein)',
+    )
 
     def _insert_data(self, data: pd.DataFrame):
         self.costs_per_mwh_heat_extra = extract_data(self.costs_per_mwh_heat_extra, data)
@@ -380,7 +441,10 @@ class ThermalInvestElement(InvestElement):
         effects: Dict[str, fx.Effect],
     ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
         """Calculates the thermal_effects per flow_hour."""
-        data = {effects[EffectLabels.GREEN_HEAT]: self.green_heat_factor, effects['costs']: self.costs_per_mwh_heat_extra}
+        data = {
+            effects[EffectLabels.GREEN_HEAT]: self.green_heat_factor,
+            effects['costs']: self.costs_per_mwh_heat_extra,
+        }
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
 
     def insert_grid_fee(
@@ -489,8 +553,9 @@ class LinearTransformer(PowerInvestElement):
     bus_out: str = Field(alias='Zu Bus')
     flow_label_in: str = Field(alias='Flowname in', default='in')
     flow_label_out: str = Field(alias='Flowname out', default='out')
-    cost_per_mwh_in: Zahl_oder_Zeitreihe = Field(alias='Kosten pro MWh von Bus', default=0,
-                                                    description='Kosten pro MWh, die die Anlage bezieht')
+    cost_per_mwh_in: Zahl_oder_Zeitreihe = Field(
+        alias='Kosten pro MWh von Bus', default=0, description='Kosten pro MWh, die die Anlage bezieht'
+    )
 
     def _insert_data(self, data: pd.DataFrame):
         super()._insert_data(data)
@@ -555,7 +620,10 @@ class FuelThermalInvestElement(ThermalInvestElement):
             effects['costs']: (
                 self._fuel_costs
                 + self.fuel_cost_extra
-                + (self.co2_factor(time_series_data, co2_factors) * extract_data(EnergyPriceLabels.CO2, time_series_data))
+                + (
+                    self.co2_factor(time_series_data, co2_factors)
+                    * extract_data(EnergyPriceLabels.CO2, time_series_data)
+                )
             ),
             effects['CO2']: self.co2_factor(time_series_data, co2_factors),
         }
@@ -609,9 +677,7 @@ class KWK(FuelThermalInvestElement):
     reverse_flow_temperature: Zahl_oder_Zeitreihe = Field(
         alias='Rücklauftemperatur', default=TemperatureLabels.NETWORK_RETURN
     )
-    ambient_temperature: Zahl_oder_Zeitreihe = Field(
-        alias='Umgebungstemperatur', default=TemperatureLabels.AMBIENT_AIR
-    )
+    ambient_temperature: Zahl_oder_Zeitreihe = Field(alias='Umgebungstemperatur', default=TemperatureLabels.AMBIENT_AIR)
 
     bus_elec: str = Field(alias='Strombus', default=BusLabels.ELECTRICITY_OUT)
 
@@ -715,9 +781,7 @@ class Waermepumpe(ThermalInvestElement):
     cop: Zahl_oder_Zeitreihe_optional = Field(alias='COP', default=None)
     carnot_efficiency: Zahl_oder_Zeitreihe_optional = Field(alias='Carnot Effizienz', default=0.5)
     source_temperature: Zahl_oder_Zeitreihe_optional = Field(alias='Quelltemperatur', default=None)
-    sink_temperature: Zahl_oder_Zeitreihe = Field(
-        alias='Zieltemperatur', default=TemperatureLabels.NETWORK_FORWARD
-    )
+    sink_temperature: Zahl_oder_Zeitreihe = Field(alias='Zieltemperatur', default=TemperatureLabels.NETWORK_FORWARD)
 
     extra_costs_per_mwh_elec: Zahl_oder_Zeitreihe = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
 
@@ -775,7 +839,9 @@ class Waermepumpe(ThermalInvestElement):
             )
 
     def _get_electricity_costs_per_mwh(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
-        return extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data) + extract_data(self.extra_costs_per_mwh_elec, time_series_data)
+        return extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data) + extract_data(
+            self.extra_costs_per_mwh_elec, time_series_data
+        )
 
     def _get_operation_funding_bew(
         self, time_series_data: pd.DataFrame, years_of_model: List[int]
@@ -908,12 +974,8 @@ class Speicher(ThermalInvestElement):
     loss_per_hour: Zahl_oder_Zeitreihe = Field(alias='VerlustProStunde', default=0)
 
     depends_on_temperature: bool = Field(alias='AbhängigkeitVonDT', default=False)
-    temperature_lower: Zahl_oder_Zeitreihe = Field(
-        alias='Untere Temperatur', default=TemperatureLabels.NETWORK_RETURN
-    )
-    temperature_upper: Zahl_oder_Zeitreihe = Field(
-        alias='Obere Temperatur', default=TemperatureLabels.NETWORK_FORWARD
-    )
+    temperature_lower: Zahl_oder_Zeitreihe = Field(alias='Untere Temperatur', default=TemperatureLabels.NETWORK_RETURN)
+    temperature_upper: Zahl_oder_Zeitreihe = Field(alias='Obere Temperatur', default=TemperatureLabels.NETWORK_FORWARD)
 
     default_temperature_spread: Union[int, float] = Field(
         alias='Nenn-Temperaturspreizung', default=TemperatureLabels.DEFAULT_SPREAD
@@ -1098,7 +1160,9 @@ class EHK(ThermalInvestElement):
                 label='Pel',
                 bus=busses[self.bus_elec],
                 effects_per_flow_hour={
-                    effects['costs']: (extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data) + self.extra_costs_per_mwh_elec)
+                    effects['costs']: (
+                        extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data) + self.extra_costs_per_mwh_elec
+                    )
                 },
             ),
             Q_th=fx.Flow(
@@ -1147,7 +1211,8 @@ class Rueckkuehler(ThermalInvestElement):
                 label='Pel',
                 bus=busses[self.bus_elec],
                 effects_per_flow_hour={
-                    effects['costs']: extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data) + self.extra_costs_per_mwh_elec
+                    effects['costs']: extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data)
+                    + self.extra_costs_per_mwh_elec
                 },
             ),
             Q_th=fx.Flow(
@@ -1366,7 +1431,9 @@ class KWKekt(InvestElement):
         effects = flow_system.effect_collection.effects
 
         flow_heat = fx.Flow(
-            'Qth', busses[self.bus_heat], size=max(self.thermal_power),
+            'Qth',
+            busses[self.bus_heat],
+            size=max(self.thermal_power),
             effects_per_flow_hour={effects[EffectLabels.GREEN_HEAT]: self.green_heat_factor},
         )
         flow_fuel = fx.Flow(
@@ -1381,7 +1448,9 @@ class KWKekt(InvestElement):
             'Pel',
             busses[self.bus_elec],
             size=max(self.electrical_power),
-            effects_per_flow_hour={effects['costs']: -1 * extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data)},
+            effects_per_flow_hour={
+                effects['costs']: -1 * extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data)
+            },
         )
 
         if self.can_be_off:
@@ -1456,6 +1525,7 @@ class ElementFactory:
         'Kühlturm': Rueckkuehler,
         # More mappings as needed
     }
+
     def __init__(
         self,
         flow_system: fx.FlowSystem,
@@ -1492,56 +1562,61 @@ class ElementFactory:
         logger.info(f'Created {obj_type} "{energy_obj.name}"')
 
     @classmethod
-    def model_overview(cls,
-                                     file_name: Optional[str] = 'Dokumentation.xlsx',
-                                     sheet_name: str = 'Dokumentation') -> pd.DataFrame:
+    def model_overview(
+        cls, file_name: Optional[str] = 'Dokumentation.xlsx', sheet_name: str = 'Dokumentation'
+    ) -> pd.DataFrame:
         """
         Exportiert die Feld-Aliase, Datentypen, Beschreibungen, Default-Werte und ob das Feld obligatorisch ist
         in eine Excel-Datei.
         """
 
         field_info = {}
-        types_translation = {int: 'Integer', float: 'Float', str: 'String', bool: "Ja/Nein", type(None): "None"}
+        types_translation = {int: 'Integer', float: 'Float', str: 'String', bool: 'Ja/Nein', type(None): 'None'}
         for model_name, model in cls.class_map.items():
             for field_name, field in model.model_fields.items():
                 alias = field.alias or field_name
-                description = field.description or ""
+                description = field.description or ''
 
                 types = get_args(field.annotation) or [field.annotation]
                 as_time_series = any(t is str for t in types) and any(t in (int, float) for t in types)
 
                 if alias not in field_info:
-                    field_info[alias] = {"Beschreibung": description,
-                                         "Auch als Zeitreihe": as_time_series,
-                                         "Typ": str(list(set(types_translation.get(t, t) for t in types)))}
+                    field_info[alias] = {
+                        'Beschreibung': description,
+                        'Auch als Zeitreihe': as_time_series,
+                        'Typ': str(list(set(types_translation.get(t, t) for t in types))),
+                    }
 
                 field_info[alias][model_name] = True  # Mark field as present
 
         # Convert to DataFrame
-        df = pd.DataFrame.from_dict(field_info, orient="index").fillna(False)
-        df.index.name = "Parameter"
+        df = pd.DataFrame.from_dict(field_info, orient='index').fillna(False)
+        df.index.name = 'Parameter'
 
         if file_name:
             with pd.ExcelWriter(file_name) as writer:
-                df.replace({True: "Ja", False: "Nein"}).to_excel(writer, index=True, sheet_name=sheet_name)
+                df.replace({True: 'Ja', False: 'Nein'}).to_excel(writer, index=True, sheet_name=sheet_name)
 
         return df
 
     @classmethod
-    def model_templates(cls,
-                        optional_fields: bool = True,
-                        file_name: Optional[str] = 'Dokumentation.xlsx',
-                        sheet_name: str = 'Templates',
-                        ) -> pd.DataFrame:
+    def model_templates(
+        cls,
+        optional_fields: bool = True,
+        file_name: Optional[str] = 'Dokumentation.xlsx',
+        sheet_name: str = 'Templates',
+    ) -> pd.DataFrame:
         """
         Exportiert die Verfügbaren Klassn und Parameter in eine Excel-Datei.
         """
 
-        field_info = {model_name: model.field_aliases() if optional_fields else model.mandatory_aliases()
-                      for model_name, model in cls.class_map.items()}
+        field_info = {
+            model_name: model.field_aliases() if optional_fields else model.mandatory_aliases()
+            for model_name, model in cls.class_map.items()
+        }
 
         # Convert to DataFrame
-        df = pd.DataFrame.from_dict(field_info, orient="index").T
+        df = pd.DataFrame.from_dict(field_info, orient='index').T
 
         if file_name:
             with pd.ExcelWriter(file_name) as writer:

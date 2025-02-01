@@ -83,7 +83,7 @@ class ExcelModel:
             logger.info('Component Data written to file')
 
         with open(
-                self.final_directory / f'{self.calc_name}__System_Description.txt', 'w', encoding='utf-8'
+            self.final_directory / f'{self.calc_name}__System_Description.txt', 'w', encoding='utf-8'
         ) as log_file:
             console = Console(file=log_file, width=10000)
             console.print(self.final_model)
@@ -136,7 +136,9 @@ class ExcelModel:
             'CO2', 't', 'CO2Emissionen', specific_share_to_other_effects_operation={effects['CO2FW']: 1}
         )
 
-        effects[EffectLabels.GREEN_HEAT] = fx.Effect(EffectLabels.GREEN_HEAT, 'MWh', 'Menge an produzierter grüner Wärme')
+        effects[EffectLabels.GREEN_HEAT] = fx.Effect(
+            EffectLabels.GREEN_HEAT, 'MWh', 'Menge an produzierter grüner Wärme'
+        )
 
         # Limit CO2 Emissions per year
         yearly_co2 = add_yearly_effects_with_bounds(
@@ -170,19 +172,25 @@ class ExcelModel:
             label=EnergyPriceLabels.ELECTRICITY,
             bus=self._busses[BusLabels.ELECTRICITY_OUT],
             size=0,
-            effects_per_flow_hour={self._effects['costs']: extract_data(EnergyPriceLabels.ELECTRICITY, self.excel_data.time_series_data)},
+            effects_per_flow_hour={
+                self._effects['costs']: extract_data(EnergyPriceLabels.ELECTRICITY, self.excel_data.time_series_data)
+            },
         )
         p_out2 = fx.Flow(
             label=EnergyPriceLabels.GAS,
             bus=self._busses[BusLabels.GAS],
             size=0,
-            effects_per_flow_hour={self._effects['costs']: extract_data(EnergyPriceLabels.GAS, self.excel_data.time_series_data)},
+            effects_per_flow_hour={
+                self._effects['costs']: extract_data(EnergyPriceLabels.GAS, self.excel_data.time_series_data)
+            },
         )
         p_out3 = fx.Flow(
             label=EnergyPriceLabels.HYDROGEN,
             bus=self._busses[BusLabels.HYDROGEN],
             size=0,
-            effects_per_flow_hour={self._effects['costs']: extract_data(EnergyPriceLabels.HYDROGEN, self.excel_data.time_series_data)},
+            effects_per_flow_hour={
+                self._effects['costs']: extract_data(EnergyPriceLabels.HYDROGEN, self.excel_data.time_series_data)
+            },
         )
 
         return [
@@ -287,34 +295,41 @@ class ExcelModel:
 
         for bus in bus_labels:
             if bus not in self._busses:
-                logger.critical(f'Bus {bus} is missing. This might make the automated evaluation fail.'
-                                f'The following Buses are needed: {bus_labels}')
+                logger.critical(
+                    f'Bus {bus} is missing. This might make the automated evaluation fail.'
+                    f'The following Buses are needed: {bus_labels}'
+                )
 
         for effect in effect_labels:
             if effect not in self._effects:
-                logger.critical(f'Effect {effect} is missing. This might make the automated evaluation fail.'
-                                f'The following Effects are needed: {effect_labels}')
+                logger.critical(
+                    f'Effect {effect} is missing. This might make the automated evaluation fail.'
+                    f'The following Effects are needed: {effect_labels}'
+                )
 
         for sink in sink_labels:
             if sink not in self.final_model.components:
-                logger.critical(f'Sink {sink} is missing. This might make the automated evaluation fail.'
-                                f'The following Sinks are needed: {sink_labels}')
+                logger.critical(
+                    f'Sink {sink} is missing. This might make the automated evaluation fail.'
+                    f'The following Sinks are needed: {sink_labels}'
+                )
 
         for source in source_labels:
             if source not in self.final_model.components:
-                logger.critical(f'Source {source} is missing. This might make the automated evaluation fail.'
-                                f'The following Sources are needed: {source_labels}')
-
+                logger.critical(
+                    f'Source {source} is missing. This might make the automated evaluation fail.'
+                    f'The following Sources are needed: {source_labels}'
+                )
 
 
 def add_yearly_effects_with_bounds(
-        base_effect: fx.Effect,
-        years: List[int],
-        lower_bounds: List[Optional[float]],
-        upper_bounds: List[Optional[float]],
-        label: str,
-        unit: str,
-        description: str,
+    base_effect: fx.Effect,
+    years: List[int],
+    lower_bounds: List[Optional[float]],
+    upper_bounds: List[Optional[float]],
+    label: str,
+    unit: str,
+    description: str,
 ) -> Dict[str, fx.Effect]:
     """
     Creates multiple new Effects for yearly allocation of values. Gets values from the base_effect (Factor = 1).

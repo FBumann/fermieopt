@@ -181,7 +181,8 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     _skip_read_data: bool = PrivateAttr(default=False)
 
     _mandatory_columns: List[str] = PrivateAttr(
-        default=EnergyPriceLabels.all_values() + [
+        default=EnergyPriceLabels.all_values()
+        + [
             TemperatureLabels.NETWORK_FORWARD,
             TemperatureLabels.NETWORK_RETURN,
         ]

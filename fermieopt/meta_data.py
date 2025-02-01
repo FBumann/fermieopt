@@ -40,5 +40,5 @@ class MetaDataFactory:
             'Gruppe': None,
             'Startjahr': None,
             'Lebensdauer': None,
-            'Verfuegbarkeit': np.array([1] * cls.length, dtype=int)
+            'Verfuegbarkeit': np.array([1] * cls.length, dtype=int),
         }

@@ -42,7 +42,7 @@ class FlixPostXL(fx.results.CalculationResults):
         self._validate_effects_computation()
 
     def sizes(self) -> Dict[str, Union[int, float]]:
-        """ Returns the size of all Flows and Storages"""
+        """Returns the size of all Flows and Storages"""
         sizes = {}
         for label, comp_results in self.component_results.items():
             if label not in self.storages:
@@ -63,12 +63,13 @@ class FlixPostXL(fx.results.CalculationResults):
         return sizes
 
     def used_power_per_period(self, decimals: int = 3) -> Dict[str, np.ndarray]:
-        df = pd.DataFrame({label: flow_result.all_results['flow_rate'] for label, flow_result in self.flow_results().items()},
-                          index=self.time)
+        df = pd.DataFrame(
+            {label: flow_result.all_results['flow_rate'] for label, flow_result in self.flow_results().items()},
+            index=self.time,
+        )
 
         data = df.resample('YE').max().to_dict('list')
         return {label: np.round(np.array(value), decimals) for label, value in data.items()}
-
 
     def sizes_per_period(self) -> Dict[str, np.ndarray]:
         sizes, availlabilities = self.sizes(), self._availlability_per_period()
@@ -102,7 +103,7 @@ class FlixPostXL(fx.results.CalculationResults):
         return {storage: sizes_p_p[storage] for storage in storages_connected}
 
     def _availlability_per_period(self) -> Dict[str, np.ndarray]:
-        """ Returns the availlability of all Flows and Storages per period"""
+        """Returns the availlability of all Flows and Storages per period"""
         availlabilities = {}
         default = np.array([1 for _ in self.years])
         for label, comp_results in self.component_results.items():
@@ -371,7 +372,7 @@ class FlixPostXL(fx.results.CalculationResults):
         return df
 
     def get_availlability(self, grouped: bool = False) -> pd.DataFrame:
-        """ Returns the hourly availlability of all Components and Flows"""
+        """Returns the hourly availlability of all Components and Flows"""
         sizes = self.sizes()
 
         availlabilities = {

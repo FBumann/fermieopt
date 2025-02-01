@@ -237,7 +237,9 @@ def df_to_excel_w_chart(
         wb = load_workbook(template_path)
 
     if len(title) > 30:
-        logger.warning(f'Sheetname "{title}" in file "{filepath}" was shortened in order to work as a Excel sheet name.')
+        logger.warning(
+            f'Sheetname "{title}" in file "{filepath}" was shortened in order to work as a Excel sheet name.'
+        )
         title = title[:30]
     # Check if the sheet already exists
     if title in wb.sheetnames:
@@ -605,7 +607,9 @@ class ExcelEvaluation:
         funding_fix = self.results.get_effect_results(self.effect_funding, origin='invest_per_period')
         costs_fix = self.results.get_effect_results(self.effect_costs, origin='invest_per_period')
 
-        data['Förderung Invest'] = {year: value for year, value in zip(self.results.years, -1 * funding_fix, strict=False)}
+        data['Förderung Invest'] = {
+            year: value for year, value in zip(self.results.years, -1 * funding_fix, strict=False)
+        }
         data['Fixkosten (abzgl. Förderung)'] = {
             year: value for year, value in zip(self.results.years, costs_fix, strict=False)
         }
@@ -635,20 +639,21 @@ class ExcelEvaluation:
         """
         df_fernwaerme = self.results.to_data_frame(self.bus_heating, 'inout', grouped=True)
         if resamply_by == 'YE':
-            df_fernwaerme.drop(
-                columns=[self.group_label_heat_demand], inplace=True
-            )  # ohne Wärmelast, ohne Speicher
+            df_fernwaerme.drop(columns=[self.group_label_heat_demand], inplace=True)  # ohne Wärmelast, ohne Speicher
         else:
             df_fernwaerme[self.group_label_heat_demand] = (
                 -1 * df_fernwaerme[self.group_label_heat_demand]
             )  # reinverting
 
             try:
-                df_fernwaerme = pd.concat([
-                    df_fernwaerme, self.results.get_energy_prices(self.price_helper_elements)[self.price_electricity]
-                ], axis=1)
+                df_fernwaerme = pd.concat(
+                    [df_fernwaerme, self.results.get_energy_prices(self.price_helper_elements)[self.price_electricity]],
+                    axis=1,
+                )
             except KeyError:
-                logger.warning(f'Electricity price "{self.price_electricity}" was not found and therefore can not be plotted')
+                logger.warning(
+                    f'Electricity price "{self.price_electricity}" was not found and therefore can not be plotted'
+                )
 
         df_fernwaerme_erz_nach_techn = resample_data(df_fernwaerme, self.results.years, resamply_by, rs_method)
 
@@ -696,7 +701,9 @@ class ExcelEvaluation:
         -------
         pd.DataFrame
         """
-        df_invest = pd.DataFrame(self.results.sizes_per_period_connected_to_bus('Fernwärme', True), index=self.results.years)
+        df_invest = pd.DataFrame(
+            self.results.sizes_per_period_connected_to_bus('Fernwärme', True), index=self.results.years
+        )
         if grouped:
             df_invest = self.results.group_df_by_mapping(df_invest)
         df_invest = reorder_columns(df_invest)
@@ -746,8 +753,12 @@ class ExcelEvaluation:
             mean_costs_increment / mean_heat_increment, columns=['EURvarPerMWh']
         )
 
-        yearly_min = resample_data(mean_costs_per_heat_increment, self.results.years, resamply_by, 'min', rs_method_base)
-        yearly_max = resample_data(mean_costs_per_heat_increment, self.results.years, resamply_by, 'max', rs_method_base)
+        yearly_min = resample_data(
+            mean_costs_per_heat_increment, self.results.years, resamply_by, 'min', rs_method_base
+        )
+        yearly_max = resample_data(
+            mean_costs_per_heat_increment, self.results.years, resamply_by, 'max', rs_method_base
+        )
         increment_sum_of_costs_total = resample_data(
             mean_costs_increment, self.results.years, resamply_by, 'sum', rs_method_base
         ).iloc[:, 0]
@@ -763,7 +774,9 @@ class ExcelEvaluation:
 
     def _get_waermekosten_per_period(self, with_fix_costs: bool):
         heat = pd.DataFrame(self.results.to_data_frame(self.demand_heat, 'in'))
-        costs_operation = self.results.get_effect_results(effect_label=self.effect_costs, origin='operation', as_time_series=True)
+        costs_operation = self.results.get_effect_results(
+            effect_label=self.effect_costs, origin='operation', as_time_series=True
+        )
 
         heat = resample_data(heat, self.results.years, 'YE', 'sum')
         costs_operation = resample_data(costs_operation, self.results.years, 'YE', 'sum')

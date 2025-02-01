@@ -3,6 +3,7 @@ from typing import List
 
 class SingletonMeta(type):
     """Metaclass to ensure a single instance per class."""
+
     _instances = {}
 
     def __call__(cls, *args, **kwargs):
@@ -12,39 +13,39 @@ class SingletonMeta(type):
 
 
 class LabelBase(metaclass=SingletonMeta):
-
     @classmethod
     def all_values(cls) -> List:
         return [
-            value for key, value in cls.__dict__.items()
+            value
+            for key, value in cls.__dict__.items()
             if not key.startswith('__') and not callable(value) and not isinstance(value, (staticmethod, classmethod))
         ]
 
 
 class BusLabels(LabelBase):
-    HEAT = "Fernwärme"
-    ELECTRICITY_IN = "Strom In"
-    ELECTRICITY_OUT = "Strom Out"
-    GAS = "Erdgas"
-    HYDROGEN = "Wasserstoff"
-    WASTE_HEAT = "Abwärme"
+    HEAT = 'Fernwärme'
+    ELECTRICITY_IN = 'Strom In'
+    ELECTRICITY_OUT = 'Strom Out'
+    GAS = 'Erdgas'
+    HYDROGEN = 'Wasserstoff'
+    WASTE_HEAT = 'Abwärme'
 
 
 class SinkLabels(LabelBase):
-    HEAT_DEMAND = "Wärmebedarf"
-    HEAT_LOSSES = "Netzverluste"
-    ELECTRICITY_PRODUCTION = "Strom Verkauf"
+    HEAT_DEMAND = 'Wärmebedarf'
+    HEAT_LOSSES = 'Netzverluste'
+    ELECTRICITY_PRODUCTION = 'Strom Verkauf'
 
 
 class SourceLabels(LabelBase):
-    ELECTRICITY_USAGE = "Strombedarf"
-    GAS_USAGE = "Gas Bedarf"
-    HYDROGEN_USAGE = "Wasserstoff Bedarf"
-    WASTE_HEAT_USAGE = "Abwärme Bedarf"
+    ELECTRICITY_USAGE = 'Strombedarf'
+    GAS_USAGE = 'Gas Bedarf'
+    HYDROGEN_USAGE = 'Wasserstoff Bedarf'
+    WASTE_HEAT_USAGE = 'Abwärme Bedarf'
 
 
 class OtherLabels(LabelBase):
-    ENERGY_PRICES = "Energiepreise"
+    ENERGY_PRICES = 'Energiepreise'
 
 
 class EffectLabels(LabelBase):
@@ -82,7 +83,7 @@ class FuelTypeToPriceMapping:
     @staticmethod
     def get_price_label(fuel_type: str) -> str:
         """Retrieve the price label corresponding to a fuel type."""
-        mapping ={
+        mapping = {
             EnergyTypeLabels.GAS: EnergyPriceLabels.GAS,
             EnergyTypeLabels.HYDROGEN: EnergyPriceLabels.HYDROGEN,
         }
