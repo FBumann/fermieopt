@@ -45,4 +45,5 @@ Sie können automatisch Templates für alle verfügbaren Erzeugertypen generiere
 
 ```python
 from fermieopt.DistrictHeatingComps import ElementFactory
-ElementFactory.model_templates()
+ElementFactory.model_templates(optional_fields=True)
+```
