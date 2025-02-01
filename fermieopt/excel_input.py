@@ -205,8 +205,12 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         default={
             'TVL_FWN': 'Vorlauftemperatur Fernwärmenetz [°C]',
             'TRL_FWN': 'Rücklauftemperatur Fernwärmenetz [°C]',
+            'SinkHeat': 'Wärmelast [MW]',
+            'SinkLossHeat': 'Netzverluste [MW]',
         }
     )
+
+    _mandatory_columns = ['Wärmelast [MW]', 'Netzverluste [MW]', 'Vorlauftemperatur Fernwärmenetz [°C]', 'Rücklauftemperatur Fernwärmenetz [°C]']
 
     @model_validator(mode='after')
     def read_data_from_excel(self):
