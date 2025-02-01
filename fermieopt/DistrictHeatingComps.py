@@ -346,17 +346,21 @@ class PowerInvestElement(InvestElement):
 
 class ThermalInvestElement(InvestElement):
     thermal_power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(
-        alias='Thermische Leistung [MW]'
+        alias='Thermische Leistung [MW]', description='Thermische (Nenn-)Leistung des Erzeugers. Kann auch als "Von-Bis" angegeben werden, um die Größe anhand der Investitionskosten zu optimieren.'
     )
-    grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0)
+    grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0, description='Fällt jährlich an, solange die ANlage betrieben wird. Die höhe enspricht der höchsten möglichen Netzbezugsleistung, berechnent aus Nennleistung, Effizientz und verfügbarkeit.')
     bus_heat: str = Field(alias='Wärmebus', default=BusLabels.HEAT)
 
     costs_per_mwh_heat_extra: Union[int, float, str] = Field(
-        alias='Zusätzliche Wärmeerzeugungskosten [€/MWh]', default=0
+        alias='Zusätzliche Wärmeerzeugungskosten [€/MWh]', default=0,
+        description='Fallen bei der erzeugung von Wärme an.'
     )
-    relative_maximum: Union[int, float, str] = Field(alias='Relative thermische Leistungsobergrenze', default=1)
-    relative_minimum: Union[int, float, str] = Field(alias='Relative thermische Leistungsuntergrenze', default=0)
-    green_heat_factor: Union[int, float, str] = Field(alias='Grüne Wärme', default=0)
+    relative_maximum: Union[int, float, str] = Field(alias='Relative thermische Leistungsobergrenze', default=1,
+                                                     description='Verfügbarkeit der Anlage, bezogen auf die thermische Nennleistung .')
+    relative_minimum: Union[int, float, str] = Field(alias='Relative thermische Leistungsuntergrenze', default=0,
+                                                     description='Mindestleistung der Anlage, bezogen auf die thermische Nennleistung.')
+    green_heat_factor: Union[int, float, str] = Field(alias='Grüne Wärme', default=0,
+                                                      description='Zahlt die produzierte Wärme auf das Ziel "Grüne Wärme" ein? (Kann auch anteilig sein)')
 
     def _insert_data(self, data: pd.DataFrame):
         self.costs_per_mwh_heat_extra = extract_data(self.costs_per_mwh_heat_extra, data)
@@ -478,7 +482,8 @@ class LinearTransformer(PowerInvestElement):
     bus_out: str = Field(alias='Zu Bus')
     flow_label_in: str = Field(alias='Flowname in', default='in')
     flow_label_out: str = Field(alias='Flowname out', default='out')
-    cost_per_mwh_in: Union[int, float, str] = Field(alias='Kosten pro MWh von Bus', default=0)
+    cost_per_mwh_in: Union[int, float, str] = Field(alias='Kosten pro MWh von Bus', default=0,
+                                                    description='Kosten pro MWh, die die Anlage bezieht')
 
     def _insert_data(self, data: pd.DataFrame):
         super()._insert_data(data)
