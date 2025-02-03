@@ -1153,7 +1153,7 @@ class Auswertung:
         ]
 
 
-def write_bus_results_to_excel(
+def exportiere_bus_ergebisse(
     calc: FlixPostXL, resample_by: Literal['YE', 'd', 'h'] = 'd', custom_output_file_path: str = 'default'
 ):
     """
@@ -1193,7 +1193,7 @@ def write_bus_results_to_excel(
     logger.info(f'......Ergebnisse je Bus ({resample_by}) abgeschlossen')
 
 
-def write_component_results_to_excel(
+def exportiere_erzeuger_ergebisse(
     calc: FlixPostXL, resample_by: Literal['YE', 'd', 'h'] = 'd', custom_output_file_path: str = 'default'
 ):
     """
@@ -1233,7 +1233,7 @@ def write_component_results_to_excel(
     logger.info(f'......Ergebnisse der Anlagen ({resample_by}) abgeschlossen')
 
 
-def write_effects_per_comp_per_period_to_excel(calc: FlixPostXL, custom_output_file_path: str = 'default'):
+def exportiere_effekte_je_erzeuger(calc: FlixPostXL, custom_output_file_path: str = 'default'):
     """
     Saving the effects of every component per period to excel
     """
@@ -1259,7 +1259,7 @@ def write_effects_per_comp_per_period_to_excel(calc: FlixPostXL, custom_output_f
         df_to_excel_w_chart(df, path_excel, effect, 'See Legend', 'Component Name', style='bar', bar_style='stacked')
 
 
-def visualize_results(
+def exportiere_ergebnissdetails(
     calc_results: FlixPostXL,
     effects_per_comp_and_year: bool = True,
     buses_yearly: bool = True,
@@ -1313,31 +1313,31 @@ def visualize_results(
     """
     logger.info('Weitere Ergebnisse werden exportiert...')
     if buses_yearly:
-        write_bus_results_to_excel(calc_results, 'YE')
+        exportiere_bus_ergebisse(calc_results, 'YE')
     if effects_per_comp_and_year:
-        write_effects_per_comp_per_period_to_excel(calc_results)
+        exportiere_effekte_je_erzeuger(calc_results)
     if comps_yearly:
-        write_component_results_to_excel(calc_results, 'YE')
+        exportiere_erzeuger_ergebisse(calc_results, 'YE')
     if any([buses_yearly, effects_per_comp_and_year, comps_yearly]):
         logger.info('...Jahreswerte abgeschlossen...')
 
     if buses_daily:
-        write_bus_results_to_excel(calc_results, 'd')
+        exportiere_bus_ergebisse(calc_results, 'd')
     if comps_daily:
-        write_component_results_to_excel(calc_results, 'd')
+        exportiere_erzeuger_ergebisse(calc_results, 'd')
     if any([buses_yearly, effects_per_comp_and_year, comps_yearly]):
         logger.info('...Tageswerte abgeschlossen...')
 
     if buses_hourly:
-        write_bus_results_to_excel(calc_results, 'h')
+        exportiere_bus_ergebisse(calc_results, 'h')
     if comps_hourly:
-        write_component_results_to_excel(calc_results, 'h')
+        exportiere_erzeuger_ergebisse(calc_results, 'h')
     if any([buses_hourly, comps_hourly]):
         logger.info('...Stundenwerte abgeschlossen...')
 
 
 ################## PDF - OUTPUT ####################
-def create_report(calc: FlixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4):
+def erstelle_pdf_report(calc: FlixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4):
     logger.info(f'Erstelle PDF-Report für Komponenten an Bus "{connected_to}"')
     res = calc.bus_results[connected_to]
     flows_to_plot = [
@@ -1363,7 +1363,7 @@ def create_report(calc: FlixPostXL, path: str = 'report.pdf', connected_to: str 
             plt.close()
 
 
-def create_report_grouped(
+def erstelle_gruppierten_pdf_report(
     calc: FlixPostXL, path: str = 'report.pdf', connected_to: str = 'Fernwaerme', chunk_size: int = 4
 ) -> None:
     logger.info(f'Erstelle gruppierten PDF-Report für Komponenten an Bus "{connected_to}"')
@@ -1409,7 +1409,7 @@ def create_report_grouped(
                 plt.close()
 
 
-def create_report_per_comp(calc: FlixPostXL, path: str = 'report.pdf') -> None:
+def erstelle_pdf_report_pro_erzeuger(calc: FlixPostXL, path: str = 'report.pdf') -> None:
     # Filtering and sorting
     components = {
         comp_label: sorted([flow.label_full for flow in comp.inputs + comp.outputs])

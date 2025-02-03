@@ -1,7 +1,7 @@
 import logging
 
 from fermieopt.DistrictHeating import ExcelModel
-from fermieopt.excel_output import Auswertung, create_report_grouped, visualize_results
+from fermieopt.excel_output import Auswertung, erstelle_gruppierten_pdf_report, exportiere_ergebnissdetails
 
 logger = logging.getLogger('flixOpt')
 
@@ -21,16 +21,16 @@ def main(excel_file_path: str, solver_name: str = 'highs'):
         excel_model.final_directory / f'{excel_model.calc_name}_network.html', controls=['physics']
     )
 
-    calc_results = excel_model.load_results()
+    ergebnisse = excel_model.load_results()
     logger.info('EXPORT DER ERGEBNISSE NACH EXCEL...')
-    excel = Auswertung(calc_results)
-    excel.exportiere_ergebnisuebersicht()
-    excel.exportiere_ergebnisse_je_jahr(short_version=False)
-    visualize_results(calc_results=calc_results)
-    for bus in calc_results.bus_results:
-        create_report_grouped(
-            calc_results,
-            path=calc_results.folder / f'{calc_results.name}__Report_{bus}.pdf',
+    auswertung = Auswertung(ergebnisse)
+    auswertung.exportiere_ergebnisuebersicht()
+    auswertung.exportiere_ergebnisse_je_jahr(short_version=False)
+    exportiere_ergebnissdetails(ergebnisse)
+    for bus in ergebnisse.bus_results:
+        erstelle_gruppierten_pdf_report(
+            ergebnisse,
+            path=ergebnisse.folder / f'{ergebnisse.name}__Report_{bus}.pdf',
             connected_to=bus,
         )
     # Berechnungsergebnisse für weitere Analysen laden

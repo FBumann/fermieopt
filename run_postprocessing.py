@@ -1,25 +1,16 @@
 from pathlib import Path
 
-from fermieopt.excel_output import Auswertung, create_report_grouped, visualize_results
+from fermieopt.excel_output import Auswertung, erstelle_gruppierten_pdf_report, exportiere_ergebnissdetails
 from fermieopt.flixPostprocessingXL import FlixPostXL
 
 calc_results = FlixPostXL(
-    calculation_name='2025-01-28-16H-30M_Test',
-    results_folder=r'/Users/felix/Documents/Dokumente-eigene/Code/FermIE/tests/2025-01-28-16H-30M_Test/SolveResults',
-    output_years=[2030,2045],
+    calculation_name='2025-02-01-16H-45M_Template_Input',
+    results_folder=r'Ergebnisse/2025-02-01-16H-45M_Template_Input/SolveResults',
+    output_years=[2030, 2045],
 )
 
 
 auswertung = Auswertung(calc_results)
 auswertung.effekte_pro_jahr()
 auswertung.vollbenutzungsstunden_pro_jahr()
-
-visualize_results(
-    calc_results=calc_results,
-)
-for bus in calc_results.bus_results:
-    create_report_grouped(
-        calc_results,
-        path=calc_results.folder / f'{calc_results.name}-report_{bus}.pdf',
-        connected_to=bus,
-    )
+auswertung.invest_entscheidungen()
