@@ -291,11 +291,18 @@ def df_to_excel_w_chart(
     wb.save(filepath)
 
 
-class ExcelEvaluation:
+class Auswertung:
     """
-    This class is thightly coulpled with 2 excel templates. Originally designed for a specific use case and predefined system,
-    class now accepts labels for components, that will be acessed in the visualization.
-    If the used flixResults deffer from the original structure, these values can be adjusted
+    Diese Klasse ist für die Auswertung der Modellergebnisse. SIe ist eng mit zwei Excel-Vorlagen gekoppelt.
+
+    Hauptfunktionen:
+        exportiere_ergebnisuebersicht: Erstellt eine Excel-Tabelle mit einer Ergebnissübersicht (Jahreswerte)
+        exportiere_ergebnisse_je_jahr: Erstellt Excel-Tabellen mit den Auswertungen der Modellergebnisse pro Jahr (Tages-Stundenwert).
+        vollbenutzungsstunden_pro_jahr: Erstellt eine Excel-Tabelle mit den Vollbenutzungsstunden pro Jahr.
+    weitere Funktionen:
+        vollbenutzungsstunden_pro_jahr: Berechnet die Vollbenutzungsstunden pro Jahr.
+        waermeproduktion_pro_jahr: Berechnet die Wärmeproduktion pro Jahr.
+        effekte_pro_jahr: Berechnet die Effekte pro Jahr. (Kosten, Förderung, CO2-Emissionen, etc.)
     """
 
     def __init__(

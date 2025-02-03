@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fermieopt.excel_output import ExcelFcts, create_report_grouped, visualize_results
+from fermieopt.excel_output import Auswertung, create_report_grouped, visualize_results
 from fermieopt.flixPostprocessingXL import FlixPostXL
 
 calc_results = FlixPostXL(
@@ -10,9 +10,9 @@ calc_results = FlixPostXL(
 )
 
 
-excel_evaluation = ExcelEvaluation(calc_results)
-excel_evaluation.run_excel_graphics_main()
-excel_evaluation.run_excel_graphics_years()
+auswertung = Auswertung(calc_results)
+auswertung.effekte_pro_jahr()
+auswertung.vollbenutzungsstunden_pro_jahr()
 
 visualize_results(
     calc_results=calc_results,

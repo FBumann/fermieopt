@@ -1,7 +1,7 @@
 import logging
 
 from fermieopt.DistrictHeating import ExcelModel
-from fermieopt.excel_output import ExcelEvaluation, create_report_grouped, visualize_results
+from fermieopt.excel_output import Auswertung, create_report_grouped, visualize_results
 
 logger = logging.getLogger('flixOpt')
 
@@ -23,9 +23,9 @@ def main(excel_file_path: str, solver_name: str = 'highs'):
 
     calc_results = excel_model.load_results()
     logger.info('EXPORT DER ERGEBNISSE NACH EXCEL...')
-    excel = ExcelEvaluation(calc_results)
-    excel.run_excel_graphics_main()
-    excel.run_excel_graphics_years(short_version=False)
+    excel = Auswertung(calc_results)
+    excel.exportiere_ergebnisuebersicht()
+    excel.exportiere_ergebnisse_je_jahr(short_version=False)
     visualize_results(calc_results=calc_results)
     for bus in calc_results.bus_results:
         create_report_grouped(
