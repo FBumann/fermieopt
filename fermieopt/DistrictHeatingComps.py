@@ -1,26 +1,39 @@
 import logging
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union, get_args
 
 import flixOpt as fx
 import flixOpt.components
 import flixOpt.elements
+import flixOpt.structure
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator, model_validator
+from pydantic_core import PydanticUndefined
 
-from fermieopt.meta_data import MetaData, MetaDataFactory
+from fermieopt.config import BusLabels, EffectLabels, EnergyPriceLabels, FuelTypeToPriceMapping, TemperatureLabels
+from fermieopt.meta_data import MetaDataFactory
 
 logger = logging.getLogger('flixOpt')
+
+
+Zahl_oder_Zeitreihe = Union[int, float, str]
+Zahl_oder_Zeitreihe_optional = Optional[Zahl_oder_Zeitreihe]
+Zeitreihe = str
+Zeitreihe_optional = Optional[Zeitreihe]
 
 
 class Element(
     BaseModel,
     populate_by_name=True,  # Enables using both field names and aliases
     extra='forbid',
-):  # Forbids unexpected keys in input data
-    name: str = Field(alias='Name')
-    group: Optional[str] = Field(alias='Gruppe', default=None)
-    _meta_data: MetaData = PrivateAttr(default_factory=MetaDataFactory.create)
+):
+    name: str = Field(alias='Name', description='Name des Energieelements. Jeder Name muss eindeutig sein.')
+    group: Optional[str] = Field(
+        alias='Gruppe',
+        default=None,
+        description='Verwendet zur Gruppierung verschiedener Energieelemente in der Auswertung.',
+    )
 
     def add_to_flow_system(
         self,
@@ -39,6 +52,12 @@ class Element(
         """Inserts data into the model. This method is supposed to be called right after creating an instance."""
         raise NotImplementedError
 
+    def _insert_component_meta_data(self, element: flixOpt.structure.Element, years_of_model: List[int]):
+        element.meta_data['Gruppe'] = self.group
+        if isinstance(element, flixOpt.elements.Component):
+            for flow in element.flows.values():
+                flow.meta_data['Gruppe'] = self.group
+
     def _convert_to_flixopt(
         self,
         flow_system: fx.FlowSystem,
@@ -46,22 +65,98 @@ class Element(
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         raise NotImplementedError
+
+    @classmethod
+    def field_aliases(cls):
+        return [field_info.alias or field_name for field_name, field_info in cls.model_fields.items()]
+
+    @classmethod
+    def mandatory_aliases(cls):
+        return [
+            field_info.alias or field_name
+            for field_name, field_info in cls.model_fields.items()
+            if field_info.default is PydanticUndefined
+        ]
+
+    @classmethod
+    def model_fields_as_df(cls) -> pd.DataFrame:
+        """
+        Exportiert die Feld-Aliase, Datentypen, Beschreibungen, Default-Werte und ob das Feld obligatorisch ist
+        aus dem Pydantic-Modell in eine Excel-Datei.
+
+        Parameter:
+            file_name (str): Der Name der zu speichernden Excel-Datei.
+
+        Beispiel:
+            MyModel.export_model_fields_to_excel("modell_felder.xlsx")
+        """
+        # Metadaten extrahieren
+        data = [
+            {
+                'Parameter': field_info.alias or field_name,
+                'Beschreibung': getattr(field_info, 'description', '') or '',
+                'Erforderlich': 'Ja' if field_info.default is PydanticUndefined else 'Nein',
+            }
+            for field_name, field_info in cls.model_fields.items()
+        ]
+
+        return pd.DataFrame(data)
 
 
 class InvestElement(Element):
-    start_year: Optional[int] = Field(alias='Startjahr', default=None, ge=1800)
-    amortization_time: Optional[int] = Field(alias='Abschreibungsdauer', default=None, ge=1)
-    lifetime: Optional[int] = Field(alias='Lebensdauer', default=None, ge=1)
-    optional: bool = Field(alias='Optional', default=False)
-    invest_costs_fixed: Union[int, float] = Field(alias='Investkosten (fix) [€]', default=0)
-    invest_costs_specific: Union[int, float] = Field(alias='Investkosten (spezifisch) [€/MW]', default=0)
-    annual_costs_fixed: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/a]', default=0)
-    annual_costs_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (spezifisch) [€/(MW*a)]', default=0)
-    interest_rate: Union[int, float] = Field(alias='Zinssatz', default=0)
-    funding_rate: Union[int, float] = Field(alias='Fördersatz', default=0)
-    invest_group: Optional[str] = Field(alias='Investgruppe', default=None)
+    start_year: Optional[int] = Field(
+        alias='Startjahr', default=None, ge=1800, description='Start der Abschreibung und Inbetriebnahme'
+    )
+    amortization_time: Optional[int] = Field(
+        alias='Abschreibungsdauer',
+        default=None,
+        ge=1,
+        description='Zeit in Jahren, bis der Erzeuger vollständig abgeschrieben ist',
+    )
+    lifetime: Optional[int] = Field(
+        alias='Lebensdauer',
+        default=None,
+        ge=1,
+        description='Zeit in Jahren, bis der Erzeuger nicht mehr betrieben werden kann',
+    )
+    optional: bool = Field(
+        alias='Optional',
+        default=False,
+        description='Wenn Ja, dann ist der Erzeuger optional. Ind er Optimierung wird entschieden ob das Investment getätigt wird um ihn Betreiben zu können, oder nicht.',
+    )
+    invest_costs_fixed: Union[int, float] = Field(
+        alias='Investkosten (fix) [€]',
+        default=0,
+        description='Werden über die Abschreibungsdauer annuisiert, falls sich für die Investitions entschieden wird.',
+    )
+    invest_costs_specific: Union[int, float] = Field(
+        alias='Investkosten (spezifisch) [€/MW]',
+        default=0,
+        description='Werden über die Abschreibungsdauer annuisiert, falls sich für die Investitions entschieden wird. Ist entschieden um die Größe einer Anlage zu optimieren.',
+    )
+    annual_costs_fixed: Union[int, float] = Field(
+        alias='Sonstige Fixkosten (fix) [€/a]',
+        default=0,
+        description='Fallen über die Lebensdauer jährlich an, falls sich für die Investitions entschieden wird.',
+    )
+    annual_costs_specific: Union[int, float] = Field(
+        alias='Sonstige Fixkosten (spezifisch) [€/(MW*a)]',
+        default=0,
+        description='Fallen über die Lebensdauer jährlich an, falls sich für die Investitions entschieden wird. Ist entschieden um die Größe einer Anlage zu optimieren.',
+    )
+    interest_rate: Union[int, float] = Field(
+        alias='Zinssatz', default=0, description='Zinssatz für die annuisierung der Anlage.'
+    )
+    funding_rate: Union[int, float] = Field(
+        alias='Fördersatz', default=0, description='Anteil der Investitionskosten, der gefördert wird.'
+    )
+    invest_group: Optional[str] = Field(
+        alias='Investgruppe',
+        default=None,
+        description='Gruppierung der Investition. Format: "Gruppe:Limit". Damit kann eine obergrenze für mehrere Anlagen definiert werden.',
+    )
 
     @property
     def needs_investment(self) -> bool:
@@ -157,13 +252,13 @@ class InvestElement(Element):
 
         # Calculate costs and funding
         fix_costs = {
-            'costs': invest_costs * annuity_factor * amortization_years + annual_costs * operation_years,
-            'funding': invest_costs * annuity_factor * amortization_years * funding_rate,
+            EffectLabels.COSTS: invest_costs * annuity_factor * amortization_years + annual_costs * operation_years,
+            EffectLabels.FUNDING: invest_costs * annuity_factor * amortization_years * funding_rate,
         }
         specific_costs = {
-            'costs': specific_invest_costs * annuity_factor * amortization_years
+            EffectLabels.COSTS: specific_invest_costs * annuity_factor * amortization_years
             + specific_annual_costs * operation_years,
-            'funding': specific_invest_costs * annuity_factor * amortization_years * funding_rate,
+            EffectLabels.FUNDING: specific_invest_costs * annuity_factor * amortization_years * funding_rate,
         }
 
         def clean_dict(d):
@@ -219,10 +314,18 @@ class InvestElement(Element):
             if not flow.meta_data:
                 flow.meta_data = MetaDataFactory.create()
 
-            flow.meta_data['invest']['costs']['fixed_effects'] += fixed_effects_per_period.get('costs', 0)
-            flow.meta_data['invest']['costs']['specific_effects'] += specific_effects_per_period.get('costs', 0)
-            flow.meta_data['invest']['funding']['fixed_effects'] += fixed_effects_per_period.get('funding', 0)
-            flow.meta_data['invest']['funding']['specific_effects'] += specific_effects_per_period.get('funding', 0)
+            flow.meta_data['invest'][EffectLabels.COSTS]['fixed_effects'] += fixed_effects_per_period.get(
+                EffectLabels.COSTS, 0
+            )
+            flow.meta_data['invest'][EffectLabels.COSTS]['specific_effects'] += specific_effects_per_period.get(
+                EffectLabels.COSTS, 0
+            )
+            flow.meta_data['invest'][EffectLabels.FUNDING]['fixed_effects'] += fixed_effects_per_period.get(
+                EffectLabels.FUNDING, 0
+            )
+            flow.meta_data['invest'][EffectLabels.FUNDING]['specific_effects'] += specific_effects_per_period.get(
+                EffectLabels.FUNDING, 0
+            )
 
     def restrict_availlability(self, component: flixOpt.elements.Component, years_in_model: List[int]) -> None:
         existance = exists(self.start_year, self.lifetime, years_in_model)
@@ -244,12 +347,22 @@ class InvestElement(Element):
             )
         else:
             self._insert_data(time_series_data)
-            flow_system.add_elements(
-                self._convert_to_flixopt(flow_system, busses, time_series_data, co2_factors, years_of_model)
-            )
+            component = self._convert_to_flixopt(flow_system, busses, time_series_data, co2_factors, years_of_model)
+            self._insert_component_meta_data(component, years_of_model)
+            self.restrict_availlability(component, years_of_model)
+
+            flow_system.add_elements(component)
 
     @staticmethod
-    def operation_years(start_year: int, lifetime: int, years_of_model: List[int]) -> np.ndarray[int]:
+    def operation_years(
+        start_year: Optional[int], lifetime: Optional[int], years_of_model: List[int]
+    ) -> np.ndarray[int]:
+        """
+        Retuns the active periods, depending on the start year and lifetim and the years of the model.
+        Returns all ones if no start year or lifetime are given
+        """
+        if start_year is None or lifetime is None:
+            return np.array([1 for _ in years_of_model])
         return np.array([1 if start_year <= year < (start_year + lifetime) else 0 for year in years_of_model])
 
     @staticmethod
@@ -262,10 +375,22 @@ class InvestElement(Element):
             self.amortization_time = self.lifetime
         return self
 
+    def _insert_component_meta_data(self, element: flixOpt.structure.Element, years_of_model: List[int]):
+        super()._insert_component_meta_data(element, years_of_model)
+        element.meta_data['Startjahr'] = self.start_year
+        element.meta_data['Lebensdauer'] = self.lifetime
+        operation_years = self.operation_years(self.start_year, lifetime=self.lifetime, years_of_model=years_of_model)
+        element.meta_data['Verfuegbarkeit'] = operation_years
+        if isinstance(element, flixOpt.elements.Component):
+            for flow in element.flows.values():
+                flow.meta_data['Startjahr'] = self.start_year
+                flow.meta_data['Lebensdauer'] = self.lifetime
+                flow.meta_data['Verfuegbarkeit'] = operation_years
+
 
 class PowerInvestElement(InvestElement):
     power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(alias='Nennleistung [MW]')
-    fixed_profile: Optional[str] = Field(alias='Festes Profil', default=None)
+    fixed_profile: Zeitreihe_optional = Field(alias='Festes Profil', default=None)
 
     def _insert_data(self, data: pd.DataFrame):
         self.fixed_profile = extract_data(self.fixed_profile, data)
@@ -282,17 +407,36 @@ class PowerInvestElement(InvestElement):
 
 class ThermalInvestElement(InvestElement):
     thermal_power: Union[int, float, Tuple[Union[int, float], Union[int, float]]] = Field(
-        alias='Thermische Leistung [MW]'
+        alias='Thermische Leistung [MW]',
+        description='Thermische (Nenn-)Leistung des Erzeugers. Kann auch als "Von-Bis" angegeben werden, um die Größe anhand der Investitionskosten zu optimieren.',
     )
-    grid_fee_per_year: Union[float, str] = Field(alias='Netzentgelt [€/(MW*a)]', default=0)
-    bus_heat: str = Field(alias='Wärmebus', default='Fernwärme')
+    grid_fee_per_year: Union[int, float] = Field(
+        alias='Netzentgelt [€/(MW*a)]',
+        default=0,
+        description='Fällt jährlich an, solange die ANlage betrieben wird. Die höhe enspricht der höchsten möglichen Netzbezugsleistung, berechnent aus Nennleistung, Effizientz und verfügbarkeit.',
+    )
+    bus_heat: str = Field(alias='Wärmebus', default=BusLabels.HEAT)
 
-    costs_per_mwh_heat_extra: Union[int, float, str] = Field(
-        alias='Zusätzliche Wärmeerzeugungskosten [€/MWh]', default=0
+    costs_per_mwh_heat_extra: Zahl_oder_Zeitreihe = Field(
+        alias='Zusätzliche Wärmeerzeugungskosten [€/MWh]',
+        default=0,
+        description='Fallen bei der erzeugung von Wärme an.',
     )
-    relative_maximum: Union[int, float, str] = Field(alias='Relative thermische Leistungsobergrenze', default=1)
-    relative_minimum: Union[int, float, str] = Field(alias='Relative thermische Leistungsuntergrenze', default=0)
-    green_heat_factor: Union[int, float, str] = Field(alias='Grüne Wärme', default=0)
+    relative_maximum: Zahl_oder_Zeitreihe = Field(
+        alias='Relative thermische Leistungsobergrenze',
+        default=1,
+        description='Verfügbarkeit der Anlage, bezogen auf die thermische Nennleistung .',
+    )
+    relative_minimum: Zahl_oder_Zeitreihe = Field(
+        alias='Relative thermische Leistungsuntergrenze',
+        default=0,
+        description='Mindestleistung der Anlage, bezogen auf die thermische Nennleistung.',
+    )
+    green_heat_factor: Zahl_oder_Zeitreihe = Field(
+        alias='Grüne Wärme',
+        default=0,
+        description='Zahlt die produzierte Wärme auf das Ziel "Grüne Wärme" ein? (Kann auch anteilig sein)',
+    )
 
     def _insert_data(self, data: pd.DataFrame):
         self.costs_per_mwh_heat_extra = extract_data(self.costs_per_mwh_heat_extra, data)
@@ -305,7 +449,10 @@ class ThermalInvestElement(InvestElement):
         effects: Dict[str, fx.Effect],
     ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
         """Calculates the thermal_effects per flow_hour."""
-        data = {effects['Gruene_Waerme']: self.green_heat_factor, effects['costs']: self.costs_per_mwh_heat_extra}
+        data = {
+            effects[EffectLabels.GREEN_HEAT]: self.green_heat_factor,
+            effects[EffectLabels.COSTS]: self.costs_per_mwh_heat_extra,
+        }
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
 
     def insert_grid_fee(
@@ -333,10 +480,12 @@ class ThermalInvestElement(InvestElement):
                     grid_fee_costs
                 ) + invest_flow.size.specific_effects.get(effect, 0)
 
-            assert effect.label == 'costs', f"Effect {effect.label} is not 'costs', which is expected in this function"
+            assert effect.label == EffectLabels.COSTS, (
+                f'Effect {effect.label} is not EffectLabels.COSTS, which is expected in this function'
+            )
             if not invest_flow.meta_data:
                 invest_flow.meta_data = MetaDataFactory.create()
-            invest_flow.meta_data['invest']['costs']['specific_effects'] += grid_fee_costs
+            invest_flow.meta_data['invest'][EffectLabels.COSTS]['specific_effects'] += grid_fee_costs
             invest_flow.meta_data['yearly_grid_fee_per_thermal_power'] = grid_fee_costs
             invest_flow.meta_data['highest_possible_grid_draw'] = highest_possible_grid_draw
 
@@ -361,7 +510,7 @@ class Sink(PowerInvestElement):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
 
         comp = fx.Sink(
@@ -391,7 +540,7 @@ class Source(PowerInvestElement):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
         comp = fx.Source(
             label=self.name,
@@ -409,12 +558,14 @@ class Source(PowerInvestElement):
 
 
 class LinearTransformer(PowerInvestElement):
-    efficiency: Union[int, float, str] = Field(alias='Wirkungsgrad')
+    efficiency: Zahl_oder_Zeitreihe = Field(alias='Wirkungsgrad')
     bus_in: str = Field(alias='Von Bus')
     bus_out: str = Field(alias='Zu Bus')
     flow_label_in: str = Field(alias='Flowname in', default='in')
     flow_label_out: str = Field(alias='Flowname out', default='out')
-    cost_per_mwh_in: Union[int, float, str] = Field(alias='Kosten pro MWh von Bus', default=0)
+    cost_per_mwh_in: Zahl_oder_Zeitreihe = Field(
+        alias='Kosten pro MWh von Bus', default=0, description='Kosten pro MWh, die die Anlage bezieht'
+    )
 
     def _insert_data(self, data: pd.DataFrame):
         super()._insert_data(data)
@@ -428,7 +579,7 @@ class LinearTransformer(PowerInvestElement):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
         flow_out = fx.Flow(
             label=self.flow_label_out, bus=busses[self.bus_out], fixed_relative_profile=self.fixed_profile
@@ -437,7 +588,7 @@ class LinearTransformer(PowerInvestElement):
         flow_in = fx.Flow(
             label=self.flow_label_in,
             bus=busses[self.bus_in],
-            effects_per_flow_hour={effects['costs']: self.cost_per_mwh_in},
+            effects_per_flow_hour={effects[EffectLabels.COSTS]: self.cost_per_mwh_in},
         )
 
         comp = fx.LinearConverter(
@@ -457,16 +608,16 @@ class LinearTransformer(PowerInvestElement):
 
 
 class FuelThermalInvestElement(ThermalInvestElement):
-    eta_thermal: Union[float, str] = Field(alias='Thermischer Wirkungsgrad')
+    eta_thermal: Zahl_oder_Zeitreihe = Field(alias='Thermischer Wirkungsgrad')
     fuel_type: str = Field(alias='Brennstoff')
-    fuel_cost_extra: Union[float, str] = Field(alias='Brennstoffkosten Zusatz [€/MWh_hu]', default=0)
+    fuel_cost_extra: Zahl_oder_Zeitreihe = Field(alias='Brennstoffkosten Zusatz [€/MWh_hu]', default=0)
     _fuel_costs: Union[float, np.ndarray] = 0
 
     def _insert_data(self, data: pd.DataFrame):
         super()._insert_data(data)
         self.eta_thermal = extract_data(self.eta_thermal, data)
         self.fuel_cost_extra = extract_data(self.fuel_cost_extra, data)
-        self._fuel_costs = extract_data(self.fuel_type, data)
+        self._fuel_costs = extract_fuel_price(self.fuel_type, data)
 
     def co2_factor(self, time_series_data: pd.DataFrame, co2_factors: Dict[str, float]) -> float:
         return extract_data(co2_factors.get(self.fuel_type, 0), time_series_data)
@@ -476,12 +627,15 @@ class FuelThermalInvestElement(ThermalInvestElement):
     ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
         """Calculates the thermal_effects per flow_hour."""
         data = {
-            effects['costs']: (
+            effects[EffectLabels.COSTS]: (
                 self._fuel_costs
                 + self.fuel_cost_extra
-                + (self.co2_factor(time_series_data, co2_factors) * extract_data('CO2', time_series_data))
+                + (
+                    self.co2_factor(time_series_data, co2_factors)
+                    * extract_data(EnergyPriceLabels.CO2, time_series_data)
+                )
             ),
-            effects['CO2']: self.co2_factor(time_series_data, co2_factors),
+            effects[EffectLabels.CO2]: self.co2_factor(time_series_data, co2_factors),
         }
 
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
@@ -495,7 +649,7 @@ class Kessel(FuelThermalInvestElement):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
 
         boiler = fx.linear_converters.Boiler(
@@ -521,21 +675,23 @@ class Kessel(FuelThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(boiler, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, boiler.Q_th, boiler.eta, effects['costs'], years_of_model)
+        self.insert_grid_fee(
+            self.grid_fee_per_year, boiler.Q_th, boiler.eta, effects[EffectLabels.COSTS], years_of_model
+        )
         return boiler
 
 
 class KWK(FuelThermalInvestElement):
-    eta_el: Union[int, float, str] = Field(alias='Elektrischer Wirkungsgrad')
-    forward_flow_temperature: Union[int, float, str] = Field(
-        alias='Vorlauftemperatur', default='Vorlauftemperatur Fernwärmenetz [°C]'
+    eta_el: Zahl_oder_Zeitreihe = Field(alias='Elektrischer Wirkungsgrad')
+    forward_flow_temperature: Zahl_oder_Zeitreihe = Field(
+        alias='Vorlauftemperatur', default=TemperatureLabels.NETWORK_FORWARD
     )
-    reverse_flow_temperature: Union[int, float, str] = Field(
-        alias='Rücklauftemperatur', default='Rücklauftemperatur Fernwärmenetz [°C]'
+    reverse_flow_temperature: Zahl_oder_Zeitreihe = Field(
+        alias='Rücklauftemperatur', default=TemperatureLabels.NETWORK_RETURN
     )
-    ambient_temperature: Union[int, float, str] = Field(alias='Umgebungstemperatur', default='Tamb')
+    ambient_temperature: Zahl_oder_Zeitreihe = Field(alias='Umgebungstemperatur', default=TemperatureLabels.AMBIENT_AIR)
 
-    bus_elec: str = Field(alias='Strombus', default='StromEinspeisung')
+    bus_elec: str = Field(alias='Strombus', default=BusLabels.ELECTRICITY_OUT)
 
     def _convert_to_flixopt(
         self,
@@ -544,7 +700,7 @@ class KWK(FuelThermalInvestElement):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
 
         chp = fx.linear_converters.CHP(
@@ -562,8 +718,8 @@ class KWK(FuelThermalInvestElement):
                 label='Pel',
                 bus=busses[self.bus_elec],
                 effects_per_flow_hour={
-                    effects['costs']: -1 * extract_data('Strom', time_series_data),
-                    effects['CO2FW']: -1 * self.co2_emissions_electricity(time_series_data, co2_factors),
+                    effects[EffectLabels.COSTS]: -1 * extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data),
+                    effects[EffectLabels.CO2_HEAT]: -1 * self.co2_emissions_electricity(time_series_data, co2_factors),
                 },
             ),
             Q_fu=fx.Flow(
@@ -579,7 +735,7 @@ class KWK(FuelThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(chp, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, chp.Q_th, chp.eta_th, effects['costs'], years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, chp.Q_th, chp.eta_th, effects[EffectLabels.COSTS], years_of_model)
         return chp
 
     def _insert_data(self, time_series_data: pd.DataFrame):
@@ -634,19 +790,17 @@ class KWK(FuelThermalInvestElement):
 
 
 class Waermepumpe(ThermalInvestElement):
-    cop: Optional[Union[int, float, str]] = Field(alias='COP', default=None)
-    carnot_efficiency: Optional[Union[int, float, str]] = Field(alias='Carnot Effizienz', default=0.5)
-    source_temperature: Union[int, float, str] = Field(alias='Quelltemperatur', default=None)
-    sink_temperature: Union[int, float, str] = Field(
-        alias='Zieltemperatur', default='Vorlauftemperatur Fernwärmenetz [°C]'
-    )
+    cop: Zahl_oder_Zeitreihe_optional = Field(alias='COP', default=None)
+    carnot_efficiency: Zahl_oder_Zeitreihe_optional = Field(alias='Carnot Effizienz', default=0.5)
+    source_temperature: Zahl_oder_Zeitreihe_optional = Field(alias='Quelltemperatur', default=None)
+    sink_temperature: Zahl_oder_Zeitreihe = Field(alias='Zieltemperatur', default=TemperatureLabels.NETWORK_FORWARD)
 
-    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
+    extra_costs_per_mwh_elec: Zahl_oder_Zeitreihe = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
 
     scop_bew: Optional[Union[int, float]] = Field(alias='SCOP für BEW', default=None)
     max_bew_elec_funding: Optional[Union[int, float]] = Field(alias='Maximale Stromkostenförderung BEW', default=None)
 
-    bus_elec: str = Field(alias='Strombus', default='StromBezug')
+    bus_elec: str = Field(alias='Strombus', default=BusLabels.ELECTRICITY_IN)
 
     def _convert_to_flixopt(
         self,
@@ -655,7 +809,7 @@ class Waermepumpe(ThermalInvestElement):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
 
         heat_pump = fx.linear_converters.HeatPump(
@@ -683,7 +837,9 @@ class Waermepumpe(ThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
+        self.insert_grid_fee(
+            self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model
+        )
         return heat_pump
 
     def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
@@ -697,7 +853,9 @@ class Waermepumpe(ThermalInvestElement):
             )
 
     def _get_electricity_costs_per_mwh(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
-        return extract_data('Strom', time_series_data) + extract_data(self.extra_costs_per_mwh_elec, time_series_data)
+        return extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data) + extract_data(
+            self.extra_costs_per_mwh_elec, time_series_data
+        )
 
     def _get_operation_funding_bew(
         self, time_series_data: pd.DataFrame, years_of_model: List[int]
@@ -722,8 +880,8 @@ class Waermepumpe(ThermalInvestElement):
         """Calculates the electricity_effects per flow_hour."""
 
         data = {
-            effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
-            effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model),
+            effects[EffectLabels.COSTS]: self._get_electricity_costs_per_mwh(time_series_data),
+            effects[EffectLabels.FUNDING]: self._get_operation_funding_bew(time_series_data, years_of_model),
         }
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
 
@@ -795,7 +953,9 @@ class Waermepumpe(ThermalInvestElement):
                 f"Need to specify a 'COP' for {self.name} or "
                 f"use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally."
             )
-        if self.cop and (self.source_temperature or self.sink_temperature):
+        if self.cop and (
+            self.source_temperature or self.sink_temperature != self.model_fields['sink_temperature'].default
+        ):
             raise Exception(
                 f"Either specify a 'COP' for {self.name} "
                 f"OR use 'Quelltemperatur' and 'Zieltemperatur' to calculate the COP internally."
@@ -823,19 +983,17 @@ class Speicher(ThermalInvestElement):
     invest_costs_capacity_specific: Union[int, float] = Field(alias='Investkosten [€/MWh]', default=0)
     annual_costs_capacity_specific: Union[int, float] = Field(alias='Sonstige Fixkosten (fix) [€/(MWh*a)]', default=0)
 
-    eta_load: Union[int, float, str] = Field(alias='eta_load')
-    eta_unload: Union[int, float, str] = Field(alias='eta_unload')
-    loss_per_hour: Union[int, float, str] = Field(alias='VerlustProStunde', default=0)
+    eta_load: Zahl_oder_Zeitreihe = Field(alias='eta_load')
+    eta_unload: Zahl_oder_Zeitreihe = Field(alias='eta_unload')
+    loss_per_hour: Zahl_oder_Zeitreihe = Field(alias='VerlustProStunde', default=0)
 
     depends_on_temperature: bool = Field(alias='AbhängigkeitVonDT', default=False)
-    temperature_lower: Union[int, float, str] = Field(
-        alias='Untere Temperatur', default='Rücklauftemperatur Fernwärmenetz [°C]'
-    )
-    temperature_upper: Union[int, float, str] = Field(
-        alias='Obere Temperatur', default='Vorlauftemperatur Fernwärmenetz [°C]'
-    )
+    temperature_lower: Zahl_oder_Zeitreihe = Field(alias='Untere Temperatur', default=TemperatureLabels.NETWORK_RETURN)
+    temperature_upper: Zahl_oder_Zeitreihe = Field(alias='Obere Temperatur', default=TemperatureLabels.NETWORK_FORWARD)
 
-    default_temperature_spread: Union[int, float] = Field(alias='Nenn-Temperaturspreizung', default=65)
+    default_temperature_spread: Union[int, float] = Field(
+        alias='Nenn-Temperaturspreizung', default=TemperatureLabels.DEFAULT_SPREAD
+    )
 
     def _insert_data(self, time_series_data: pd.DataFrame):
         super()._insert_data(time_series_data)
@@ -854,7 +1012,7 @@ class Speicher(ThermalInvestElement):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
 
         storage = fx.Storage(
@@ -907,7 +1065,7 @@ class Speicher(ThermalInvestElement):
 
             if flow_with_size.size.fixed_size is None:
                 effect = fx.Effect(
-                    label=f'{self.name}_link_thermal_power',
+                    label=f'{self.name}_link_power',
                     unit='',
                     description=f'Links the charge and discharge investment value of storage {self.name}',
                     minimum_invest=0,
@@ -949,8 +1107,12 @@ class Speicher(ThermalInvestElement):
             if not storage.meta_data:
                 storage.meta_data = MetaDataFactory.create()
 
-            storage.meta_data['invest']['costs']['specific_effects'] += specific_effects_per_period.get('costs', 0)
-            storage.meta_data['invest']['funding']['specific_effects'] += specific_effects_per_period.get('funding', 0)
+            storage.meta_data['invest'][EffectLabels.COSTS]['specific_effects'] += specific_effects_per_period.get(
+                EffectLabels.COSTS, 0
+            )
+            storage.meta_data['invest'][EffectLabels.FUNDING]['specific_effects'] += specific_effects_per_period.get(
+                EffectLabels.FUNDING, 0
+            )
 
     def _get_normalized_temperature_spread(self) -> Union[float, np.ndarray]:
         return (self.temperature_upper - self.temperature_lower) / self.default_temperature_spread
@@ -991,8 +1153,8 @@ class Speicher(ThermalInvestElement):
 
 class EHK(ThermalInvestElement):
     eta_thermal: Union[float, str] = Field(alias='Thermischer Wirkungsgrad')
-    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
-    bus_elec: str = Field(alias='Strombus', default='StromBezug')
+    extra_costs_per_mwh_elec: Zahl_oder_Zeitreihe = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
+    bus_elec: str = Field(alias='Strombus', default=BusLabels.ELECTRICITY_IN)
 
     def _insert_data(self, data: pd.DataFrame):
         super()._insert_data(data)
@@ -1006,7 +1168,7 @@ class EHK(ThermalInvestElement):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
 
         ehk = fx.linear_converters.Power2Heat(
@@ -1016,7 +1178,9 @@ class EHK(ThermalInvestElement):
                 label='Pel',
                 bus=busses[self.bus_elec],
                 effects_per_flow_hour={
-                    effects['costs']: (extract_data('Strom', time_series_data) + self.extra_costs_per_mwh_elec)
+                    effects[EffectLabels.COSTS]: (
+                        extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data) + self.extra_costs_per_mwh_elec
+                    )
                 },
             ),
             Q_th=fx.Flow(
@@ -1034,15 +1198,15 @@ class EHK(ThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(ehk, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, ehk.Q_th, ehk.eta, effects['costs'], years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, ehk.Q_th, ehk.eta, effects[EffectLabels.COSTS], years_of_model)
         return ehk
 
 
 class Rueckkuehler(ThermalInvestElement):
-    specific_electricity_demand: Union[int, float, str] = Field(alias='Strombedarf', default=0)
-    extra_costs_per_mwh_elec: Union[int, float, str] = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
+    specific_electricity_demand: Zahl_oder_Zeitreihe = Field(alias='Strombedarf', default=0)
+    extra_costs_per_mwh_elec: Zahl_oder_Zeitreihe = Field(alias='Stromkosten Zusatz [€/MWh]', default=0)
 
-    bus_elec: str = Field(alias='Strombus', default='StromBezug')
+    bus_elec: str = Field(alias='Strombus', default=BusLabels.ELECTRICITY_IN)
 
     def _insert_data(self, data: pd.DataFrame):
         super()._insert_data(data)
@@ -1055,7 +1219,7 @@ class Rueckkuehler(ThermalInvestElement):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
 
         cool = fx.linear_converters.CoolingTower(
@@ -1065,7 +1229,8 @@ class Rueckkuehler(ThermalInvestElement):
                 label='Pel',
                 bus=busses[self.bus_elec],
                 effects_per_flow_hour={
-                    effects['costs']: extract_data('Strom', time_series_data) + self.extra_costs_per_mwh_elec
+                    effects[EffectLabels.COSTS]: extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data)
+                    + self.extra_costs_per_mwh_elec
                 },
             ),
             Q_th=fx.Flow(
@@ -1088,15 +1253,15 @@ class Rueckkuehler(ThermalInvestElement):
                 self.grid_fee_per_year,
                 cool.Q_th,
                 1 / cool.specific_electricity_demand,
-                effects['costs'],
+                effects[EffectLabels.COSTS],
                 years_of_model,
             )
         return cool
 
 
 class AbwaermeWaermepumpe(Waermepumpe):
-    heat_source_costs: Union[int, float, str] = Field(alias='Abwärmekosten', default=0)
-    bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
+    heat_source_costs: Zahl_oder_Zeitreihe = Field(alias='Abwärmekosten', default=0)
+    bus_waste_heat: str = Field(alias='Abwärmebus', default=BusLabels.WASTE_HEAT)
 
     def _insert_data(self, data: pd.DataFrame):
         self.heat_source_costs = extract_data(self.heat_source_costs, data)
@@ -1108,7 +1273,7 @@ class AbwaermeWaermepumpe(Waermepumpe):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
 
         heat_pump = fx.linear_converters.HeatPumpWithSource(
@@ -1124,12 +1289,14 @@ class AbwaermeWaermepumpe(Waermepumpe):
             P_el=fx.Flow(
                 label='Pel',
                 bus=busses[self.bus_elec],
-                effects_per_flow_hour=self._electricity_effects_per_flow_hour(effects, time_series_data, years_of_model),
+                effects_per_flow_hour=self._electricity_effects_per_flow_hour(
+                    effects, time_series_data, years_of_model
+                ),
             ),
             Q_ab=fx.Flow(
                 label='Qab',
                 bus=busses[self.bus_waste_heat],
-                effects_per_flow_hour={effects['costs']: self.heat_source_costs},
+                effects_per_flow_hour={effects[EffectLabels.COSTS]: self.heat_source_costs},
             ),
         )
         self.insert_size(
@@ -1139,13 +1306,15 @@ class AbwaermeWaermepumpe(Waermepumpe):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
+        self.insert_grid_fee(
+            self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model
+        )
         return heat_pump
 
 
 class Geothermie(Waermepumpe):
-    amount_of_pump_electricity: Union[int, float, str] = Field(alias='Anteil Pumpstrom pro MW_geo')
-    bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
+    amount_of_pump_electricity: Zahl_oder_Zeitreihe = Field(alias='Anteil Pumpstrom pro MW_geo', ge=0)
+    bus_waste_heat: str = Field(alias='Abwärmebus', default=BusLabels.WASTE_HEAT)
 
     def _insert_data(self, data: pd.DataFrame):
         super()._insert_data(data)
@@ -1170,7 +1339,7 @@ class Geothermie(Waermepumpe):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
 
         heat_pump = fx.linear_converters.HeatPumpWithSource(
@@ -1186,7 +1355,9 @@ class Geothermie(Waermepumpe):
             P_el=fx.Flow(
                 label='Pel',
                 bus=busses[self.bus_elec],
-                effects_per_flow_hour=self._electricity_effects_per_flow_hour(effects, time_series_data, years_of_model),
+                effects_per_flow_hour=self._electricity_effects_per_flow_hour(
+                    effects, time_series_data, years_of_model
+                ),
             ),
             Q_ab=fx.Flow(label='Qab', bus=busses[self.bus_waste_heat]),
         )
@@ -1197,22 +1368,15 @@ class Geothermie(Waermepumpe):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
+        self.insert_grid_fee(
+            self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model
+        )
         return heat_pump
-
-    @model_validator(mode='after')
-    def validate_amount_of_pump_electricity(self):
-        if self.cop and self.amount_of_pump_electricity:
-            raise Exception(
-                f"Either specify a 'COP' for {self.name} "
-                f"OR use 'Anteil Pumpstrom pro MW_geo' to calculate the COP internally."
-            )
-        return self
 
 
 class Abwaerme(ThermalInvestElement):
-    waste_heat_costs: Union[int, float, str] = Field(alias='Abwärmekosten')
-    bus_waste_heat: str = Field(alias='Abwärmebus', default='Abwärme')
+    waste_heat_costs: Zahl_oder_Zeitreihe = Field(alias='Abwärmekosten')
+    bus_waste_heat: str = Field(alias='Abwärmebus', default=BusLabels.WASTE_HEAT)
 
     def _insert_data(self, data: pd.DataFrame):
         super()._insert_data(data)
@@ -1225,7 +1389,7 @@ class Abwaerme(ThermalInvestElement):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
 
         q_th = fx.Flow(
@@ -1239,7 +1403,7 @@ class Abwaerme(ThermalInvestElement):
         q_abw = fx.Flow(
             label='Qabw',
             bus=busses[self.bus_waste_heat],
-            effects_per_flow_hour={effects['costs']: self.waste_heat_costs},
+            effects_per_flow_hour={effects[EffectLabels.COSTS]: self.waste_heat_costs},
         )
 
         comp = fx.LinearConverter(
@@ -1265,17 +1429,17 @@ class KWKekt(InvestElement):
     fuel_costs: Union[float, str] = Field(alias='Brennstoffkosten [€/MWh_hu]', default=0)
     can_be_off: bool = Field(alias='Ausschaltbar', default=True)
 
-    bus_elec: str = Field(alias='Strombus', default='StromEinspeisung')
-    bus_heat: str = Field(alias='Wärmebus', default='Fernwärme')
+    bus_elec: str = Field(alias='Strombus', default=BusLabels.ELECTRICITY_OUT)
+    bus_heat: str = Field(alias='Wärmebus', default=BusLabels.HEAT)
 
-    relative_maximum: Union[int, float, str] = Field(alias='Relative Brennstoff Leistungsobergrenze', default=1)
-    relative_minimum: Union[int, float, str] = Field(alias='Relative Brennstoff Leistungsuntergrenze', default=0)
-    green_heat_factor: Union[int, float, str] = Field(alias='Grüne Wärme', default=0)
+    relative_maximum_fuel: Zahl_oder_Zeitreihe = Field(alias='Relative Brennstoff Leistungsobergrenze', default=1)
+    relative_minimum_fuel: Zahl_oder_Zeitreihe = Field(alias='Relative Brennstoff Leistungsuntergrenze', default=0)
+    green_heat_factor: Zahl_oder_Zeitreihe = Field(alias='Grüne Wärme', default=0)
 
     def _insert_data(self, data: pd.DataFrame):
         self.fuel_costs = extract_data(self.fuel_costs, data)
-        self.relative_maximum = extract_data(self.relative_maximum, data)
-        self.relative_minimum = extract_data(self.relative_minimum, data)
+        self.relative_maximum_fuel = extract_data(self.relative_maximum_fuel, data)
+        self.relative_minimum_fuel = extract_data(self.relative_minimum_fuel, data)
         self.green_heat_factor = extract_data(self.green_heat_factor, data)
 
     def _convert_to_flixopt(
@@ -1285,23 +1449,30 @@ class KWKekt(InvestElement):
         time_series_data: pd.DataFrame,
         co2_factors: Dict[str, float],
         years_of_model: List[int],
-    ):
+    ) -> flixOpt.elements.Component:
         effects = flow_system.effect_collection.effects
 
         flow_heat = fx.Flow(
-            'Qth', busses[self.bus_heat], effects_per_flow_hour={effects['Gruene_Waerme']: self.green_heat_factor}
+            'Qth',
+            busses[self.bus_heat],
+            size=max(self.thermal_power),
+            effects_per_flow_hour={effects[EffectLabels.GREEN_HEAT]: self.green_heat_factor},
         )
         flow_fuel = fx.Flow(
             'Qfu',
             busses[self.fuel_type],
-            effects_per_flow_hour={effects['costs']: self.fuel_costs},
-            relative_minimum=self.relative_maximum,
-            relative_maximum=self.relative_maximum,
+            size=self.fuel_power,
+            effects_per_flow_hour={effects[EffectLabels.COSTS]: self.fuel_costs},
+            relative_minimum=self.relative_maximum_fuel,
+            relative_maximum=self.relative_maximum_fuel,
         )
         flow_el = fx.Flow(
             'Pel',
             busses[self.bus_elec],
-            effects_per_flow_hour={effects['costs']: -1 * extract_data('Strom', time_series_data)},
+            size=max(self.electrical_power),
+            effects_per_flow_hour={
+                effects[EffectLabels.COSTS]: -1 * extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data)
+            },
         )
 
         if self.can_be_off:
@@ -1356,9 +1527,40 @@ class KWKekt(InvestElement):
                 raise ValueError(f'The thermal efficiency of {self.props["Name"]} exceeds 100%.')
             if (epp + tpp) / self.fuel_power > 1:
                 raise ValueError(f'The total efficiency of {self.props["Name"]} exceeds 100%.')
+        return self
 
 
-class ElementFactory:
+class ModelFactory:
+    """
+    Für Vorlagen zur Erstellung der verschiedenen Erzeuegr, siehe Template_Input.xlsx
+
+    Die Vorlagen können auch neu erstellt werden mittels:
+
+    ```python
+    from fermieopt.DistrictHeatingComps import ModelFactory
+
+    ModelFactory.model_templates(file_name='Template_Input.xlsx', sheet_name='Templates')
+    ModelFactory.model_overview(file_name='Template_Input.xlsx', sheet_name='Doku')
+    ```
+    """
+
+    class_map = {
+        'Wärmepumpe': Waermepumpe,
+        'KWK': KWK,
+        'Kessel': Kessel,
+        'Speicher': Speicher,
+        'Umwandler': LinearTransformer,
+        'Sink': Sink,
+        'Source': Source,
+        'Abwärme-WP': AbwaermeWaermepumpe,
+        'Geothermie': Geothermie,
+        'KWK-Ekt': KWKekt,
+        'Power-to-Heat': EHK,
+        'Abwärme': Abwaerme,
+        'Kühlturm': Rueckkuehler,
+        # More mappings as needed
+    }
+
     def __init__(
         self,
         flow_system: fx.FlowSystem,
@@ -1376,46 +1578,98 @@ class ElementFactory:
         self.created_comps: List[Element] = []
 
     def create_energy_object(self, obj_type: str, properties: Dict) -> None:
-        obj_class = self.get_class_by_type(obj_type)
-        if obj_class:
-            energy_obj: Element = obj_class(**properties)
-            self.created_comps.append(energy_obj)
-            energy_obj.add_to_flow_system(
-                flow_system=self.flow_system,
-                busses=self.busses,
-                time_series_data=self.time_series_data,
-                co2_factors=self.co2_factors,
-                years_of_model=self.years_of_model,
-            )
-            logger.info(f'Created {obj_type} "{energy_obj.name}"')
-        else:
-            raise ValueError(f'Unknown energy object type: {obj_type}')
+        try:
+            obj_class = self.class_map[obj_type]
+        except KeyError as e:
+            raise KeyError(
+                f'Unbekanntes Element: "{obj_type}". Wähle eines der folgenden Elemente aus: {list(self.class_map)}'
+            ) from e
 
-    def get_class_by_type(self, obj_type):
-        # Map obj_type to the appropriate class
-        class_map = {
-            'Waermepumpe': Waermepumpe,
-            'KWK': KWK,
-            'Kessel': Kessel,
-            'Speicher': Speicher,
-            'LinearTransformer_1_1': LinearTransformer,
-            'Sink': Sink,
-            'Source': Source,
-            'AbwaermeWP': AbwaermeWaermepumpe,
-            'Geothermie': Geothermie,
-            'KWKekt': KWKekt,
-            'EHK': EHK,
-            'AbwaermeHT': Abwaerme,
-            'Rueckkuehler': Rueckkuehler,
-            # More mappings as needed
+        energy_obj: Element = obj_class(**properties)
+        self.created_comps.append(energy_obj)
+        energy_obj.add_to_flow_system(
+            flow_system=self.flow_system,
+            busses=self.busses,
+            time_series_data=self.time_series_data,
+            co2_factors=self.co2_factors,
+            years_of_model=self.years_of_model,
+        )
+        logger.info(f'Created {obj_type} "{energy_obj.name}"')
+
+    @classmethod
+    def model_overview(
+        cls, file_name: Optional[str] = 'Dokumentation.xlsx', sheet_name: str = 'Dokumentation'
+    ) -> pd.DataFrame:
+        """
+        Exportiert die Feld-Aliase, Datentypen, Beschreibungen, Default-Werte und ob das Feld obligatorisch ist
+        in eine Excel-Datei.
+        """
+
+        field_info = {}
+        for model_name, model in cls.class_map.items():
+            for field_name, field in model.model_fields.items():
+                alias = field.alias or field_name
+                description = field.description or ''
+
+                types = get_args(field.annotation) or [field.annotation]
+                as_time_series = any(t is str for t in types) and any(t in (int, float) for t in types)
+
+                allowed_types = [t.__name__ for t in get_args(field.annotation)] or [field.annotation.__name__]
+                if 'NoneType' in allowed_types:
+                    allowed_types.remove('NoneType')
+
+                if alias not in field_info:
+                    field_info[alias] = {
+                        'Beschreibung': description,
+                        'Auch als Zeitreihe': as_time_series,
+                        'Typ': ', '.join([str(allowed_type) for allowed_type in allowed_types]),
+                    }
+
+                field_info[alias][model_name] = True  # Mark field as present
+
+        # Convert to DataFrame
+        df = pd.DataFrame.from_dict(field_info, orient='index')
+        df.index.name = 'Parameter'
+
+        if file_name:
+            df_write = df.replace({True: 'Ja', False: 'Nein'})
+            if Path(file_name).exists():
+                with pd.ExcelWriter(file_name, mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:
+                    df_write.to_excel(writer, index=True, sheet_name=sheet_name)
+            else:
+                with pd.ExcelWriter(file_name, mode='w', engine='openpyxl') as writer:
+                    df_write.to_excel(writer, index=True, sheet_name=sheet_name)
+
+        return df
+
+    @classmethod
+    def model_templates(
+        cls,
+        optional_fields: bool = True,
+        file_name: Optional[str] = 'Dokumentation.xlsx',
+        sheet_name: str = 'Templates',
+    ) -> pd.DataFrame:
+        """
+        Exportiert die Verfügbaren Klassn und Parameter in eine Excel-Datei.
+        """
+
+        field_info = {
+            model_name: model.field_aliases() if optional_fields else model.mandatory_aliases()
+            for model_name, model in cls.class_map.items()
         }
-        return class_map.get(obj_type)
 
-    def print_comps(self):
-        rep = ''
-        for comp in sorted(self.created_comps, key=lambda comp: comp.name):
-            rep += f'{comp}\n'
-        return rep
+        # Convert to DataFrame
+        df = pd.DataFrame.from_dict(field_info, orient='index').T
+
+        if file_name:
+            if Path(file_name).exists():
+                with pd.ExcelWriter(file_name, mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:
+                    df.to_excel(writer, index=False, sheet_name=sheet_name)
+            else:
+                with pd.ExcelWriter(file_name, mode='w', engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name=sheet_name)
+
+        return df
 
 
 def extract_data(value: Union[str, Any], data: pd.DataFrame) -> Union[np.ndarray, Any]:
@@ -1424,7 +1678,6 @@ def extract_data(value: Union[str, Any], data: pd.DataFrame) -> Union[np.ndarray
     and the corresponding data is returned. If the value is not a string, it is assumed to be the actual data and is simply
     returned.
     """
-
     if isinstance(value, str):
         if value not in data.columns:
             raise KeyError(
@@ -1434,6 +1687,11 @@ def extract_data(value: Union[str, Any], data: pd.DataFrame) -> Union[np.ndarray
         return data[value].to_numpy()
     else:
         return value
+
+
+def extract_fuel_price(value: Union[str, Any], data: pd.DataFrame) -> Union[np.ndarray, Any]:
+    value = FuelTypeToPriceMapping.get_price_label(value)
+    return extract_data(value, data)
 
 
 def insert_effects(dictionary: Dict[Union[fx.Effect, str], Any], effects: Dict[str, fx.Effect]) -> None:

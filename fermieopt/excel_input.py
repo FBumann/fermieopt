@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_serializer, field_validator, model_validator
 
+from fermieopt.config import EnergyPriceLabels, TemperatureLabels
+
 logger = logging.getLogger('flixOpt')
 
 
@@ -178,6 +180,14 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     )
     _skip_read_data: bool = PrivateAttr(default=False)
 
+    _mandatory_columns: List[str] = PrivateAttr(
+        default=EnergyPriceLabels.all_values()
+        + [
+            TemperatureLabels.NETWORK_FORWARD,
+            TemperatureLabels.NETWORK_RETURN,
+        ]
+    )
+
     _component_data_keys_mapping: Dict[str, str] = PrivateAttr(
         default={
             'Thermische Leistung': 'Thermische Leistung [MW]',
@@ -191,11 +201,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             'Zusatzkosten pro MWh Brennstoff': 'Brennstoffkosten Zusatz [€/MWh_hu]',
             'Zusatzkosten pro MWh Strom': 'Stromkosten Zusatz [€/MWh]',
             'effects_per_flow_hour': 'Zusätzliche Wärmeerzeugungskosten [€/MWh]',
-            'SCOP für BEW': 'SCOP für BEW',
-            'Maximale Stromkostenförderung BEW': 'Maximale Stromkostenförderung BEW',
-            'Investkosten [€/MWh]': 'Investkosten [€/MWh]',
             'Sonstige Fixkosten [€/(MWh*a)]': 'Sonstige Fixkosten (fix) [€/(MWh*a)]',
-            'Carnot Effizienz': 'Carnot Effizienz',
             'relative_maximum': 'Relative thermische Leistungsobergrenze',
             'relative_minimum': 'Relative thermische Leistungsuntergrenze',
         }
@@ -203,8 +209,8 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
 
     _time_series_data_mapping: Dict[str, str] = PrivateAttr(
         default={
-            'TVL_FWN': 'Vorlauftemperatur Fernwärmenetz [°C]',
-            'TRL_FWN': 'Rücklauftemperatur Fernwärmenetz [°C]',
+            'TVL_FWN': TemperatureLabels.NETWORK_FORWARD,
+            'TRL_FWN': TemperatureLabels.NETWORK_RETURN,
         }
     )
 
@@ -312,14 +318,11 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
 
     @model_validator(mode='after')
     def check_used_columns(self):
-        if 'Vorlauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
-            logger.warning(
-                'Column "Vorlauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.'
-            )
-        if 'Rücklauftemperatur Fernwärmenetz [°C]' not in self.time_series_data.columns:
-            logger.warning(
-                'Column "Rücklauftemperatur Fernwärmenetz [°C]" was not found in the time series data. It is used as a default for multiple components.'
-            )
+        for col in self._mandatory_columns:
+            if col not in self.time_series_data.columns:
+                logger.critical(
+                    f'Column "{col}" wurde nicht in den Zeitreihen gefunden. Bitte Zeitreihe mit Name "{col}" einfügen.'
+                )
         return self
 
     @field_serializer('time_series_data')
@@ -372,10 +375,12 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
     def _read_components(
         self, excel_file: pd.ExcelFile, sheets: List[str], valid_keys: List[str]
     ) -> Dict[str, List[Dict[str, Any]]]:
+        from fermieopt.DistrictHeatingComps import ModelFactory
+
         component_data_by_type = {}
         for sheet_name in sheets:
             df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, nrows=30)
-            component_data = organize_component_data_by_type(df, valid_keys)
+            component_data = organize_component_data_by_type(df, list(ModelFactory.class_map) + ['Bus'])
             component_data_by_type = combine_dicts_of_component_data(component_data_by_type, component_data)
             logger.info(f"Component Data of Sheet '{sheet_name}' was read sucessfully.")
         component_data_converted = convert_component_data_types(component_data_by_type)
@@ -400,6 +405,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             Returns:
                 bool: True if values are equal, False otherwise.
             """
+
             def compare(x, y):
                 return x == y
 
@@ -468,12 +474,13 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         """
 
         from fermieopt.DistrictHeatingComps import validate_invest_range
+
         for comp_type in self.components_data:
             items_to_remove = []
             for component_data in self.components_data[comp_type]:
                 years = component_data.get('Startjahr')
                 if years is not None:
-                    name = component_data.get("Name")
+                    name = component_data.get('Name')
                     if name is None:
                         raise AttributeError('Name of Element was not found.')
                     try:
@@ -493,7 +500,9 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
 
                                     new_names.append(new_name)
                                     self.components_data[comp_type].append(new_comp_data)
-                            logger.info(f'Augmented {comp_type} "{name}" {len(new_names)} times: {new_names}. Startjahr was "{years}"')
+                            logger.info(
+                                f'Augmented {comp_type} "{name}" {len(new_names)} times: {new_names}. Startjahr was "{years}"'
+                            )
                     except ValueError as e:
                         raise ValueError(
                             f'Startjahr "{years}" was identified as a range, but isnt in the right format. Use "YYYY-YYYY".'

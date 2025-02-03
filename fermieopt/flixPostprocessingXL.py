@@ -1,12 +1,14 @@
 import logging
 import os
 import pathlib
-from typing import Dict, List, Literal, Optional, Tuple, Union
+from typing import Dict, List, Literal, Tuple, Union
 
 import flixOpt as fx
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from fermieopt.config import EffectLabels, OtherLabels
 
 logger = logging.getLogger('flixOpt')
 
@@ -40,7 +42,85 @@ class FlixPostXL(fx.results.CalculationResults):
         self._validate_effects_computation()
 
     def sizes(self) -> Dict[str, Union[int, float]]:
-        return {label: element_info['size'] for label, element_info in self.investment_infos().items()}
+        """Returns the size of all Flows and Storages"""
+        sizes = {}
+        for label, comp_results in self.component_results.items():
+            if label not in self.storages:
+                continue
+
+            if 'Investment' in comp_results.all_results:
+                sizes[label] = comp_results.all_results['Investment']['size']
+            else:
+                sizes[label] = comp_results.all_infos['capacity_in_flow_hours']
+            sizes[label] = sizes[label]
+
+        for label, flow_results in self.flow_results().items():
+            if 'Investment' in flow_results.all_results:
+                sizes[label] = flow_results.all_results['Investment']['size']
+            else:
+                sizes[label] = flow_results.all_infos['size']
+
+        return sizes
+
+    def used_power_per_period(self, decimals: int = 3) -> Dict[str, np.ndarray]:
+        df = pd.DataFrame(
+            {label: flow_result.all_results['flow_rate'] for label, flow_result in self.flow_results().items()},
+            index=self.time,
+        )
+
+        data = df.resample('YE').max().to_dict('list')
+        return {label: np.round(np.array(value), decimals) for label, value in data.items()}
+
+    def sizes_per_period(self) -> Dict[str, np.ndarray]:
+        sizes, availlabilities = self.sizes(), self._availlability_per_period()
+        return {label: sizes[label] * availlabilities[label] for label in sizes}
+
+    def sizes_per_period_connected_to_bus(self, bus: str, directional: bool = False) -> Dict[str, np.ndarray]:
+        """
+        Returns the flow sizes of FLows connected to a bus.
+        For Storage capacity refer to storage_capacity_per_period_connected_to_bus()
+        """
+        sizes_p_p = self.sizes_per_period()
+
+        flow_results = self.bus_results[bus].inputs + self.bus_results[bus].outputs
+        flows: List[str] = [flow.label_full for flow in flow_results]
+        if directional:
+            direction = {flow.label_full: -1 if flow.is_input_in_component else 1 for flow in flow_results}
+            return {flow: sizes_p_p[flow] * direction[flow] for flow in flows}
+        return {flow: sizes_p_p[flow] for flow in flows}
+
+    def storage_capacity_per_period_connected_to_bus(self, bus: str) -> Dict[str, np.ndarray]:
+        sizes_p_p = self.sizes_per_period()
+
+        storages_connected = []
+        for storage_label in self.storages:
+            storage = self.component_results[storage_label]
+            for flow in storage.outputs + storage.inputs:
+                if flow.bus_label == bus:
+                    storages_connected.append(storage_label)
+                    break  # Not check the other flows of this storage
+
+        return {storage: sizes_p_p[storage] for storage in storages_connected}
+
+    def _availlability_per_period(self) -> Dict[str, np.ndarray]:
+        """Returns the availlability of all Flows and Storages per period"""
+        availlabilities = {}
+        default = np.array([1 for _ in self.years])
+        for label, comp_results in self.component_results.items():
+            if label not in self.storages:
+                continue
+            availlability = comp_results.all_infos.get('meta_data', {}).get('Verfuegbarkeit', default)
+            if isinstance(availlability, list):
+                availlability = np.array(availlability)
+            availlabilities[label] = availlability
+
+        for label, flow_results in self.flow_results().items():
+            availlability = flow_results.all_infos.get('meta_data', {}).get('Verfuegbarkeit', default)
+            if isinstance(availlability, list):
+                availlability = np.array(availlability)
+            availlabilities[label] = availlability
+
+        return availlabilities
 
     @property
     def storages(self) -> List[str]:
@@ -50,7 +130,7 @@ class FlixPostXL(fx.results.CalculationResults):
             if 'Storage' in comp_results.all_infos['class'].split(':')
         ]
 
-    def investment_infos(self) -> Dict[str, Dict[str, Union[int, float, np.ndarray[float]]]]:
+    def investment_infos(self) -> Dict[str, Dict[str, Union[int, float, np.ndarray[float], bool]]]:
         investment_infos = {}
 
         for component in self.component_results.values():
@@ -58,105 +138,58 @@ class FlixPostXL(fx.results.CalculationResults):
                 investment_infos[component.label] = {
                     'size': component.all_results['Investment']['size'],
                     'is_invested': component.all_results['Investment'].get('isInvested', 1),
-                    'effects': component.all_infos['meta_data']['invest'] if 'meta_data' in component.all_infos else {},
+                    'optional': component.all_infos['capacity_in_flow_hours'].get('optional', True),
                 }
+                meta_data = component.all_infos.get('meta_data', {})
+                investment_infos[component.label]['effects'] = meta_data['invest'] if 'invest' in meta_data else {}
 
         for flow in self.flow_results().values():
             if 'Investment' in flow.all_results:
                 investment_infos[flow.label_full] = {
                     'size': flow.all_results['Investment']['size'],
                     'is_invested': flow.all_results['Investment'].get('isInvested', 1),
-                    'effects': flow.all_infos['meta_data']['invest'] if 'meta_data' in flow.all_infos else {},
+                    'optional': flow.all_infos['size'].get('optional', True),
                 }
+                meta_data = flow.all_infos.get('meta_data', {})
+                investment_infos[flow.label_full]['effects'] = meta_data['invest'] if 'invest' in meta_data else {}
 
         return investment_infos
 
-    def _get_investment_effects_per_period(
-        self,
-    ) -> Dict[str, Dict[str, Dict[Literal['fixed_effects', 'specific_effects'], np.ndarray[float]]]]:
-        self._sum_up_invest_effects_per_element()
-
-        invest_effects_per_period = {effect: {} for effect in self.effect_results}
-
-        for element, element_infos in self.investment_infos().items():
-            for effect, values in element_infos['effects'].items():
-                invest_effects_per_period[effect][element] = (
-                    values['fixed_effects'] * element_infos['is_invested']
-                    + values['specific_effects'] * element_infos['size']
-                )
-
-        # Validate, that the sum of the computed invest effects per Period match the values from the optimization
-        logger.debug('Validating Investment Effects...')
-        for effect_label, effect_results in self.effect_results.items():
-            if effect_label == 'Penalty':
-                continue
-            for element, new_result in invest_effects_per_period[effect_label].items():
-                old_result = effect_results.all_results['invest']['Shares'].get(element, 0)
-
-                if not np.isclose(sum(new_result), old_result, atol=1e-5):
-                    logger.critical(
-                        f'Getting the investment effects per Period was not succesfull for {element=}.'
-                        f'The value from the optimizer {old_result} differs from the self '
-                        f'computed value {sum(new_result)}.'
-                    )
-
-        return invest_effects_per_period
-
-    def _sum_up_invest_effects_per_element(self):
-        def combine_keys(data: dict[str, int]) -> dict[str, int]:
-            combined_data = {}
-
-            for key, value in data.items():
-                if '__fix_effects' in key or '__specific_effects' in key:
-                    # Extract the common prefix
-                    prefix = key.rsplit('__', 1)[0]
-                    # Combine values into the prefix key
-                    combined_data[prefix] = combined_data.get(prefix, 0) + value
-                elif key not in combined_data:  # Preserve unique keys without suffix
-                    combined_data[key] = value
-
-            return combined_data
-
-        for effect_name, effect_results in self.effect_results.items():
-            if effect_name == 'Penalty':
-                continue
-            effect_results.all_results['invest']['Shares'] = combine_keys(
-                effect_results.all_results['invest']['Shares']
-            )
-
-    def _get_factors_between_effects(
-        self,
-    ) -> Tuple[
-        Dict[Tuple[str, str], Union[int, float, np.ndarray[float]]],
-        Dict[Tuple[str, str], Union[int, float, np.ndarray[float]]],
-    ]:
-        shares_invest = {}
-        for effect, effect_results in self.effect_results.items():
-            shares_invest[effect] = {
-                target: factor
-                for target, factor in effect_results.all_infos.get('specific_share_to_other_effects_invest', {}).items()
-            }
-        shares_invest = compute_conversion_factors(shares_invest)
-
-        shares_operation = {}
-        for effect, effect_results in self.effect_results.items():
-            shares_operation[effect] = {
-                target: factor
-                for target, factor in effect_results.all_infos.get(
-                    'specific_share_to_other_effects_operation', {}
-                ).items()
-            }
-        shares_operation = compute_conversion_factors(shares_operation)
-        return shares_operation, shares_invest
-
     def get_effects_of_element(
-        self, element_label: str, effect_label: str, domain: Literal['invest', 'operation', 'invest_per_period']
+        self,
+        element_label: str,
+        effect_label: str,
+        domain: Literal[
+            'invest', 'operation', 'invest_per_period', 'operation_per_period', 'total_per_period', 'total'
+        ],
     ) -> Union[int, float, np.ndarray[float]]:
         """
         This function returns the effects introduced by an element.
         If the Element is a Component, effects of sub elements are included.
         The returned value includes direct and indirect effects.
         """
+
+        def matches_element_label(label_to_check, element_labels: List[str]) -> bool:
+            """
+            Evaluates if the given label belongs to the element.
+            Evaluates to True, if either the label to check is in the element labels, or if the element labels + '__'
+
+            Parameters
+            ----------
+            label_to_check: The label to perform the check on
+            element_labels: A list of possible element labels
+
+            Returns
+            -------
+
+            """
+            if label_to_check in element_label:
+                return True
+            extended_labels = [f'{label}__' for label in element_labels]
+            if any([label_to_check.startswith(extended_label) for extended_label in extended_labels]):
+                return True
+            return False
+
         labels = [element_label]
         if element_label in self.component_results:
             component = self.component_results[element_label]
@@ -170,8 +203,9 @@ class FlixPostXL(fx.results.CalculationResults):
             conversion_factors[effect_label] = 1  # Share to itself is 1
             for effect, conversion_factor in conversion_factors.items():
                 for origin, value in self.effect_results[effect].all_results['operation']['Shares'].items():
-                    if any([origin.startswith(f'{label}__') for label in labels]):
+                    if matches_element_label(origin, labels):
                         total = total + value * conversion_factor
+            return total
 
         elif domain == 'invest':
             total = 0
@@ -181,8 +215,10 @@ class FlixPostXL(fx.results.CalculationResults):
             conversion_factors[effect_label] = 1  # Share to itself is 1
             for effect, conversion_factor in conversion_factors.items():
                 for origin, value in self.effect_results[effect].all_results['invest']['Shares'].items():
-                    if origin in labels:
+                    if matches_element_label(origin, labels):
                         total = total + value * conversion_factor
+            return total
+
         elif domain == 'invest_per_period':
             total = np.zeros_like(self.years)
             conversion_factors = {
@@ -191,13 +227,29 @@ class FlixPostXL(fx.results.CalculationResults):
             conversion_factors[effect_label] = 1  # Share to itself is 1
             for effect, conversion_factor in conversion_factors.items():
                 for origin, value in self.effect_results[effect].all_results['invest']['Shares_per_period'].items():
-                    if origin in labels:
+                    if matches_element_label(origin, labels):
                         total = total + value * conversion_factor
+            return total
+
+        elif domain == 'operation_per_period':
+            from .excel_output import resample_data
+
+            return resample_data(
+                self.get_effects_of_element(element_label, effect_label, 'operation'), self.years, 'YE', 'sum', 'h'
+            ).values.flatten()
+
+        elif domain == 'total_per_period':
+            return self.get_effects_of_element(
+                element_label, effect_label, 'invest_per_period'
+            ) + self.get_effects_of_element(element_label, effect_label, 'operation_per_period')
+
+        elif domain == 'total':
+            return self.get_effects_of_element(element_label, effect_label, 'invest') + np.sum(
+                self.get_effects_of_element(element_label, effect_label, 'operation')
+            )
+
         else:
             logger.critical(f'Not allowed domain. Must be in {["invest", "operation", "invest_per_period"]}')
-            total = 0
-
-        return total
 
     def get_effect_results(
         self,
@@ -243,116 +295,6 @@ class FlixPostXL(fx.results.CalculationResults):
 
         else:
             raise ValueError(f'Invalid parameter: {origin}')
-
-    def _validate_effects_computation(self):
-        """
-        This function checks if the method get_effects_of_element() sucessfully allocates all effects for an element.
-        It does so by comparing the retrieved effects for all Elements with the total effect value.
-        If there is a mismatch, it logs the error
-
-        """
-        for effect in self.effect_results:
-            if effect == 'Penalty':
-                continue
-            total = self.effect_results[effect].all_results['invest']['invest_sum']
-            individual = [
-                self.get_effects_of_element(component, effect, 'invest') for component in self.component_results
-            ]
-            computed_total = sum(individual)
-            if abs(abs(computed_total) - abs(total)) > 1e-5:
-                logger.critical(
-                    f'Total of individual results for {effect=:>25} {"invest":<10} doesnt match computation after '
-                    f'solve: {computed_total=:>20.5f}     {total=:>20.5f}'
-                )
-
-            total = np.sum(self.effect_results[effect].all_results['operation']['operation_sum_TS'])
-            individual = [
-                np.sum(self.get_effects_of_element(component, effect, 'operation'))
-                for component in self.component_results
-            ]
-            computed_total = sum(individual)
-            if abs(abs(computed_total) - abs(total)) > 1e-5:
-                logger.critical(
-                    f'Total of individual results for {effect=:>25} {"operation":<10} doesnt match computation after '
-                    f'solve: {computed_total=:>20.5f}     {total=:>20.5f}'
-                )
-
-            total = np.sum(self.effect_results[effect].all_results['invest']['invest_sum'])
-            individual = [
-                np.sum(self.get_effects_of_element(component, effect, 'invest_per_period'))
-                for component in self.component_results
-            ]
-            computed_total = sum(individual)
-            if abs(abs(computed_total) - abs(total)) > 1e-5:
-                logger.critical(
-                    f'Total of individual results for {effect=:>25} {"invest_per_period":<10} doesnt match computation after '
-                    f'solve: {computed_total=:>20.5f}     {total=:>20.5f}'
-                )
-
-            total = np.sum(self.effect_results[effect].all_results['invest']['invest_per_period'])
-            computed_total = np.sum(
-                np.sum(list(self.effect_results[effect].all_results['invest']['Shares_per_period'].values()))
-            )
-            if not np.isclose(total, computed_total, rtol=0, atol=1e-5):
-                logger.critical(
-                    f'Total of individual results for {effect=:>25} {"invest_per_period":<10} doesnt match computation after '
-                    f'solve: {computed_total=:>20.5f}     {total=:>20.5f}'
-                )
-
-    def _write_investment_effects_per_period_into_effect_results(self):
-        """
-        This function writes the investment effects per period into the EffectResults.
-        For now without shares between effects!
-        """
-
-        # Computing individual effects per period
-        for effect, effect_results in self.effect_results.items():
-            if effect == 'Penalty':
-                continue
-            effects_per_period = {
-                key: value
-                for key, value in self.investment_effects_per_period[effect].items()
-                if not np.all(value == 0)
-            }
-
-            effect_results.all_results['invest']['Shares_per_period'] = {
-                key: value for key, value in effects_per_period.items()
-            }
-
-        # Computing total of effect per period
-        for effect, effect_results in self.effect_results.items():
-            if effect == 'Penalty':
-                continue
-            effect_results.all_results['invest']['invest_per_period'] = np.sum(
-                list(effect_results.all_results['invest']['Shares_per_period'].values()), axis=0
-            )
-
-        # TODO: THis might not be entirely viable
-        additional_shares = {}
-        for effect in self.effect_results:
-            if effect == 'Penalty':
-                continue
-            factors = {key[0]: value for key, value in self.shares_between_effects_invest.items() if key[1] == effect}
-            for origin, factor in factors.items():
-                additional_shares[effect] = (
-                    additional_shares.get(effect, np.array([0] * len(self.years)))
-                    + self.effect_results[origin].all_results['invest']['invest_per_period'] * factor
-                )
-        for effect, value in additional_shares.items():
-            self.effect_results[effect].all_results['invest']['Shares_per_period']['From other effects'] = value
-            self.effect_results[effect].all_results['invest']['invest_per_period'] += value
-
-    def _add_group_mapping(self) -> Dict:
-        mapping = {}
-        for flow_label, flow_results in self.flow_results().items():
-            flow_meta_data = flow_results.all_infos.get('meta_data', {})
-            if 'Gruppe' in flow_meta_data:
-                mapping[flow_label] = flow_meta_data['Gruppe']
-        for comp_label, comp_results in self.component_results.items():
-            comp_meta_data = comp_results.all_infos.get('meta_data', {})
-            if 'Gruppe' in comp_meta_data:
-                mapping[comp_label] = comp_meta_data['Gruppe']
-        return mapping
 
     def to_data_frame(
         self,
@@ -432,23 +374,25 @@ class FlixPostXL(fx.results.CalculationResults):
         return df
 
     def get_availlability(self, grouped: bool = False) -> pd.DataFrame:
+        """Returns the hourly availlability of all Components and Flows"""
         sizes = self.sizes()
-        availlability = {
-            flow_label: flow_results.all_infos['relative_maximum'] * flow_results.all_results['Investment']['size']
-            for flow_label, flow_results in self.flow_results().items()
-            if flow_label in sizes
-        }
-        for component_label, component_results in self.component_results.items():
-            if 'Storage' in component_results.all_infos['class']:
-                if component_label in sizes:
-                    availlability[component_label] = (
-                        component_results.all_infos['relative_maximum_charge_state']
-                        * component_results.all_results['Investment']['size']
-                    )
-                    if len(availlability[component_label]) == len(self.time_with_end):
-                        availlability[component_label] = availlability[component_label][:-1]
 
-        df = pd.DataFrame(availlability, index=self.time)
+        availlabilities = {
+            flow_label: flow_results.all_infos.get('relative_maximum', 1) * sizes[flow_label]
+            for flow_label, flow_results in self.flow_results().items()
+        }
+        storage_labels = self.storages
+        for component_label, component_results in self.component_results.items():
+            if component_label in storage_labels:
+                availlability = (
+                    component_results.all_infos.get('relative_maximum_charge_state', 1) * sizes[component_label]
+                )
+                if isinstance(availlability, (np.ndarray)) and len(availlability) == len(self.time_with_end):
+                    availlability = availlability[:-1]
+
+                availlabilities[component_label] = availlability
+
+        df = pd.DataFrame(availlabilities, index=self.time)
         if grouped:
             return self.group_df_by_mapping(df)
         else:
@@ -485,14 +429,16 @@ class FlixPostXL(fx.results.CalculationResults):
 
         return pd.DataFrame(data, index=self.time)
 
-    def get_fuel_costs(self) -> pd.DataFrame:
+    def get_energy_prices(
+        self, element_label=OtherLabels.ENERGY_PRICES, effect_label=EffectLabels.COSTS
+    ) -> pd.DataFrame:
         """
         Returns the costs per flow hour of every medium in a DataFrame. Data saved in a special component ("HelperPreise").
 
         Parameters
         ----------
-        calc : FlixPostXL
-            Solved calculation of type flixPostXL.
+        element_label: The name og the element of which to retrive the costs from
+        effect_label: The Effect of which to retrive the costs from
 
         Returns
         -------
@@ -500,18 +446,10 @@ class FlixPostXL(fx.results.CalculationResults):
             DataFrame containing the costs per flow hour for each medium. Columns represent different media,
             and rows represent the time series.
         """
-        flows = self.component_results['HelperPreise'].outputs
-        result_dataframe = pd.DataFrame(index=self.time)
-        for flow in flows:
-            name = flow.label_full.split('_')[-1]
-            ar = flow.all_infos['effects_per_flow_hour']
-            if isinstance(ar, (float, int)):
-                ar = ar * np.ones(len(self.time))
+        flows = self.component_results[element_label].outputs
+        prices = {flow.label: flow.all_infos['effects_per_flow_hour'][effect_label] for flow in flows}
 
-            new_dataframe = pd.DataFrame({name: ar}, index=self.time)
-            result_dataframe = pd.concat([result_dataframe, new_dataframe], axis=1)
-
-        return result_dataframe.head(len(self.time))
+        return pd.DataFrame(prices, index=self.time)
 
     def plot_operation_color_map(
         self,
@@ -723,6 +661,194 @@ class FlixPostXL(fx.results.CalculationResults):
             plt.savefig(save_as, dpi=dpi, bbox_inches='tight')
 
         return fig, ax
+
+    def _get_investment_effects_per_period(
+        self,
+    ) -> Dict[str, Dict[str, Dict[Literal['fixed_effects', 'specific_effects'], np.ndarray[float]]]]:
+        self._sum_up_invest_effects_per_element()
+
+        invest_effects_per_period = {effect: {} for effect in self.effect_results}
+
+        for element, element_infos in self.investment_infos().items():
+            for effect, values in element_infos['effects'].items():
+                invest_effects_per_period[effect][element] = (
+                    values['fixed_effects'] * element_infos['is_invested']
+                    + values['specific_effects'] * element_infos['size']
+                )
+
+        # Validate, that the sum of the computed invest effects per Period match the values from the optimization
+        logger.debug('Validating Investment Effects...')
+        for effect_label, effect_results in self.effect_results.items():
+            if effect_label == 'Penalty':
+                continue
+            for element, new_result in invest_effects_per_period[effect_label].items():
+                old_result = effect_results.all_results['invest']['Shares'].get(element, 0)
+
+                if not np.isclose(sum(new_result), old_result, atol=1e-5):
+                    logger.critical(
+                        f'Getting the investment effects per Period was not succesfull for {element=}.'
+                        f'The value from the optimizer {old_result} differs from the self '
+                        f'computed value {sum(new_result)}.'
+                    )
+
+        return invest_effects_per_period
+
+    def _sum_up_invest_effects_per_element(self):
+        def combine_keys(data: dict[str, int]) -> dict[str, int]:
+            combined_data = {}
+
+            for key, value in data.items():
+                if '__fix_effects' in key or '__specific_effects' in key:
+                    # Extract the common prefix
+                    prefix = key.rsplit('__', 1)[0]
+                    # Combine values into the prefix key
+                    combined_data[prefix] = combined_data.get(prefix, 0) + value
+                elif key not in combined_data:  # Preserve unique keys without suffix
+                    combined_data[key] = value
+
+            return combined_data
+
+        for effect_name, effect_results in self.effect_results.items():
+            if effect_name == 'Penalty':
+                continue
+            effect_results.all_results['invest']['Shares'] = combine_keys(
+                effect_results.all_results['invest']['Shares']
+            )
+
+    def _get_factors_between_effects(
+        self,
+    ) -> Tuple[
+        Dict[Tuple[str, str], Union[int, float, np.ndarray[float]]],
+        Dict[Tuple[str, str], Union[int, float, np.ndarray[float]]],
+    ]:
+        shares_invest = {}
+        for effect, effect_results in self.effect_results.items():
+            shares_invest[effect] = {
+                target: factor
+                for target, factor in effect_results.all_infos.get('specific_share_to_other_effects_invest', {}).items()
+            }
+        shares_invest = compute_conversion_factors(shares_invest)
+
+        shares_operation = {}
+        for effect, effect_results in self.effect_results.items():
+            shares_operation[effect] = {
+                target: factor
+                for target, factor in effect_results.all_infos.get(
+                    'specific_share_to_other_effects_operation', {}
+                ).items()
+            }
+        shares_operation = compute_conversion_factors(shares_operation)
+        return shares_operation, shares_invest
+
+    def _validate_effects_computation(self):
+        """
+        This function checks if the method get_effects_of_element() sucessfully allocates all effects for an element.
+        It does so by comparing the retrieved effects for all Elements with the total effect value.
+        If there is a mismatch, it logs the error
+
+        """
+        for effect in self.effect_results:
+            if effect == 'Penalty':
+                continue
+            total = self.effect_results[effect].all_results['invest']['invest_sum']
+            individual = [
+                self.get_effects_of_element(component, effect, 'invest') for component in self.component_results
+            ]
+            computed_total = sum(individual)
+            if abs(abs(computed_total) - abs(total)) > 1e-5:
+                logger.critical(
+                    f'Total of individual results for {effect=:>25} {"invest":<10} doesnt match computation after '
+                    f'solve: {computed_total=:>20.5f}     {total=:>20.5f}'
+                )
+
+            total = np.sum(self.effect_results[effect].all_results['operation']['operation_sum_TS'])
+            individual = [
+                np.sum(self.get_effects_of_element(component, effect, 'operation'))
+                for component in self.component_results
+            ]
+            computed_total = sum(individual)
+            if abs(abs(computed_total) - abs(total)) > 1e-5:
+                logger.critical(
+                    f'Total of individual results for {effect=:>25} {"operation":<10} doesnt match computation after '
+                    f'solve: {computed_total=:>20.5f}     {total=:>20.5f}'
+                )
+
+            total = np.sum(self.effect_results[effect].all_results['invest']['invest_sum'])
+            individual = [
+                np.sum(self.get_effects_of_element(component, effect, 'invest_per_period'))
+                for component in self.component_results
+            ]
+            computed_total = sum(individual)
+            if abs(abs(computed_total) - abs(total)) > 1e-5:
+                logger.critical(
+                    f'Total of individual results for {effect=:>25} {"invest_per_period":<10} doesnt match computation after '
+                    f'solve: {computed_total=:>20.5f}     {total=:>20.5f}'
+                )
+
+            total = np.sum(self.effect_results[effect].all_results['invest']['invest_per_period'])
+            computed_total = np.sum(
+                np.sum(list(self.effect_results[effect].all_results['invest']['Shares_per_period'].values()))
+            )
+            if not np.isclose(total, computed_total, rtol=0, atol=1e-5):
+                logger.critical(
+                    f'Total of individual results for {effect=:>25} {"invest_per_period":<10} doesnt match computation after '
+                    f'solve: {computed_total=:>20.5f}     {total=:>20.5f}'
+                )
+
+    def _write_investment_effects_per_period_into_effect_results(self):
+        """
+        This function writes the investment effects per period into the EffectResults.
+        For now without shares between effects!
+        """
+
+        # Computing individual effects per period
+        for effect, effect_results in self.effect_results.items():
+            if effect == 'Penalty':
+                continue
+            effects_per_period = {
+                key: value
+                for key, value in self.investment_effects_per_period[effect].items()
+                if not np.all(value == 0)
+            }
+
+            effect_results.all_results['invest']['Shares_per_period'] = {
+                key: value for key, value in effects_per_period.items()
+            }
+
+        # Computing total of effect per period
+        for effect, effect_results in self.effect_results.items():
+            if effect == 'Penalty':
+                continue
+            effect_results.all_results['invest']['invest_per_period'] = np.sum(
+                list(effect_results.all_results['invest']['Shares_per_period'].values()), axis=0
+            )
+
+        # TODO: THis might not be entirely viable
+        additional_shares = {}
+        for effect in self.effect_results:
+            if effect == 'Penalty':
+                continue
+            factors = {key[0]: value for key, value in self.shares_between_effects_invest.items() if key[1] == effect}
+            for origin, factor in factors.items():
+                additional_shares[effect] = (
+                    additional_shares.get(effect, np.array([0] * len(self.years)))
+                    + self.effect_results[origin].all_results['invest']['invest_per_period'] * factor
+                )
+        for effect, value in additional_shares.items():
+            self.effect_results[effect].all_results['invest']['Shares_per_period']['From other effects'] = value
+            self.effect_results[effect].all_results['invest']['invest_per_period'] += value
+
+    def _add_group_mapping(self) -> Dict:
+        mapping = {}
+        for flow_label, flow_results in self.flow_results().items():
+            flow_meta_data = flow_results.all_infos.get('meta_data', {})
+            if 'Gruppe' in flow_meta_data:
+                mapping[flow_label] = flow_meta_data['Gruppe']
+        for comp_label, comp_results in self.component_results.items():
+            comp_meta_data = comp_results.all_infos.get('meta_data', {})
+            if 'Gruppe' in comp_meta_data:
+                mapping[comp_label] = comp_meta_data['Gruppe']
+        return mapping
 
 
 def compute_conversion_factors(
