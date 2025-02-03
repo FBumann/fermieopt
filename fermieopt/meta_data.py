@@ -2,6 +2,8 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict, Union
 
 import numpy as np
 
+from fermieopt.config import EffectLabels
+
 
 class EffectMetaData(TypedDict):
     fixed_effects: np.ndarray[Union[int, float]]
@@ -28,11 +30,11 @@ class MetaDataFactory:
     def create(cls) -> MetaData:
         return {
             'invest': {
-                'costs': {
+                EffectLabels.COSTS: {
                     'fixed_effects': np.array([0] * cls.length, dtype=float),
                     'specific_effects': np.array([0] * cls.length, dtype=float),
                 },
-                'funding': {
+                EffectLabels.FUNDING: {
                     'fixed_effects': np.array([0] * cls.length, dtype=float),
                     'specific_effects': np.array([0] * cls.length, dtype=float),
                 },

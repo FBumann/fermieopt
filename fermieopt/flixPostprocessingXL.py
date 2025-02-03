@@ -445,7 +445,7 @@ class FlixPostXL(fx.results.CalculationResults):
             and rows represent the time series.
         """
         flows = self.component_results[element_label].outputs
-        prices = {flow.label: flow.all_infos['effects_per_flow_hour']['costs'] for flow in flows}
+        prices = {flow.label: flow.all_infos['effects_per_flow_hour'][EffectLabels.COSTS] for flow in flows}
 
         return pd.DataFrame(prices, index=self.time)
 

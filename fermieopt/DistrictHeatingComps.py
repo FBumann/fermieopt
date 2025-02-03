@@ -252,13 +252,13 @@ class InvestElement(Element):
 
         # Calculate costs and funding
         fix_costs = {
-            'costs': invest_costs * annuity_factor * amortization_years + annual_costs * operation_years,
-            'funding': invest_costs * annuity_factor * amortization_years * funding_rate,
+            EffectLabels.COSTS: invest_costs * annuity_factor * amortization_years + annual_costs * operation_years,
+            EffectLabels.FUNDING: invest_costs * annuity_factor * amortization_years * funding_rate,
         }
         specific_costs = {
-            'costs': specific_invest_costs * annuity_factor * amortization_years
+            EffectLabels.COSTS: specific_invest_costs * annuity_factor * amortization_years
             + specific_annual_costs * operation_years,
-            'funding': specific_invest_costs * annuity_factor * amortization_years * funding_rate,
+            EffectLabels.FUNDING: specific_invest_costs * annuity_factor * amortization_years * funding_rate,
         }
 
         def clean_dict(d):
@@ -314,10 +314,10 @@ class InvestElement(Element):
             if not flow.meta_data:
                 flow.meta_data = MetaDataFactory.create()
 
-            flow.meta_data['invest']['costs']['fixed_effects'] += fixed_effects_per_period.get('costs', 0)
-            flow.meta_data['invest']['costs']['specific_effects'] += specific_effects_per_period.get('costs', 0)
-            flow.meta_data['invest']['funding']['fixed_effects'] += fixed_effects_per_period.get('funding', 0)
-            flow.meta_data['invest']['funding']['specific_effects'] += specific_effects_per_period.get('funding', 0)
+            flow.meta_data['invest'][EffectLabels.COSTS]['fixed_effects'] += fixed_effects_per_period.get(EffectLabels.COSTS, 0)
+            flow.meta_data['invest'][EffectLabels.COSTS]['specific_effects'] += specific_effects_per_period.get(EffectLabels.COSTS, 0)
+            flow.meta_data['invest'][EffectLabels.FUNDING]['fixed_effects'] += fixed_effects_per_period.get(EffectLabels.FUNDING, 0)
+            flow.meta_data['invest'][EffectLabels.FUNDING]['specific_effects'] += specific_effects_per_period.get(EffectLabels.FUNDING, 0)
 
     def restrict_availlability(self, component: flixOpt.elements.Component, years_in_model: List[int]) -> None:
         existance = exists(self.start_year, self.lifetime, years_in_model)
@@ -443,7 +443,7 @@ class ThermalInvestElement(InvestElement):
         """Calculates the thermal_effects per flow_hour."""
         data = {
             effects[EffectLabels.GREEN_HEAT]: self.green_heat_factor,
-            effects['costs']: self.costs_per_mwh_heat_extra,
+            effects[EffectLabels.COSTS]: self.costs_per_mwh_heat_extra,
         }
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
 
@@ -472,10 +472,10 @@ class ThermalInvestElement(InvestElement):
                     grid_fee_costs
                 ) + invest_flow.size.specific_effects.get(effect, 0)
 
-            assert effect.label == 'costs', f"Effect {effect.label} is not 'costs', which is expected in this function"
+            assert effect.label == EffectLabels.COSTS, f"Effect {effect.label} is not EffectLabels.COSTS, which is expected in this function"
             if not invest_flow.meta_data:
                 invest_flow.meta_data = MetaDataFactory.create()
-            invest_flow.meta_data['invest']['costs']['specific_effects'] += grid_fee_costs
+            invest_flow.meta_data['invest'][EffectLabels.COSTS]['specific_effects'] += grid_fee_costs
             invest_flow.meta_data['yearly_grid_fee_per_thermal_power'] = grid_fee_costs
             invest_flow.meta_data['highest_possible_grid_draw'] = highest_possible_grid_draw
 
@@ -578,7 +578,7 @@ class LinearTransformer(PowerInvestElement):
         flow_in = fx.Flow(
             label=self.flow_label_in,
             bus=busses[self.bus_in],
-            effects_per_flow_hour={effects['costs']: self.cost_per_mwh_in},
+            effects_per_flow_hour={effects[EffectLabels.COSTS]: self.cost_per_mwh_in},
         )
 
         comp = fx.LinearConverter(
@@ -617,7 +617,7 @@ class FuelThermalInvestElement(ThermalInvestElement):
     ) -> Dict[fx.Effect, Union[int, float, np.ndarray]]:
         """Calculates the thermal_effects per flow_hour."""
         data = {
-            effects['costs']: (
+            effects[EffectLabels.COSTS]: (
                 self._fuel_costs
                 + self.fuel_cost_extra
                 + (
@@ -625,7 +625,7 @@ class FuelThermalInvestElement(ThermalInvestElement):
                     * extract_data(EnergyPriceLabels.CO2, time_series_data)
                 )
             ),
-            effects['CO2']: self.co2_factor(time_series_data, co2_factors),
+            effects[EffectLabels.CO2]: self.co2_factor(time_series_data, co2_factors),
         }
 
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
@@ -665,7 +665,7 @@ class Kessel(FuelThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(boiler, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, boiler.Q_th, boiler.eta, effects['costs'], years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, boiler.Q_th, boiler.eta, effects[EffectLabels.COSTS], years_of_model)
         return boiler
 
 
@@ -706,8 +706,8 @@ class KWK(FuelThermalInvestElement):
                 label='Pel',
                 bus=busses[self.bus_elec],
                 effects_per_flow_hour={
-                    effects['costs']: -1 * extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data),
-                    effects['CO2FW']: -1 * self.co2_emissions_electricity(time_series_data, co2_factors),
+                    effects[EffectLabels.COSTS]: -1 * extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data),
+                    effects[EffectLabels.CO2_HEAT]: -1 * self.co2_emissions_electricity(time_series_data, co2_factors),
                 },
             ),
             Q_fu=fx.Flow(
@@ -723,7 +723,7 @@ class KWK(FuelThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(chp, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, chp.Q_th, chp.eta_th, effects['costs'], years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, chp.Q_th, chp.eta_th, effects[EffectLabels.COSTS], years_of_model)
         return chp
 
     def _insert_data(self, time_series_data: pd.DataFrame):
@@ -825,7 +825,7 @@ class Waermepumpe(ThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model)
         return heat_pump
 
     def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
@@ -866,8 +866,8 @@ class Waermepumpe(ThermalInvestElement):
         """Calculates the electricity_effects per flow_hour."""
 
         data = {
-            effects['costs']: self._get_electricity_costs_per_mwh(time_series_data),
-            effects['funding']: self._get_operation_funding_bew(time_series_data, years_of_model),
+            effects[EffectLabels.COSTS]: self._get_electricity_costs_per_mwh(time_series_data),
+            effects[EffectLabels.FUNDING]: self._get_operation_funding_bew(time_series_data, years_of_model),
         }
         return {effect: value for effect, value in data.items() if np.sum(value) not in [0, None]}
 
@@ -1093,8 +1093,8 @@ class Speicher(ThermalInvestElement):
             if not storage.meta_data:
                 storage.meta_data = MetaDataFactory.create()
 
-            storage.meta_data['invest']['costs']['specific_effects'] += specific_effects_per_period.get('costs', 0)
-            storage.meta_data['invest']['funding']['specific_effects'] += specific_effects_per_period.get('funding', 0)
+            storage.meta_data['invest'][EffectLabels.COSTS]['specific_effects'] += specific_effects_per_period.get(EffectLabels.COSTS, 0)
+            storage.meta_data['invest'][EffectLabels.FUNDING]['specific_effects'] += specific_effects_per_period.get(EffectLabels.FUNDING, 0)
 
     def _get_normalized_temperature_spread(self) -> Union[float, np.ndarray]:
         return (self.temperature_upper - self.temperature_lower) / self.default_temperature_spread
@@ -1160,7 +1160,7 @@ class EHK(ThermalInvestElement):
                 label='Pel',
                 bus=busses[self.bus_elec],
                 effects_per_flow_hour={
-                    effects['costs']: (
+                    effects[EffectLabels.COSTS]: (
                         extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data) + self.extra_costs_per_mwh_elec
                     )
                 },
@@ -1180,7 +1180,7 @@ class EHK(ThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(ehk, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, ehk.Q_th, ehk.eta, effects['costs'], years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, ehk.Q_th, ehk.eta, effects[EffectLabels.COSTS], years_of_model)
         return ehk
 
 
@@ -1211,7 +1211,7 @@ class Rueckkuehler(ThermalInvestElement):
                 label='Pel',
                 bus=busses[self.bus_elec],
                 effects_per_flow_hour={
-                    effects['costs']: extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data)
+                    effects[EffectLabels.COSTS]: extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data)
                     + self.extra_costs_per_mwh_elec
                 },
             ),
@@ -1235,7 +1235,7 @@ class Rueckkuehler(ThermalInvestElement):
                 self.grid_fee_per_year,
                 cool.Q_th,
                 1 / cool.specific_electricity_demand,
-                effects['costs'],
+                effects[EffectLabels.COSTS],
                 years_of_model,
             )
         return cool
@@ -1278,7 +1278,7 @@ class AbwaermeWaermepumpe(Waermepumpe):
             Q_ab=fx.Flow(
                 label='Qab',
                 bus=busses[self.bus_waste_heat],
-                effects_per_flow_hour={effects['costs']: self.heat_source_costs},
+                effects_per_flow_hour={effects[EffectLabels.COSTS]: self.heat_source_costs},
             ),
         )
         self.insert_size(
@@ -1288,7 +1288,7 @@ class AbwaermeWaermepumpe(Waermepumpe):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model)
         return heat_pump
 
 
@@ -1348,7 +1348,7 @@ class Geothermie(Waermepumpe):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects['costs'], years_of_model)
+        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model)
         return heat_pump
 
 
@@ -1381,7 +1381,7 @@ class Abwaerme(ThermalInvestElement):
         q_abw = fx.Flow(
             label='Qabw',
             bus=busses[self.bus_waste_heat],
-            effects_per_flow_hour={effects['costs']: self.waste_heat_costs},
+            effects_per_flow_hour={effects[EffectLabels.COSTS]: self.waste_heat_costs},
         )
 
         comp = fx.LinearConverter(
@@ -1440,7 +1440,7 @@ class KWKekt(InvestElement):
             'Qfu',
             busses[self.fuel_type],
             size=self.fuel_power,
-            effects_per_flow_hour={effects['costs']: self.fuel_costs},
+            effects_per_flow_hour={effects[EffectLabels.COSTS]: self.fuel_costs},
             relative_minimum=self.relative_maximum_fuel,
             relative_maximum=self.relative_maximum_fuel,
         )
@@ -1449,7 +1449,7 @@ class KWKekt(InvestElement):
             busses[self.bus_elec],
             size=max(self.electrical_power),
             effects_per_flow_hour={
-                effects['costs']: -1 * extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data)
+                effects[EffectLabels.COSTS]: -1 * extract_data(EnergyPriceLabels.ELECTRICITY, time_series_data)
             },
         )
 

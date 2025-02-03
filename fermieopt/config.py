@@ -49,12 +49,12 @@ class OtherLabels(LabelBase):
 
 
 class EffectLabels(LabelBase):
-    COSTS = 'costs'
+    COSTS = 'Kosten'
     CO2 = 'CO2'
-    CO2_HEAT = 'CO2FW'
-    OBJECTIVE = 'target'
-    FUNDING = 'funding'
-    GREEN_HEAT = 'Gruene_Waerme'
+    CO2_HEAT = 'CO2 Wärme'
+    OBJECTIVE = 'Objective'
+    FUNDING = 'Förderung'
+    GREEN_HEAT = 'Grüne Wärme'
 
 
 class TemperatureLabels(LabelBase):

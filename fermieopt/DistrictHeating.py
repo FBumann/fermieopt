@@ -119,33 +119,33 @@ class ExcelModel:
 
     def _create_effects(self) -> Dict[str, fx.Effect]:
         effects = dict()
-        effects['target'] = fx.Effect(
-            'target',
-            'i.E.',
-            'Target',  # name, unit, description
+        effects[EffectLabels.OBJECTIVE] = fx.Effect(
+            EffectLabels.OBJECTIVE,
+            '',
+            'Objective',  # name, unit, description
             is_objective=True,
         )  # defining costs as objective of optimiziation
-        effects['costs'] = fx.Effect(
-            'costs',
+        effects[EffectLabels.COSTS] = fx.Effect(
+            EffectLabels.COSTS,
             '€',
             'Kosten',
             is_standard=True,
-            specific_share_to_other_effects_operation={effects['target']: 1},
-            specific_share_to_other_effects_invest={effects['target']: 1},
+            specific_share_to_other_effects_operation={effects[EffectLabels.OBJECTIVE]: 1},
+            specific_share_to_other_effects_invest={effects[EffectLabels.OBJECTIVE]: 1},
         )
 
-        effects['funding'] = fx.Effect(
-            'funding',
+        effects[EffectLabels.FUNDING] = fx.Effect(
+            EffectLabels.FUNDING,
             '€',
-            'Funding Gesamt',
-            specific_share_to_other_effects_operation={effects['costs']: -1},
-            specific_share_to_other_effects_invest={effects['costs']: -1},
+            'Förderbetrag',
+            specific_share_to_other_effects_operation={effects[EffectLabels.COSTS]: -1},
+            specific_share_to_other_effects_invest={effects[EffectLabels.COSTS]: -1},
         )
 
-        effects['CO2FW'] = fx.Effect('CO2FW', 't', 'CO2Emissionen der Fernwaerme')
+        effects[EffectLabels.CO2_HEAT] = fx.Effect(EffectLabels.CO2_HEAT, 't', 'CO2-Emissionen der Fernwärme')
 
-        effects['CO2'] = fx.Effect(
-            'CO2', 't', 'CO2Emissionen', specific_share_to_other_effects_operation={effects['CO2FW']: 1}
+        effects[EffectLabels.CO2] = fx.Effect(
+            EffectLabels.CO2, 't', 'CO2-Emissionen', specific_share_to_other_effects_operation={effects[EffectLabels.CO2_HEAT]: 1}
         )
 
         effects[EffectLabels.GREEN_HEAT] = fx.Effect(
@@ -154,13 +154,10 @@ class ExcelModel:
 
         # Limit CO2 Emissions per year
         yearly_co2 = add_yearly_effects_with_bounds(
-            effects['CO2FW'],
+            effects[EffectLabels.CO2_HEAT],
             years=self.years,
             lower_bounds=[None] * len(self.years),
             upper_bounds=self.excel_data.period_data.co2_limit,
-            label='CO2Limit',
-            unit='t',
-            description='Effect to limit the Emissions per year',
         )
         effects.update(yearly_co2)
 
@@ -170,9 +167,6 @@ class ExcelModel:
             years=self.years,
             lower_bounds=self.excel_data.period_data.green_heat_min,
             upper_bounds=[None] * len(self.years),
-            label='Gruene_Waerme_Limits',
-            unit='MWh',
-            description='Effect to limit the Gruene_Waerme per year',
         )
         effects.update(yearly_gw)
 
@@ -185,7 +179,7 @@ class ExcelModel:
             bus=self._busses[BusLabels.ELECTRICITY_OUT],
             size=0,
             effects_per_flow_hour={
-                self._effects['costs']: extract_data(EnergyPriceLabels.ELECTRICITY, self.excel_data.time_series_data)
+                self._effects[EffectLabels.COSTS]: extract_data(EnergyPriceLabels.ELECTRICITY, self.excel_data.time_series_data)
             },
         )
         p_out2 = fx.Flow(
@@ -193,7 +187,7 @@ class ExcelModel:
             bus=self._busses[BusLabels.GAS],
             size=0,
             effects_per_flow_hour={
-                self._effects['costs']: extract_data(EnergyPriceLabels.GAS, self.excel_data.time_series_data)
+                self._effects[EffectLabels.COSTS]: extract_data(EnergyPriceLabels.GAS, self.excel_data.time_series_data)
             },
         )
         p_out3 = fx.Flow(
@@ -201,7 +195,7 @@ class ExcelModel:
             bus=self._busses[BusLabels.HYDROGEN],
             size=0,
             effects_per_flow_hour={
-                self._effects['costs']: extract_data(EnergyPriceLabels.HYDROGEN, self.excel_data.time_series_data)
+                self._effects[EffectLabels.COSTS]: extract_data(EnergyPriceLabels.HYDROGEN, self.excel_data.time_series_data)
             },
         )
 
@@ -339,9 +333,6 @@ def add_yearly_effects_with_bounds(
     years: List[int],
     lower_bounds: List[Optional[float]],
     upper_bounds: List[Optional[float]],
-    label: str,
-    unit: str,
-    description: str,
 ) -> Dict[str, fx.Effect]:
     """
     Creates multiple new Effects for yearly allocation of values. Gets values from the base_effect (Factor = 1).
@@ -363,9 +354,13 @@ def add_yearly_effects_with_bounds(
     yearly_effects = {}
     for year, lower_bound, upper_bound in zip(years, lower_bounds, upper_bounds, strict=False):
         if lower_bound is not None or upper_bound is not None:
-            full_label = f'{label}{year}'
+            full_label = f'{base_effect.label} {year}'
             yearly_effects[full_label] = fx.Effect(
-                full_label, unit, description, minimum_operation=lower_bound, maximum_operation=upper_bound
+                full_label,
+                base_effect.unit,
+                f'{base_effect.description} in {year}',
+                minimum_operation=lower_bound,
+                maximum_operation=upper_bound
             )
 
             base_effect.specific_share_to_other_effects_operation.update(
