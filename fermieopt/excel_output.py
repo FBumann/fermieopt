@@ -330,11 +330,7 @@ class ExcelEvaluation:
                 logger.warning(f'Die Gruppe von "{comp}" ({self.results.group_map[comp]}) entspricht nicht dem '
                                f'erwarteten Wert: "{self.group_label_heat_demand}".')
 
-    @property
-    def heat_demand_flows(self):
-        return [key for key, value in self.results.group_map.items() if value == self.group_label_heat_demand and key in self.results.flow_results()]
-
-    def run_excel_graphics_years(self, short_version=False, custom_output_file_path: str = 'default'):
+    def exportiere_ergebnisse_je_jahr(self, short_version=False, custom_output_file_path: str = 'default'):
         """
         Generate detailed annual comparison plots and save them to individual Excel workbooks for each year.
 
@@ -378,11 +374,11 @@ class ExcelEvaluation:
         Example:
         ```
         calc = FlixPostXL(...)  # Create or obtain FlixPostXL instance
-        run_excel_graphics_years(calc)  # Save the detailed workbooks in the default location
-        run_excel_graphics_years(
+        exportiere_ergebnisse_je_jahr(calc)  # Save the detailed workbooks in the default location
+        exportiere_ergebnisse_je_jahr(
             calc, short_version=True
         )  # Save shortened version of the workbooks in the default location
-        run_excel_graphics_years(
+        exportiere_ergebnisse_je_jahr(
             calc, custom_output_file_path='path/to/save/folder'
         )  # Save the detailed workbooks in a custom location
         ```
@@ -506,7 +502,7 @@ class ExcelEvaluation:
 
         logger.info('...Alle Jahre abgeschlossen')
 
-    def run_excel_graphics_main(self, custom_output_file_path: str = 'default'):
+    def exportiere_ergebnisuebersicht(self, custom_output_file_path: str = 'default'):
         """
         Generate annual comparison plots and save them to an Excel workbook.
 
@@ -540,8 +536,8 @@ class ExcelEvaluation:
         Example:
         ```
         calc = FlixPostXL(...)  # Create or obtain FlixPostXL instance
-        run_excel_graphics_main(calc)  # Save the workbook in the default location
-        run_excel_graphics_main(
+        exportiere_ergebnisuebersicht(calc)  # Save the workbook in the default location
+        exportiere_ergebnisuebersicht(
             calc, custom_output_file_path='path/to/save/file.xlsx'
         )  # Save the workbook in a custom location
         ```
@@ -600,6 +596,70 @@ class ExcelEvaluation:
             df_speicher_fuellstand_sum_h.to_excel(writer, index=True, sheet_name='Speicher Summen')
 
         logger.info('...Jahesübersicht abgeschlossen')
+
+    def vollbenutzungsstunden_pro_jahr(self, size_threshold: Optional[float] = 1e-5) -> pd.DataFrame:
+        """
+        Berechnet die Vollbenutzungststunden pro Jahr für alle Komponenten verbunden mit dem Wärmebus.
+        Diese werden als Excel-Tabelle gespeichert.
+
+        Parameters
+        ----------
+        size_threshold : float, optional
+            Minimum size of a component to be considered in the calculation. Default is 1e-5.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with the vollbnutzungsstunden per year.
+            Zeros mean that the component is not used. NAN means that the component is not present in that year.
+        """
+        logger.info('Berechne Vollbenutzungsstunden pro Jahr...')
+        df_heat = resample_data(self.results.to_dataframe(self.bus_heating), self.results.years, 'YE', 'sum')
+
+        df_heat = df_heat.drop(columns=self.heat_demand_flows)  # Drop Demands
+        sizes = pd.DataFrame(self.results.sizes_per_period_connected_to_bus(self.bus_heating, True),
+                             index=self.results.years)[df_heat.columns]
+
+        if size_threshold is not None:
+            relevant_cols = sizes.columns[(sizes >= size_threshold).all()].tolist()
+            return (df_heat / sizes).abs()[relevant_cols]
+
+        return (df_heat / sizes).abs()
+
+    def waermeproduktion_pro_jahr(self) -> pd.DataFrame:
+        """
+        Berechnet die Wärmeproduktion pro Jahr für alle Komponenten verbunden mit dem Wärmebus.
+        """
+        logger.info('Berechne Wärmeproduktion pro Jahr...')
+        return resample_data(self.results.to_dataframe(self.bus_heating, input_factor=1, output_factor=-1), self.results.years, 'YE', 'sum')
+
+    def effekte_pro_jahr(self,
+                         effekt: str = EffectLabels.COSTS,
+                         mode: Literal['operation', 'total'] = 'total') -> pd.DataFrame:
+        """
+        Berechnet die Effekte pro Wärmeproduktion pro Jahr für alle Komponenten verbunden mit dem Wärmebus.
+        Diese werden als Excel-Tabelle gespeichert.
+        """
+        logger.info('Berechne Wärmekosten pro Jahr...')
+        domain = {'operation': 'operation_per_period', 'total': 'total_per_period'}
+        df_heat = self.waermeproduktion_pro_jahr().drop(columns=self.heat_demand_flows)  # Drop Demands
+        df_heat = self._group_by_component(df_heat)
+
+        df_costs = pd.DataFrame(
+            {comp: self.results.get_effects_of_element(comp, effekt, domain[mode])
+             for comp in df_heat.columns},
+            index = self.results.years
+        )
+
+        return df_costs / df_heat
+
+    def _group_by_component(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Gruppiert die Daten nach Komponentenname.
+        """
+        flow_to_comp_labels = {flow.label_full: flow.component_label for flow in self.results.flow_results().values()}
+        df = df.rename(columns=flow_to_comp_labels)
+        return df.T.groupby(level=0).sum().T  # Sum up duplicate columns
 
     def _get_costs_and_funding_per_year(self):
         funding_var = self.results.get_effect_results(self.effect_funding, origin='operation', as_time_series=True)
@@ -1054,6 +1114,10 @@ class ExcelEvaluation:
         df_target = df_target.rename(columns=rename_dict)
         return df_target
 
+    @property
+    def heat_demand_flows(self):
+        return [key for key, value in self.results.group_map.items() if value == self.group_label_heat_demand and key in self.results.flow_results()]
+
 
 def write_bus_results_to_excel(
     calc: FlixPostXL, resample_by: Literal['YE', 'd', 'h'] = 'd', custom_output_file_path: str = 'default'
@@ -1337,70 +1401,3 @@ def create_report_per_comp(calc: FlixPostXL, path: str = 'report.pdf') -> None:
 
             pdf.savefig(fig, bbox_inches='tight')
             plt.close()
-
-
-class ExcelEvaluationExtended(ExcelEvaluation):
-
-    def vollbenutzungsstunden_pro_jahr(self, size_threshold: Optional[float] = 1e-5) -> pd.DataFrame:
-        """
-        Berechnet die Vollbenutzungststunden pro Jahr für alle Komponenten verbunden mit dem Wärmebus.
-        Diese werden als Excel-Tabelle gespeichert.
-
-        Parameters
-        ----------
-        size_threshold : float, optional
-            Minimum size of a component to be considered in the calculation. Default is 1e-5.
-
-        Returns
-        -------
-        pd.DataFrame
-            DataFrame with the vollbnutzungsstunden per year.
-            Zeros mean that the component is not used. NAN means that the component is not present in that year.
-        """
-        logger.info('Berechne Vollbenutzungsstunden pro Jahr...')
-        df_heat = resample_data(self.results.to_dataframe(self.bus_heating), self.results.years, 'YE', 'sum')
-
-        df_heat = df_heat.drop(columns=self.heat_demand_flows)  # Drop Demands
-        sizes = pd.DataFrame(self.results.sizes_per_period_connected_to_bus(self.bus_heating, True),
-                             index=self.results.years)[df_heat.columns]
-
-        if size_threshold is not None:
-            relevant_cols = sizes.columns[(sizes >= size_threshold).all()].tolist()
-            return (df_heat / sizes).abs()[relevant_cols]
-
-        return (df_heat / sizes).abs()
-
-    def waermeproduktion_pro_jahr(self) -> pd.DataFrame:
-        """
-        Berechnet die Wärmeproduktion pro Jahr für alle Komponenten verbunden mit dem Wärmebus.
-        """
-        logger.info('Berechne Wärmeproduktion pro Jahr...')
-        return resample_data(self.results.to_dataframe(self.bus_heating, input_factor=1, output_factor=-1), self.results.years, 'YE', 'sum')
-
-    def effekte_pro_jahr(self,
-                         effekt: str = EffectLabels.COSTS,
-                         mode: Literal['operation', 'total'] = 'total') -> pd.DataFrame:
-        """
-        Berechnet die Effekte pro Wärmeproduktion pro Jahr für alle Komponenten verbunden mit dem Wärmebus.
-        Diese werden als Excel-Tabelle gespeichert.
-        """
-        logger.info('Berechne Wärmekosten pro Jahr...')
-        domain = {'operation': 'operation_per_period', 'total': 'total_per_period'}
-        df_heat = self.waermeproduktion_pro_jahr().drop(columns=self.heat_demand_flows)  # Drop Demands
-        df_heat = self.group_by_component(df_heat)
-
-        df_costs = pd.DataFrame(
-            {comp: self.results.get_effects_of_element(comp, effekt, domain[mode])
-             for comp in df_heat.columns},
-            index = self.results.years
-        )
-
-        return df_costs / df_heat
-
-    def group_by_component(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Gruppiert die Daten nach Komponentenname.
-        """
-        flow_to_comp_labels = {flow.label_full: flow.component_label for flow in self.results.flow_results().values()}
-        df = df.rename(columns=flow_to_comp_labels)
-        return df.T.groupby(level=0).sum().T  # Sum up duplicate columns
