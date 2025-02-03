@@ -225,57 +225,57 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
             return self
 
         logger.info('Creating ExcelData object from file %s', self.file_path)
-        excel_file = pd.ExcelFile(self.file_path)
-        if 'Allgemeines' not in excel_file.sheet_names:
-            raise ValueError("The Excel file does not contain a 'Allgemeines' sheet.")
+        with pd.ExcelFile(self.file_path) as excel_file:
+            if 'Allgemeines' not in excel_file.sheet_names:
+                raise ValueError("The Excel file does not contain a 'Allgemeines' sheet.")
 
-        meta_data_df = pd.read_excel(excel_file, sheet_name='Allgemeines')
-        meta_data_df = meta_data_df.loc[:, ~meta_data_df.columns.str.startswith('Unnamed')]
-        meta_data_df = meta_data_df.replace(
-            {
-                np.nan: None,
-                '': None,
-                'NaN': None,
-                'None': None,
-                'null': None,
-                'NULL': None,
-                'ja': True,
-                'Ja': True,
-                'nein': False,
-                'Nein': False,
-            }
-        )
+            meta_data_df = pd.read_excel(excel_file, sheet_name='Allgemeines')
+            meta_data_df = meta_data_df.loc[:, ~meta_data_df.columns.str.startswith('Unnamed')]
+            meta_data_df = meta_data_df.replace(
+                {
+                    np.nan: None,
+                    '': None,
+                    'NaN': None,
+                    'None': None,
+                    'null': None,
+                    'NULL': None,
+                    'ja': True,
+                    'Ja': True,
+                    'nein': False,
+                    'Nein': False,
+                }
+            )
 
-        # Create MetaData and PeriodData instances
-        self.meta_data = MetaData.from_dataframe(meta_data_df)
-        self.period_data = PeriodData.from_dataframe(meta_data_df)
+            # Create MetaData and PeriodData instances
+            self.meta_data = MetaData.from_dataframe(meta_data_df)
+            self.period_data = PeriodData.from_dataframe(meta_data_df)
 
-        # Extract time series data (assuming the second sheet contains time series data)
-        logger.info('Reading data for years %s', self.period_data.years)
-        self.time_series_data = self._read_time_series_data(excel_file)
+            # Extract time series data (assuming the second sheet contains time series data)
+            logger.info('Reading data for years %s', self.period_data.years)
+            self.time_series_data = self._read_time_series_data(excel_file)
 
-        # Extract component data (assuming it's in separate sheets named by component)
-        self.components_data = self._read_components(
-            excel_file,
-            self.meta_data.sheets_components,
-            valid_keys=[
-                'KWK',
-                'Kessel',
-                'Speicher',
-                'EHK',
-                'Waermepumpe',
-                'AbwaermeHT',
-                'AbwaermeWP',
-                'Rueckkuehler',
-                'KWKekt',
-                'Geothermie',
-                'LinearTransformer_1_1',
-            ],
-        )
-        self.flow_system_data = self._read_components(
-            excel_file, sheets=['System'], valid_keys=['Bus', 'Sink', 'Source']
-        )
-        logger.info('Component Data from all sheets read sucessully.')
+            # Extract component data (assuming it's in separate sheets named by component)
+            self.components_data = self._read_components(
+                excel_file,
+                self.meta_data.sheets_components,
+                valid_keys=[
+                    'KWK',
+                    'Kessel',
+                    'Speicher',
+                    'EHK',
+                    'Waermepumpe',
+                    'AbwaermeHT',
+                    'AbwaermeWP',
+                    'Rueckkuehler',
+                    'KWKekt',
+                    'Geothermie',
+                    'LinearTransformer_1_1',
+                ],
+            )
+            self.flow_system_data = self._read_components(
+                excel_file, sheets=['System'], valid_keys=['Bus', 'Sink', 'Source']
+            )
+            logger.info('Component Data from all sheets read sucessully.')
 
         self._augment_components_with_several_start_years()
 
