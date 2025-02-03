@@ -19,7 +19,7 @@ logger = logging.getLogger('flixOpt')
 
 
 class ExcelModel:
-    """"
+    """
     Für Vorlagen zur Erstellung der verschiedenen Erzeuegr, siehe Template_Input.xlsx
 
     Die Vorlagen können auch neu erstellt werden mittels:
@@ -30,6 +30,7 @@ class ExcelModel:
         ModelFactory.model_overview(file_name='Template_Input.xlsx', sheet_name='Doku')
     ```
     """
+
     _solvers = {
         'gurobi': fx.solvers.GurobiSolver,
         'highs': fx.solvers.HighsSolver,

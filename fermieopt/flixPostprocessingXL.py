@@ -138,7 +138,7 @@ class FlixPostXL(fx.results.CalculationResults):
                 investment_infos[component.label] = {
                     'size': component.all_results['Investment']['size'],
                     'is_invested': component.all_results['Investment'].get('isInvested', 1),
-                    'optional': component.all_infos['capacity_in_flow_hours'].get('optional', True)
+                    'optional': component.all_infos['capacity_in_flow_hours'].get('optional', True),
                 }
                 meta_data = component.all_infos.get('meta_data', {})
                 investment_infos[component.label]['effects'] = meta_data['invest'] if 'invest' in meta_data else {}
@@ -148,7 +148,7 @@ class FlixPostXL(fx.results.CalculationResults):
                 investment_infos[flow.label_full] = {
                     'size': flow.all_results['Investment']['size'],
                     'is_invested': flow.all_results['Investment'].get('isInvested', 1),
-                    'optional': flow.all_infos['size'].get('optional', True)
+                    'optional': flow.all_infos['size'].get('optional', True),
                 }
                 meta_data = flow.all_infos.get('meta_data', {})
                 investment_infos[flow.label_full]['effects'] = meta_data['invest'] if 'invest' in meta_data else {}

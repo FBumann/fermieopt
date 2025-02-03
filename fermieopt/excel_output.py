@@ -334,8 +334,10 @@ class Auswertung:
 
         for comp in [self.demand_heat, self.demand_heat_losses]:
             if self.results.group_map[comp] != self.group_label_heat_demand:
-                logger.warning(f'Die Gruppe von "{comp}" ({self.results.group_map[comp]}) entspricht nicht dem '
-                               f'erwarteten Wert: "{self.group_label_heat_demand}".')
+                logger.warning(
+                    f'Die Gruppe von "{comp}" ({self.results.group_map[comp]}) entspricht nicht dem '
+                    f'erwarteten Wert: "{self.group_label_heat_demand}".'
+                )
 
     def exportiere_ergebnisse_je_jahr(self, short_version=False, custom_output_file_path: str = 'default'):
         """
@@ -624,8 +626,9 @@ class Auswertung:
         df_heat = resample_data(self.results.to_dataframe(self.bus_heating), self.results.years, 'YE', 'sum')
 
         df_heat = df_heat.drop(columns=self.heat_demand_flows)  # Drop Demands
-        sizes = pd.DataFrame(self.results.sizes_per_period_connected_to_bus(self.bus_heating, True),
-                             index=self.results.years)[df_heat.columns]
+        sizes = pd.DataFrame(
+            self.results.sizes_per_period_connected_to_bus(self.bus_heating, True), index=self.results.years
+        )[df_heat.columns]
 
         if size_threshold is not None:
             relevant_cols = sizes.columns[(sizes >= size_threshold).all()].tolist()
@@ -638,11 +641,16 @@ class Auswertung:
         Berechnet die Wärmeproduktion pro Jahr für alle Komponenten verbunden mit dem Wärmebus.
         """
         logger.info('Berechne Wärmeproduktion pro Jahr...')
-        return resample_data(self.results.to_dataframe(self.bus_heating, input_factor=1, output_factor=-1), self.results.years, 'YE', 'sum')
+        return resample_data(
+            self.results.to_dataframe(self.bus_heating, input_factor=1, output_factor=-1),
+            self.results.years,
+            'YE',
+            'sum',
+        )
 
-    def effekte_pro_jahr(self,
-                         effekt: str = EffectLabels.COSTS,
-                         mode: Literal['operation', 'total'] = 'total') -> pd.DataFrame:
+    def effekte_pro_jahr(
+        self, effekt: str = EffectLabels.COSTS, mode: Literal['operation', 'total'] = 'total'
+    ) -> pd.DataFrame:
         """
         Berechnet die Effekte pro Wärmeproduktion pro Jahr für alle Komponenten verbunden mit dem Wärmebus.
         Diese werden als Excel-Tabelle gespeichert.
@@ -653,9 +661,8 @@ class Auswertung:
         df_heat = self._group_by_component(df_heat)
 
         df_costs = pd.DataFrame(
-            {comp: self.results.get_effects_of_element(comp, effekt, domain[mode])
-             for comp in df_heat.columns},
-            index = self.results.years
+            {comp: self.results.get_effects_of_element(comp, effekt, domain[mode]) for comp in df_heat.columns},
+            index=self.results.years,
         )
 
         return df_costs / df_heat
@@ -666,7 +673,7 @@ class Auswertung:
             data[element] = {
                 'Größe': invest_infos['size'],
                 'Entscheidung': invest_infos['is_invested'],
-                'War Optional': invest_infos['optional']
+                'War Optional': invest_infos['optional'],
             }
 
         return pd.DataFrame.from_dict(data, orient='index')
@@ -1134,7 +1141,11 @@ class Auswertung:
 
     @property
     def heat_demand_flows(self):
-        return [key for key, value in self.results.group_map.items() if value == self.group_label_heat_demand and key in self.results.flow_results()]
+        return [
+            key
+            for key, value in self.results.group_map.items()
+            if value == self.group_label_heat_demand and key in self.results.flow_results()
+        ]
 
 
 def write_bus_results_to_excel(
@@ -1302,7 +1313,7 @@ def visualize_results(
         write_effects_per_comp_per_period_to_excel(calc_results)
     if comps_yearly:
         write_component_results_to_excel(calc_results, 'YE')
-    if any([buses_yearly, effects_per_comp_and_year,comps_yearly]):
+    if any([buses_yearly, effects_per_comp_and_year, comps_yearly]):
         logger.info('...Jahreswerte abgeschlossen...')
 
     if buses_daily:

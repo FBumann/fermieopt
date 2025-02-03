@@ -1516,10 +1516,12 @@ class ModelFactory:
 
     ```python
     from fermieopt.DistrictHeatingComps import ModelFactory
+
     ModelFactory.model_templates(file_name='Template_Input.xlsx', sheet_name='Templates')
     ModelFactory.model_overview(file_name='Template_Input.xlsx', sheet_name='Doku')
     ```
     """
+
     class_map = {
         'Wärmepumpe': Waermepumpe,
         'KWK': KWK,
@@ -1582,7 +1584,6 @@ class ModelFactory:
         """
 
         field_info = {}
-        types_translation = {int: 'Integer', float: 'Float', str: 'String', bool: 'Ja/Nein', type(None): 'None'}
         for model_name, model in cls.class_map.items():
             for field_name, field in model.model_fields.items():
                 alias = field.alias or field_name
@@ -1599,7 +1600,7 @@ class ModelFactory:
                     field_info[alias] = {
                         'Beschreibung': description,
                         'Auch als Zeitreihe': as_time_series,
-                        'Typ': ", ".join([str(allowed_type) for allowed_type in allowed_types]),
+                        'Typ': ', '.join([str(allowed_type) for allowed_type in allowed_types]),
                     }
 
                 field_info[alias][model_name] = True  # Mark field as present

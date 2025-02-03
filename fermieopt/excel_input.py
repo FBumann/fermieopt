@@ -376,6 +376,7 @@ class ExcelData(BaseModel, arbitrary_types_allowed=True, populate_by_name=True):
         self, excel_file: pd.ExcelFile, sheets: List[str], valid_keys: List[str]
     ) -> Dict[str, List[Dict[str, Any]]]:
         from fermieopt.DistrictHeatingComps import ModelFactory
+
         component_data_by_type = {}
         for sheet_name in sheets:
             df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, nrows=30)
