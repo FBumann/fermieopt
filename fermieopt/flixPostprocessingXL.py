@@ -429,7 +429,9 @@ class FlixPostXL(fx.results.CalculationResults):
 
         return pd.DataFrame(data, index=self.time)
 
-    def get_energy_prices(self, element_label = OtherLabels.ENERGY_PRICES, effect_label = EffectLabels.COSTS) -> pd.DataFrame:
+    def get_energy_prices(
+        self, element_label=OtherLabels.ENERGY_PRICES, effect_label=EffectLabels.COSTS
+    ) -> pd.DataFrame:
         """
         Returns the costs per flow hour of every medium in a DataFrame. Data saved in a special component ("HelperPreise").
 

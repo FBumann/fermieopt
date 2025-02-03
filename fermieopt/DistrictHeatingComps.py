@@ -314,10 +314,18 @@ class InvestElement(Element):
             if not flow.meta_data:
                 flow.meta_data = MetaDataFactory.create()
 
-            flow.meta_data['invest'][EffectLabels.COSTS]['fixed_effects'] += fixed_effects_per_period.get(EffectLabels.COSTS, 0)
-            flow.meta_data['invest'][EffectLabels.COSTS]['specific_effects'] += specific_effects_per_period.get(EffectLabels.COSTS, 0)
-            flow.meta_data['invest'][EffectLabels.FUNDING]['fixed_effects'] += fixed_effects_per_period.get(EffectLabels.FUNDING, 0)
-            flow.meta_data['invest'][EffectLabels.FUNDING]['specific_effects'] += specific_effects_per_period.get(EffectLabels.FUNDING, 0)
+            flow.meta_data['invest'][EffectLabels.COSTS]['fixed_effects'] += fixed_effects_per_period.get(
+                EffectLabels.COSTS, 0
+            )
+            flow.meta_data['invest'][EffectLabels.COSTS]['specific_effects'] += specific_effects_per_period.get(
+                EffectLabels.COSTS, 0
+            )
+            flow.meta_data['invest'][EffectLabels.FUNDING]['fixed_effects'] += fixed_effects_per_period.get(
+                EffectLabels.FUNDING, 0
+            )
+            flow.meta_data['invest'][EffectLabels.FUNDING]['specific_effects'] += specific_effects_per_period.get(
+                EffectLabels.FUNDING, 0
+            )
 
     def restrict_availlability(self, component: flixOpt.elements.Component, years_in_model: List[int]) -> None:
         existance = exists(self.start_year, self.lifetime, years_in_model)
@@ -472,7 +480,9 @@ class ThermalInvestElement(InvestElement):
                     grid_fee_costs
                 ) + invest_flow.size.specific_effects.get(effect, 0)
 
-            assert effect.label == EffectLabels.COSTS, f"Effect {effect.label} is not EffectLabels.COSTS, which is expected in this function"
+            assert effect.label == EffectLabels.COSTS, (
+                f'Effect {effect.label} is not EffectLabels.COSTS, which is expected in this function'
+            )
             if not invest_flow.meta_data:
                 invest_flow.meta_data = MetaDataFactory.create()
             invest_flow.meta_data['invest'][EffectLabels.COSTS]['specific_effects'] += grid_fee_costs
@@ -665,7 +675,9 @@ class Kessel(FuelThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(boiler, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, boiler.Q_th, boiler.eta, effects[EffectLabels.COSTS], years_of_model)
+        self.insert_grid_fee(
+            self.grid_fee_per_year, boiler.Q_th, boiler.eta, effects[EffectLabels.COSTS], years_of_model
+        )
         return boiler
 
 
@@ -825,7 +837,9 @@ class Waermepumpe(ThermalInvestElement):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model)
+        self.insert_grid_fee(
+            self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model
+        )
         return heat_pump
 
     def _get_cop(self, time_series_data: pd.DataFrame) -> Union[float, np.ndarray]:
@@ -1093,8 +1107,12 @@ class Speicher(ThermalInvestElement):
             if not storage.meta_data:
                 storage.meta_data = MetaDataFactory.create()
 
-            storage.meta_data['invest'][EffectLabels.COSTS]['specific_effects'] += specific_effects_per_period.get(EffectLabels.COSTS, 0)
-            storage.meta_data['invest'][EffectLabels.FUNDING]['specific_effects'] += specific_effects_per_period.get(EffectLabels.FUNDING, 0)
+            storage.meta_data['invest'][EffectLabels.COSTS]['specific_effects'] += specific_effects_per_period.get(
+                EffectLabels.COSTS, 0
+            )
+            storage.meta_data['invest'][EffectLabels.FUNDING]['specific_effects'] += specific_effects_per_period.get(
+                EffectLabels.FUNDING, 0
+            )
 
     def _get_normalized_temperature_spread(self) -> Union[float, np.ndarray]:
         return (self.temperature_upper - self.temperature_lower) / self.default_temperature_spread
@@ -1288,7 +1306,9 @@ class AbwaermeWaermepumpe(Waermepumpe):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model)
+        self.insert_grid_fee(
+            self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model
+        )
         return heat_pump
 
 
@@ -1348,7 +1368,9 @@ class Geothermie(Waermepumpe):
             years_of_model,
         )
         self.restrict_availlability(heat_pump, years_of_model)
-        self.insert_grid_fee(self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model)
+        self.insert_grid_fee(
+            self.grid_fee_per_year, heat_pump.Q_th, heat_pump.COP, effects[EffectLabels.COSTS], years_of_model
+        )
         return heat_pump
 
 

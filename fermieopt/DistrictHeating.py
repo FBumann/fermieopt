@@ -145,7 +145,10 @@ class ExcelModel:
         effects[EffectLabels.CO2_HEAT] = fx.Effect(EffectLabels.CO2_HEAT, 't', 'CO2-Emissionen der Fernwärme')
 
         effects[EffectLabels.CO2] = fx.Effect(
-            EffectLabels.CO2, 't', 'CO2-Emissionen', specific_share_to_other_effects_operation={effects[EffectLabels.CO2_HEAT]: 1}
+            EffectLabels.CO2,
+            't',
+            'CO2-Emissionen',
+            specific_share_to_other_effects_operation={effects[EffectLabels.CO2_HEAT]: 1},
         )
 
         effects[EffectLabels.GREEN_HEAT] = fx.Effect(
@@ -179,7 +182,9 @@ class ExcelModel:
             bus=self._busses[BusLabels.ELECTRICITY_OUT],
             size=0,
             effects_per_flow_hour={
-                self._effects[EffectLabels.COSTS]: extract_data(EnergyPriceLabels.ELECTRICITY, self.excel_data.time_series_data)
+                self._effects[EffectLabels.COSTS]: extract_data(
+                    EnergyPriceLabels.ELECTRICITY, self.excel_data.time_series_data
+                )
             },
         )
         p_out2 = fx.Flow(
@@ -195,7 +200,9 @@ class ExcelModel:
             bus=self._busses[BusLabels.HYDROGEN],
             size=0,
             effects_per_flow_hour={
-                self._effects[EffectLabels.COSTS]: extract_data(EnergyPriceLabels.HYDROGEN, self.excel_data.time_series_data)
+                self._effects[EffectLabels.COSTS]: extract_data(
+                    EnergyPriceLabels.HYDROGEN, self.excel_data.time_series_data
+                )
             },
         )
 
@@ -360,7 +367,7 @@ def add_yearly_effects_with_bounds(
                 base_effect.unit,
                 f'{base_effect.description} in {year}',
                 minimum_operation=lower_bound,
-                maximum_operation=upper_bound
+                maximum_operation=upper_bound,
             )
 
             base_effect.specific_share_to_other_effects_operation.update(
