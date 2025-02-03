@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fermieopt"
-version = "0.3.1"
+version = "0.4.0"
 description = "FermIE: Fernwärme-Investitions-und-Einsatzoptimierung. Ein Excel-basiertes Tool zur Optimierung von Fernwärme-Systemen, basierend auf 'flixOpt'."
 authors = [
     { name = "Felix Bumann", email = "felixbumann387@gmail.com" }
@@ -19,7 +19,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "flixOpt @git+https://github.com/flixOpt/flixOpt.git@v1.0.6",
+    "flixOpt @git+https://github.com/flixOpt/flixOpt.git@v1.0.7",
     "pydantic >=2.10.1",
     "openpyxl >=3.1.5",
 ]
