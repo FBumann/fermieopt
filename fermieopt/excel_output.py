@@ -660,6 +660,17 @@ class Auswertung:
 
         return df_costs / df_heat
 
+    def invest_entscheidungen(self) -> pd.DataFrame:
+        data = {}
+        for element, invest_infos in self.results.investment_infos().items():
+            data[element] = {
+                'Größe': invest_infos['size'],
+                'Entscheidung': invest_infos['is_invested'],
+                'War Optional': invest_infos['optional']
+            }
+
+        return pd.DataFrame.from_dict(data, orient='index')
+
     def _group_by_component(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Gruppiert die Daten nach Komponentenname.
