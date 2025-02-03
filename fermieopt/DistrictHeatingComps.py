@@ -1580,11 +1580,15 @@ class ElementFactory:
                 types = get_args(field.annotation) or [field.annotation]
                 as_time_series = any(t is str for t in types) and any(t in (int, float) for t in types)
 
+                allowed_types = [t.__name__ for t in get_args(field.annotation)] or [field.annotation.__name__]
+                if 'NoneType' in allowed_types:
+                    allowed_types.remove('NoneType')
+
                 if alias not in field_info:
                     field_info[alias] = {
                         'Beschreibung': description,
                         'Auch als Zeitreihe': as_time_series,
-                        'Typ': str(list(set(types_translation.get(t, t) for t in types))),
+                        'Typ': ", ".join([str(allowed_type) for allowed_type in allowed_types]),
                     }
 
                 field_info[alias][model_name] = True  # Mark field as present
