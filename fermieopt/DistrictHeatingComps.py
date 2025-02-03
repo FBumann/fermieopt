@@ -1594,7 +1594,7 @@ class ElementFactory:
                 field_info[alias][model_name] = True  # Mark field as present
 
         # Convert to DataFrame
-        df = pd.DataFrame.from_dict(field_info, orient='index').fillna(False)
+        df = pd.DataFrame.from_dict(field_info, orient='index')
         df.index.name = 'Parameter'
 
         if file_name:
