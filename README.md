@@ -44,6 +44,9 @@ Die Modellberechnungen werden über **`run_model.py`** ausgeführt. Zusätzliche
 Sie können automatisch Templates für alle verfügbaren Erzeugertypen generieren lassen:
 
 ```python
-from fermieopt.DistrictHeatingComps import ElementFactory
-ElementFactory.model_templates(optional_fields=True)
+from fermieopt.DistrictHeatingComps import ModelFactory
+
+ModelFactory.model_templates(optional_fields=True)
+ModelFactory.model_overview()  # Erstellt eine Excel-Tabelle mit einer Übersicht aller Parameter, inklusive Erläuterung
+
 ```

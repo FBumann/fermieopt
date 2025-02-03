@@ -1508,7 +1508,18 @@ class KWKekt(InvestElement):
         return self
 
 
-class ElementFactory:
+class ModelFactory:
+    """
+    Für Vorlagen zur Erstellung der verschiedenen Erzeuegr, siehe Template_Input.xlsx
+
+    Die Vorlagen können auch neu erstellt werden mittels:
+
+    ```python
+    from fermieopt.DistrictHeatingComps import ModelFactory
+    ModelFactory.model_templates(file_name='Template_Input.xlsx', sheet_name='Templates')
+    ModelFactory.model_overview(file_name='Template_Input.xlsx', sheet_name='Doku')
+    ```
+    """
     class_map = {
         'Wärmepumpe': Waermepumpe,
         'KWK': KWK,
@@ -1598,8 +1609,13 @@ class ElementFactory:
         df.index.name = 'Parameter'
 
         if file_name:
-            with pd.ExcelWriter(file_name) as writer:
-                df.replace({True: 'Ja', False: 'Nein'}).to_excel(writer, index=True, sheet_name=sheet_name)
+            df_write = df.replace({True: 'Ja', False: 'Nein'})
+            if Path(file_name).exists():
+                with pd.ExcelWriter(file_name, mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:
+                    df_write.to_excel(writer, index=True, sheet_name=sheet_name)
+            else:
+                with pd.ExcelWriter(file_name, mode='w', engine='openpyxl') as writer:
+                    df_write.to_excel(writer, index=True, sheet_name=sheet_name)
 
         return df
 
@@ -1623,8 +1639,12 @@ class ElementFactory:
         df = pd.DataFrame.from_dict(field_info, orient='index').T
 
         if file_name:
-            with pd.ExcelWriter(file_name) as writer:
-                df.to_excel(writer, index=False, sheet_name=sheet_name)
+            if Path(file_name).exists():
+                with pd.ExcelWriter(file_name, mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:
+                    df.to_excel(writer, index=False, sheet_name=sheet_name)
+            else:
+                with pd.ExcelWriter(file_name, mode='w', engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name=sheet_name)
 
         return df
 

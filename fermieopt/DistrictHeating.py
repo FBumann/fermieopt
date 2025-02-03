@@ -10,7 +10,7 @@ import flixOpt.structure
 from rich.console import Console
 
 from fermieopt.config import BusLabels, EffectLabels, EnergyPriceLabels, SinkLabels, SourceLabels
-from fermieopt.DistrictHeatingComps import ElementFactory, exists, extract_data
+from fermieopt.DistrictHeatingComps import ModelFactory, exists, extract_data
 from fermieopt.excel_input import ExcelData
 from fermieopt.flixPostprocessingXL import FlixPostXL
 from fermieopt.meta_data import MetaDataFactory
@@ -19,6 +19,17 @@ logger = logging.getLogger('flixOpt')
 
 
 class ExcelModel:
+    """"
+    Für Vorlagen zur Erstellung der verschiedenen Erzeuegr, siehe Template_Input.xlsx
+
+    Die Vorlagen können auch neu erstellt werden mittels:
+
+    ```python
+        from fermieopt.DistrictHeatingComps import ModelFactory
+        ModelFactory.model_templates(file_name='Template_Input.xlsx', sheet_name='Templates')
+        ModelFactory.model_overview(file_name='Template_Input.xlsx', sheet_name='Doku')
+    ```
+    """
     _solvers = {
         'gurobi': fx.solvers.GurobiSolver,
         'highs': fx.solvers.HighsSolver,
@@ -203,7 +214,7 @@ class ExcelModel:
         ]
 
     def _create_components(self) -> None:
-        element_factory = ElementFactory(
+        element_factory = ModelFactory(
             flow_system=self.final_model,
             time_series_data=self.excel_data.time_series_data,
             co2_factors=self.excel_data.meta_data.co2_factors,
