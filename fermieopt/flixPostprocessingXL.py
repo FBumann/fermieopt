@@ -1,14 +1,14 @@
 import logging
 import os
 import pathlib
-from typing import Dict, List, Literal, Optional, Tuple, Union
+from typing import Dict, List, Literal, Tuple, Union
 
 import flixOpt as fx
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from fermieopt.config import OtherLabels
+from fermieopt.config import EffectLabels, OtherLabels
 
 logger = logging.getLogger('flixOpt')
 
@@ -429,14 +429,14 @@ class FlixPostXL(fx.results.CalculationResults):
 
         return pd.DataFrame(data, index=self.time)
 
-    def get_energy_prices(self, element_label: OtherLabels.ENERGY_PRICES) -> pd.DataFrame:
+    def get_energy_prices(self, element_label = OtherLabels.ENERGY_PRICES, effect_label = EffectLabels.COSTS) -> pd.DataFrame:
         """
         Returns the costs per flow hour of every medium in a DataFrame. Data saved in a special component ("HelperPreise").
 
         Parameters
         ----------
-        calc : FlixPostXL
-            Solved calculation of type flixPostXL.
+        element_label: The name og the element of which to retrive the costs from
+        effect_label: The Effect of which to retrive the costs from
 
         Returns
         -------
@@ -445,7 +445,7 @@ class FlixPostXL(fx.results.CalculationResults):
             and rows represent the time series.
         """
         flows = self.component_results[element_label].outputs
-        prices = {flow.label: flow.all_infos['effects_per_flow_hour'][EffectLabels.COSTS] for flow in flows}
+        prices = {flow.label: flow.all_infos['effects_per_flow_hour'][effect_label] for flow in flows}
 
         return pd.DataFrame(prices, index=self.time)
 

@@ -739,7 +739,7 @@ class Auswertung:
 
             try:
                 df_fernwaerme = pd.concat(
-                    [df_fernwaerme, self.results.get_energy_prices(self.price_helper_elements)[self.price_electricity]],
+                    [df_fernwaerme, self.results.get_energy_prices(self.price_helper_elements, self.effect_costs)[self.price_electricity]],
                     axis=1,
                 )
             except KeyError:
