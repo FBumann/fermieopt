@@ -625,9 +625,9 @@ class Auswertung:
         logger.info('Berechne Vollbenutzungsstunden pro Jahr...')
         df_heat = resample_data(self.results.to_dataframe(self.bus_heating), self.results.years, 'YE', 'sum')
 
-        df_heat = df_heat.drop(columns=self.heat_demand_flows)  # Drop Demands
+        df_heat = df_heat.drop(columns=self.heat_demand_flows, errors='ignore')  # Drop Demands
         sizes = pd.DataFrame(
-            self.results.sizes_per_period_connected_to_bus(self.bus_heating, True), index=self.results.years
+            self.results.sizes_per_period_connected_to_bus(self.bus_heating, False), index=self.results.years
         )[df_heat.columns]
 
         if size_threshold is not None:
@@ -657,7 +657,7 @@ class Auswertung:
         """
         logger.info('Berechne Wärmekosten pro Jahr...')
         domain = {'operation': 'operation_per_period', 'total': 'total_per_period'}
-        df_heat = self.waermeproduktion_pro_jahr().drop(columns=self.heat_demand_flows)  # Drop Demands
+        df_heat = self.waermeproduktion_pro_jahr().drop(columns=self.heat_demand_flows, errors='ignore')  # Drop Demands
         df_heat = self._group_by_component(df_heat)
 
         df_costs = pd.DataFrame(
