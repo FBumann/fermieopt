@@ -94,12 +94,8 @@ class ExcelModel:
             json.dump(self.excel_data.components_data, log_file, indent=4, ensure_ascii=False)
             logger.info('Component Data written to file')
 
-        with open(
-            self.final_directory / f'{self.calc_name}__System_Description.txt', 'w', encoding='utf-8'
-        ) as log_file:
-            console = Console(file=log_file, width=10000)
-            console.print(self.final_model)
-            logger.info('System Description written to file')
+        self.final_model.to_json(self.final_directory / f'{self.calc_name}__System_Description.json')
+        logger.info('System Description written to json')
 
     def _create_busses(self) -> Dict[str, fx.Bus]:
         busses = {}
